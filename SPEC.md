@@ -187,7 +187,7 @@ POST /api/meals/{id}/log {"day"?,"meal"?,"items"?:[{"food_id","amount","unit"}]}
 GET/PUT /api/goals   {"kcal","carb_pct","protein_pct","fat_pct"}  pcts total 100. Default 3000 and 50/30/20 (carbs/protein/fat).
         targets: carbs g = kcal*pct/4, protein same, fat g = kcal*pct/9. Goals are per user.
 GET/PUT /api/settings {"start_screen": "today"|"scan"|"search"|"ai", "default_meal": ...}   # per user, validated
-GET/PUT /api/settings/display {"show_macros","show_micros","show_split","show_macro_bar","micros_open": bool, "micros_shown": [nutrient...], "today_view": "list"|"table"}
+GET/PUT /api/settings/display {"show_macros","show_micros","show_split","show_macro_bar","show_table","micros_open": bool, "micros_shown": [nutrient...], "today_view": "list"|"table"}
         # per user, stored in the settings table (micros_hidden comma list). PUT takes any subset, booleans only (today_view is the string list or table), 400 otherwise.
         # today_view is the Today tab's view, column settings.today_view TEXT NOT NULL DEFAULT 'list', added in place by core.init.
         # Defaults: everything shown, micros_open false (the new section starts collapsed), so existing users see no change.

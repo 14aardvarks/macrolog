@@ -544,7 +544,7 @@ export const MICROS = [
 ];
 
 // What the screens show before /api/settings/display answers. Matches the server defaults.
-export const DEFAULT_DISPLAY = { show_macros: true, show_micros: true, show_split: true, show_macro_bar: true,
+export const DEFAULT_DISPLAY = { show_macros: true, show_micros: true, show_split: true, show_macro_bar: true, show_table: true,
   micros_open: false, micros_shown: MICROS.map((m) => m.key), today_view: 'list' };
 
 // The nutrients to list, in order. Empty when the section is switched off.

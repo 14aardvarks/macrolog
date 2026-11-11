@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS micro_targets(
 """
 # Display switches in the settings table. Every default keeps the screens as they were before the switches existed;
 # the new Micro Nutrients section starts collapsed. micros_hidden is a comma list of hidden nutrients.
-DISPLAY_FLAGS = {"show_macros": 1, "show_micros": 1, "show_split": 1, "show_macro_bar": 1, "micros_open": 0}
+DISPLAY_FLAGS = {"show_macros": 1, "show_micros": 1, "show_split": 1, "show_macro_bar": 1, "show_table": 1, "micros_open": 0}
 TODAY_VIEWS = ("list", "table")  # the Today tab's default view, stored as settings.today_view
 
 

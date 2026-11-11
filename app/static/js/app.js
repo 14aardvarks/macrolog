@@ -238,10 +238,10 @@ async function todayScreen(root) {
     else if (view === 'table') body.appendChild(dayTable(d.entries, { display: disp, onOpen: openEntry, onDelete: removeEntry }));
     else groups().forEach((g) => body.appendChild(g));
   };
-  const view = todayView(disp);
+  const view = disp.show_table === false ? 'list' : todayView(disp);
   paint(view);
   grid.append(h('div', { class: 'col-a' }, disp.show_split !== false ? h('div', { class: 'split-box' }, h('h2', null, 'Calorie Split'), splitChart(d)) : null, nutrients),
-    h('div', { class: 'col-b' }, d.entries.length ? viewToggle(view, (v) => { paint(v); ctx.saveDisplay({ today_view: v }).catch(() => {}); }) : null, body, status));
+    h('div', { class: 'col-b' }, d.entries.length && disp.show_table !== false ? viewToggle(view, (v) => { paint(v); ctx.saveDisplay({ today_view: v }).catch(() => {}); }) : null, body, status));
   root.appendChild(h('section', { class: 'screen wide' }, h('h1', null, 'Today'), grid));
 }
 

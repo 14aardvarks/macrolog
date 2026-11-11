@@ -64,7 +64,7 @@ function switchRow(id, label, checked, onChange) {
 export function displaySection(display, save) {
   let shown = display.micros_shown.slice();
   const flags = [['show_macros', 'Macro Nutrients bars'], ['show_micros', 'Micro Nutrients section'],
-    ['show_split', 'Calorie Split chart'], ['show_macro_bar', 'Macro balance bar on foods']];
+    ['show_split', 'Calorie Split chart'], ['show_macro_bar', 'Macro balance bar on foods'], ['show_table', 'Table View option on Today']];
   const chips = h('div', { class: 'chips', role: 'group', 'aria-label': 'Micro nutrients to show' }, MICROS.map((m) => {
     const chip = h('button', { class: 'chip', type: 'button', 'aria-pressed': shown.includes(m.key) ? 'true' : 'false', onclick: async () => {
       const next = toggleMicro(shown, m.key);

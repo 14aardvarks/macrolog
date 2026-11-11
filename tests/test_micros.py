@@ -144,7 +144,7 @@ def test_migration_adds_micro_columns_and_display_settings(tmp_path):
 
 def test_display_defaults_keep_screens_as_before(a):
     d = a.get("/api/settings/display").json()
-    assert d == {"show_macros": True, "show_micros": True, "show_split": True, "show_macro_bar": True,
+    assert d == {"show_macros": True, "show_micros": True, "show_split": True, "show_macro_bar": True, "show_table": True,
                  "micros_open": False, "micros_shown": list(core.MICROS), "today_view": "list"}
 
 
