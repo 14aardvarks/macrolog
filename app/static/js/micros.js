@@ -1,6 +1,5 @@
 import { h, field } from './dom.js';
 import { MICROS, shownMicros, microValue, microText, microNote, microOver, barWidth, toggleMicro, parseDecimal, fmtAmount } from './util.js';
-import { todayView } from './tablemodel.js';
 
 let seq = 0;
 
@@ -64,7 +63,7 @@ function switchRow(id, label, checked, onChange) {
 export function displaySection(display, save) {
   let shown = display.micros_shown.slice();
   const flags = [['show_macros', 'Macro Nutrients bars'], ['show_micros', 'Micro Nutrients section'],
-    ['show_split', 'Calorie Split chart'], ['show_macro_bar', 'Macro balance bar on foods'], ['show_table', 'Table View option on Today']];
+    ['show_split', 'Calorie Split chart'], ['show_macro_bar', 'Macro balance bar on foods'], ['show_table', 'Table View on Today']];
   const chips = h('div', { class: 'chips', role: 'group', 'aria-label': 'Micro nutrients to show' }, MICROS.map((m) => {
     const chip = h('button', { class: 'chip', type: 'button', 'aria-pressed': shown.includes(m.key) ? 'true' : 'false', onclick: async () => {
       const next = toggleMicro(shown, m.key);
@@ -76,9 +75,6 @@ export function displaySection(display, save) {
   return h('div', { class: 'display-sec' }, h('h2', null, 'Display'),
     h('p', { class: 'sub' }, 'Choose what Today, the lists and the picker show. Changes apply at once.'),
     flags.map(([k, label]) => switchRow('disp-' + k, label, display[k] !== false, (on) => save({ [k]: on }))),
-    switchRow('disp-today-table', 'Table View on Today', todayView(display) === 'table', async (on) => {
-      await save({ today_view: on ? 'table' : 'list' });
-    }),
     h('p', { class: 'field-cap' }, 'Micro nutrients to show'), chips);
 }
 

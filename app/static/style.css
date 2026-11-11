@@ -362,3 +362,7 @@ input[type=text], input[type=search], input[type=password], input[type=email], s
   .day-table th, .day-table td { padding: 6px 5px; }
   .day-table .num { min-width: 0; }
 }
+
+.refresh { margin: 10px 0 16px; }
+.refresh .btn { margin-bottom: 8px; }
+.nutrients { margin-bottom: 16px; }
