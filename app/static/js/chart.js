@@ -31,8 +31,8 @@ export function splitChart(d) {
       h('span', null, eaten ? pe[k] + '% (' + fmtNum(d.totals[k], 0) + ' g)' : '-')),
     h('div', { class: 'lg-goal' }, 'Goal ' + pg[k] + '%')));
   return h('div', { class: 'split' },
-    h('div', { class: 'donut-wrap' }, art,
-      h('p', { class: 'logged' }, h('span', null, 'Logged'), h('strong', null, kcal + ' kcal' + loggedPct))),
+    h('div', { class: 'donut-wrap' },
+      h('p', { class: 'logged' }, h('span', null, 'Logged'), h('strong', null, kcal + ' kcal' + loggedPct)), art),
     h('div', { class: 'legend' }, h('ul', null, rows)));
 }
 
