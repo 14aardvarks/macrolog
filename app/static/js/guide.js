@@ -30,6 +30,10 @@ export const GUIDE = [
   { heading: 'Favorites', bullets: [
     'Tap the star on a food to add or remove it.',
   ] },
+  { heading: 'Saved and meal tags', bullets: [
+    'Settings, then Saved, lets you tag, rename, edit and delete.',
+    'Untagged items show under every meal. Logging with a meal adds its tag.',
+  ] },
   { heading: 'Recipes', bullets: [
     'On Today, tap Save today as a recipe.',
     'Log it later from Add, then Recipes.',

@@ -143,7 +143,23 @@ PATCH /api/entries/{id} {amount?, unit?, meal?}   DELETE /api/entries/{id}   # o
 GET  /api/preview?food_id=&amount=&unit=  -> units.scale result        # live macros while scrolling the picker
 GET  /api/day?day=YYYY-MM-DD -> {"day","entries":[...],"totals","targets","percent","remaining"}   # day defaults to today (server local date; accept ?tz offset optional)
 GET  /api/quick/favorites | /api/quick/yesterday | /api/quick/recent -> {"items":[{"food": Food, "amount","unit","servings","kcal","protein"}]}  # amount/unit = last used
-POST /api/favorites/{food_id}   DELETE /api/favorites/{food_id}
+POST /api/favorites/{food_id}   DELETE /api/favorites/{food_id}   # POST also un-hides the food
+```
+Meal tags (breakfast|lunch|dinner|snack, zero or more) live in `favorite_tags(user_id, food_id, meal)` and `recipe_tags(meal_id, meal)`;
+existing favorites and recipes start untagged. Untagged items show under every meal on Add. `recipe_logs` records each recipe log with its meal.
+`hidden_foods(user_id, food_id)` hides a food from the user's Recent and Yesterday lists. `foods.created_by` is the creating user.
+Logging a favorite (POST /api/entries) or a recipe with a meal adds that tag; tags are never removed automatically; logging un-hides a food.
+```
+GET  /api/saved -> {"favorites":[{"food","meals"}], "recipes":[meal + "meals","counts"], "foods":[Food + "in_use"]}   # own items; foods = custom/ai foods I created
+PUT  /api/favorites/{food_id}/tags {"meals":[...]}   # own favorite only, 404 otherwise, 400 on unknown meal names
+POST /api/saved/favorites/{food_id}/remove           # unfavorite + delete tags + hide from Recent/Yesterday; entries unchanged
+PATCH /api/meals/{id} {"name"?,"meals"?,"items"?}    # items replaces the list (amounts, units, removals), at least one item
+PATCH /api/foods/{id} {name,brand,barcode,label_text,serving_*,kcal,carbs,protein,fat,fiber}   # creator only (403 otherwise);
+                                                     # 409 when the food is in any entry or recipe and nutrition or serving changes (rename still allowed)
+DELETE /api/foods/{id}                               # creator only; 409 when in any entry or recipe, or in another user's favorites
+```
+Quick favorites items also carry `meals` (tags) and `counts` ({meal: times logged}); recipes carry `meals` and `counts` (from recipe_logs).
+```
 GET/POST /api/meals    POST {"name","items":[{"food_id","amount","unit"}]}  -> meal
 POST /api/meals/from-day {"name","day","entry_ids"?}      DELETE /api/meals/{id}
 POST /api/meals/{id}/log {"day"?,"meal"?,"items"?:[{"food_id","amount","unit"}]}   # items override amounts, otherwise saved amounts
@@ -228,6 +244,8 @@ Screens: Login, Today, Add, Picker, Claude fallback, Settings. Bottom nav: Today
 - Lookup failure: show "Not found" with two buttons, "Ask Claude" (only if can_ask_ai) and "Enter manually". Ask Claude suggests photographing the NUTRITION
   LABEL (optionally with the barcode in the same photo), resizes images client side (max 1280 px, JPEG 0.8), uploads, shows the draft in an editable form
   with any warnings, and only saves via POST /api/foods after the user confirms.
+- Add: Search, Scan and the Meal selector sit above the Favorites/Yesterday/Recipes tabs and list. Lists show 20 items with a Show more button.
+- Saved (Settings, then Saved): Favorites, Recipes and My foods lists with meal tag chips, rename, delete, recipe item editing, Remove from my lists, and the food form for My foods.
 - Settings: start screen, goals (kcal and split), sign out, Claude status (used/cap), personal Claude key and cap,
   Connect SSO (plain link to /auth/oidc/link, shown when /api/auth/config oidc is true and me.sso_linked is false) and
   Disconnect SSO (POST /api/auth/sso/unlink, shown when linked and has_password). The app opens Settings for `/#settings`.

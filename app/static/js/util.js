@@ -201,6 +201,30 @@ export function filterByMeal(items, meal) {
   return list.filter((it) => (Array.isArray(it.meals) ? it.meals.includes(meal) : it.meal === meal));
 }
 
+// Saved favorites and recipes carry meals (their tags) and counts ({meal: times logged}). Untagged items show under every meal.
+// For a chosen meal the items logged most often as that meal come first, the rest keep their order.
+export function filterSaved(items, meal) {
+  const list = items || [];
+  if (!MEALS.includes(meal)) return list.slice();
+  const count = (it) => (it.counts && it.counts[meal]) || 0;
+  return list.filter((it) => !(it.meals && it.meals.length) || it.meals.includes(meal))
+    .map((it, i) => ({ it, i })).sort((x, y) => count(y.it) - count(x.it) || x.i - y.i).map((x) => x.it);
+}
+
+// Paging for long lists: the first `shown` items and how many are left.
+export const PAGE_SIZE = 20;
+export function pageOf(items, shown) {
+  const list = items || [];
+  return { items: list.slice(0, shown), more: Math.max(0, list.length - shown) };
+}
+
+// The tag set after tapping a meal chip, in breakfast to snack order.
+export function toggleMeal(meals, meal) {
+  const set = new Set(meals || []);
+  if (set.has(meal)) set.delete(meal); else set.add(meal);
+  return MEALS.filter((m) => set.has(m));
+}
+
 // "lunch" for a meal, '' for All.
 export function mealWord(meal) { return MEALS.includes(meal) ? MEAL_LABELS[meal].toLowerCase() : ''; }
 
@@ -209,7 +233,7 @@ export function emptyText(kind, meal, hasAny) {
   const w = mealWord(meal);
   if (kind === 'yesterday') return w ? 'Nothing for ' + w + ' yesterday.' : 'Nothing from yesterday.';
   const one = kind === 'recipes' ? 'recipe' : 'favorite';
-  if (w && hasAny) return 'No ' + kind + (kind === 'recipes' ? ' saved as ' : ' logged as ') + w + '. Choose All to see every ' + one + '.';
+  if (w && hasAny) return 'No ' + kind + ' tagged ' + w + '. Choose All to see every ' + one + '.';
   if (kind === 'recipes') return 'No saved recipes. On Today, tap "Save today as a recipe".';
   return 'No favorites yet. Tap the star on a food to add one.';
 }

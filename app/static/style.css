@@ -233,3 +233,10 @@ input[type=text], input[type=search], input[type=password], input[type=email], s
 .add-user { margin: 12px 0 0; }
 .add-user form { padding-bottom: 12px; }
 .login .btn.primary { width: 100%; }
+
+.saved-item { padding: 10px 4px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; }
+.saved-item:last-child { border-bottom: 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { min-height: 40px; padding: 0 14px; border: 1px solid var(--line); border-radius: 20px; background: var(--card); color: var(--text); cursor: pointer; }
+.chip[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+.tab-list .btn { width: 100%; margin-bottom: 8px; }

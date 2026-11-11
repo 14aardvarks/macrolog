@@ -78,6 +78,12 @@ export const api = {
   deleteMeal: (id) => request('DELETE', '/api/meals/' + id),
   mealFromDay: (name, d) => send('POST', '/api/meals/from-day', { name, day: d || day() }),
   logMeal: (id, body) => send('POST', '/api/meals/' + id + '/log', { day: day(), ...body }),
+  saved: () => get('/api/saved'),
+  favoriteTags: (id, meals) => send('PUT', '/api/favorites/' + id + '/tags', { meals }),
+  removeFromLists: (id) => send('POST', '/api/saved/favorites/' + id + '/remove'),
+  patchMeal: (id, body) => send('PATCH', '/api/meals/' + id, body),
+  patchFood: (id, body) => send('PATCH', '/api/foods/' + id, body),
+  deleteFood: (id) => request('DELETE', '/api/foods/' + id),
   aiStatus: (images) => get('/api/ai/status', images ? { images } : undefined),
   aiLabel: (form) => request('POST', '/api/ai/label', { form }),
 };

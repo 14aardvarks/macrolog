@@ -2,7 +2,7 @@ import { api, setUnauthorizedHandler } from './api.js';
 import { h, clear, select, field, message, show, cameraIcon } from './dom.js';
 import {
   MEALS, MEAL_LABELS, parseDecimal, parseAmount, amountText, servingText, setAmountFormat, unitLabel, fmtNum, fmtAmount, groupByMeal, localDate, progressText, remainingText,
-  barWidth, debounce, digitsOnly, guessMeal, pctTotal, latestGuard, MEAL_FILTERS, MEAL_FILTER_LABELS, filterByMeal, emptyText,
+  barWidth, debounce, digitsOnly, guessMeal, pctTotal, latestGuard, MEAL_FILTERS, MEAL_FILTER_LABELS, filterByMeal, filterSaved, pageOf, PAGE_SIZE, emptyText,
 } from './util.js';
 import { renderPicker } from './picker.js';
 import { renderScan, barcodeForm } from './scan.js';
@@ -12,12 +12,13 @@ import { splitChart } from './chart.js';
 import { renderGuide } from './guide-view.js';
 import { renderSetup } from './setup.js';
 import { renderAdmin } from './admin.js';
+import { renderSaved } from './saved.js';
 import { renderClaudeSection, renderSignIn } from './claudekey.js';
 
 const main = document.getElementById('main');
 const nav = document.getElementById('nav');
 const state = { user: null, settings: { start_screen: 'today', default_meal: null, use_last: true, confirm_ai: true, amount_format: 'fraction' }, cleanup: null, depth: 0, tab: 'favorites', addMeal: 'all' };  // addMeal lives for the session only
-const NAV_OF = { today: 'today', settings: 'settings', admin: 'settings' };  // every other screen belongs to Add
+const NAV_OF = { today: 'today', settings: 'settings', admin: 'settings', saved: 'settings', editfood: 'settings' };  // every other screen belongs to Add
 
 const ctx = {
   go,
@@ -249,26 +250,40 @@ function addScreen(root, params) {
     } catch (e) { show(listBox, message(e.message, 'error')); }
   }
 
-  root.appendChild(h('section', { class: 'screen add' }, tabBar, mealPick, h('div', { class: 'tab-list' }, listBox),
+  // Search, scan and the meal filter sit above the lists so a long list never pushes them off screen.
+  root.appendChild(h('section', { class: 'screen add' },
     h('form', { class: 'row', role: 'search', onsubmit: (e) => { e.preventDefault(); liveSearch.cancel(); search(true); } },
       q, h('button', { class: 'btn', type: 'submit' }, 'Search')),
     h('div', { class: 'row' }, h('button', { class: 'btn primary scan-btn', type: 'button', onclick: () => go('scan') }, cameraIcon(), 'Scan barcode'),
       h('button', { class: 'btn', type: 'button', onclick: () => go('manual', {}) }, 'Enter manually')),
-    barcodeForm(ctx.lookup)));
+    barcodeForm(ctx.lookup), mealPick, tabBar, h('div', { class: 'tab-list' }, listBox)));
   paintTabs();
   if (params.focus) root.addEventListener('mounted', () => q.focus());
 }
 
+// A list of at most PAGE_SIZE items with a Show more button. build(visibleItems) returns the node for them.
+function paged(items, build) {
+  const box = h('div');
+  let shown = PAGE_SIZE;
+  const paint = () => {
+    const page = pageOf(items, shown);
+    clear(box).appendChild(build(page.items));
+    if (page.more) box.appendChild(h('button', { class: 'btn', type: 'button', onclick: () => { shown += PAGE_SIZE; paint(); } }, 'Show more'));
+  };
+  paint();
+  return box;
+}
+
 async function quickList(kind, meal) {
   const all = (await api.quick(kind, localDate())).items;
-  const items = filterByMeal(all, meal);
+  const items = filterSaved(all, meal);
   if (!items.length) return message(emptyText('favorites', meal, all.length > 0));
   // With "start from my last entry" off a food opens on its label serving, so the row shows that serving too.
   const useLast = state.settings.use_last !== false;
-  return h('ul', { class: 'list' }, items.map((it) => foodRow(foodTitle(it.food),
+  return paged(items, (page) => h('ul', { class: 'list' }, page.map((it) => foodRow(foodTitle(it.food),
     useLast ? unitText(it.amount, it.unit) + ' - ' + fmtNum(it.kcal, 0) + ' kcal, ' + fmtNum(it.protein, 0) + ' g protein'
       : (it.food.label_text || unitText(it.food.serving_amount, it.food.serving_unit)) + ' - ' + fmtNum(it.food.kcal, 0) + ' kcal, ' + fmtNum(it.food.protein, 0) + ' g protein',
-    pickerOf({ food_id: it.food.id, amount: it.amount, unit: it.unit }, chosenMeal()))));
+    pickerOf({ food_id: it.food.id, amount: it.amount, unit: it.unit }, chosenMeal())))));
 }
 
 // With All the items are grouped under meal headings. With one meal chosen it is a plain list.
@@ -277,23 +292,23 @@ async function yesterdayList(meal) {
   if (!items.length) return message(emptyText('yesterday', meal, true));
   const row = (it) => foodRow(foodTitle(it.food), unitText(it.amount, it.unit) + ' - ' + fmtNum(it.kcal, 0) + ' kcal',
     pickerOf({ food_id: it.food.id, amount: it.amount, unit: it.unit }, meal === 'all' ? it.meal : meal));
-  if (meal !== 'all') return h('ul', { class: 'list' }, items.map(row));
-  return h('div', null, groupByMeal(items, 'Other').map((g) => h('div', null,
+  if (meal !== 'all') return paged(items, (page) => h('ul', { class: 'list' }, page.map(row)));
+  return paged(items, (page) => h('div', null, groupByMeal(page, 'Other').map((g) => h('div', null,
     h('h2', { class: 'group' }, g.label, h('span', null, fmtNum(g.kcal, 0) + ' kcal')),
-    h('ul', { class: 'list' }, g.entries.map(row)))));
+    h('ul', { class: 'list' }, g.entries.map(row))))));
 }
 
 async function recipesList(meal) {
   const all = (await api.meals()).meals;
-  const recipes = filterByMeal(all, meal);
+  const recipes = filterSaved(all, meal);
   if (!recipes.length) return message(emptyText('recipes', meal, all.length > 0));
-  return h('ul', { class: 'list' }, recipes.map((m) => {
+  return paged(recipes, (page) => h('ul', { class: 'list' }, page.map((m) => {
     const del = h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Delete recipe ' + m.name, onclick: async () => {
       if (!window.confirm('Delete the recipe "' + m.name + '"?')) return;
       try { await api.deleteMeal(m.id); await go('add', {}, true); } catch (e) { del.parentNode.appendChild(message(e.message, 'error')); }
     } }, '×');
     return foodRow(m.name, m.items.length + ' items - ' + fmtNum(m.kcal, 0) + ' kcal', () => go('meal', { mealId: m.id, meal: chosenMeal() }), del);
-  }));
+  })));
 }
 
 // ---------- lookup result, recipe checklist ----------
@@ -391,6 +406,8 @@ async function settingsScreen(root) {
       h('h2', null, 'Daily goals'), kcal, h('div', { class: 'grid3' }, pcts.map((p) => p[1])), total, status,
       h('button', { class: 'btn primary', type: 'submit' }, 'Save')),
     h('h2', null, 'Claude'), ai ? renderClaudeSection(ai, me.use_global_ai) : h('p', { class: 'sub' }, 'Claude status is not available.'),
+    h('h2', null, 'Saved'), h('p', { class: 'sub' }, 'Favorites, recipes and your own foods, with meal tags.'),
+    h('button', { class: 'btn', type: 'button', onclick: () => go('saved') }, 'Open Saved'),
     renderSignIn(cfg, me),
     me.is_admin ? h('div', null, h('h2', null, 'Admin'), h('p', { class: 'sub' }, 'Users, sign-in, Claude and server settings.'),
       h('button', { class: 'btn', type: 'button', onclick: () => go('admin') }, 'Open Admin')) : null,
@@ -400,6 +417,7 @@ async function settingsScreen(root) {
 
 const SCREENS = {
   login: loginScreen, admin: (root) => renderAdmin(root, ctx), today: todayScreen, add: addScreen, lookup: lookupScreen, meal: mealScreen, settings: settingsScreen,
+  saved: (root) => renderSaved(root, ctx), editfood: (root, p) => renderFoodForm(root, { edit: p.food }, ctx),
   picker: (root, p) => renderPicker(root, p, ctx),
   scan: (root) => renderScan(root, ctx),
   ai: (root, p) => renderAi(root, p, ctx),

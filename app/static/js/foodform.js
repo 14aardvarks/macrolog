@@ -16,8 +16,10 @@ const NUM = [
 // Editable food form for manual entry and for Claude drafts.
 // opts: { draft?, warnings?, barcode? }  ctx: { go, back }
 export function renderFoodForm(root, opts, ctx) {
-  const draft = opts.draft || {};
-  const fromAi = draft.source === 'ai';
+  const edit = opts.edit || null;  // an existing custom food from Saved
+  const draft = edit || opts.draft || {};
+  const locked = !!(edit && edit.in_use);  // used in a log or recipe: only the name and brand may change
+  const fromAi = !edit && draft.source === 'ai';
   const f = {};
   const val = (k) => (draft[k] == null ? '' : typeof draft[k] === 'number' ? fmtAmount(draft[k]) : String(draft[k]));
   f.name = field('Name', { value: val('name'), autocomplete: 'off' });
@@ -25,19 +27,20 @@ export function renderFoodForm(root, opts, ctx) {
   f.serving_unit = field('Serving unit (g, ml, tbsp, cup, slice...)', { value: val('serving_unit'), autocapitalize: 'none', autocomplete: 'off' });
   f.label_text = field('Label serving text (optional)', { value: val('label_text'), autocomplete: 'off' });
   f.barcode = field('Barcode (optional)', { value: opts.barcode || draft.barcode || '', inputmode: 'numeric' });
-  NUM.forEach(([k, label, , ph]) => { f[k] = field(label, { value: val(k), inputmode: 'decimal', placeholder: ph, autocomplete: 'off' }); });
+  NUM.forEach(([k, label, , ph]) => { f[k] = field(label, { value: val(k), inputmode: 'decimal', placeholder: ph, autocomplete: 'off', disabled: locked }); });
+  if (locked) f.serving_unit.input.disabled = true;
 
   const mealOpts = [{ value: 'none', label: MEAL_LABELS.none }, ...MEALS.map((m) => ({ value: m, label: MEAL_LABELS[m] }))];
   const mealSel = select(mealOpts, (ctx.settings && ctx.settings.default_meal) || guessMeal(new Date().getHours()), { 'aria-label': 'Meal' });
   const status = h('div', { 'aria-live': 'polite' });
   const confirm = h('input', { type: 'checkbox' });
-  const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, fromAi ? 'Save and continue' : 'Save food');
+  const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, edit ? 'Save changes' : fromAi ? 'Save and continue' : 'Save food');
   const warns = (opts.warnings || []).map((w) => h('li', null, w));
 
   const form = h('form', { class: 'screen', novalidate: '', onsubmit: submit },
     h('div', { class: 'bar' }, h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back')),
-    h('h1', null, fromAi ? 'Check what Claude read' : 'Enter food manually'),
-    h('p', { class: 'sub' }, fromAi ? 'Fix anything that looks wrong and fill any empty boxes. Values are per label serving.'
+    h('h1', null, edit ? 'Edit food' : fromAi ? 'Check what Claude read' : 'Enter food manually'),
+    h('p', { class: 'sub' }, locked ? 'This food is in your log or a recipe, so only the name, brand and label text can change.' : fromAi ? 'Fix anything that looks wrong and fill any empty boxes. Values are per label serving.'
       : 'Values are per label serving, as printed.'),
     warns.length ? h('ul', { class: 'warnings', role: 'alert' }, warns) : null,
     f.name, f.brand,
@@ -48,7 +51,7 @@ export function renderFoodForm(root, opts, ctx) {
     f.fiber,
     h('div', { class: 'grid2' }, f.serving_g, f.serving_ml),
     f.barcode,
-    h('label', { class: 'field' }, h('span', null, 'Meal when you log it'), mealSel),
+    edit ? null : h('label', { class: 'field' }, h('span', null, 'Meal when you log it'), mealSel),
     fromAi ? h('label', { class: 'check' }, confirm, ' I checked these values against the label') : null,
     status, saveBtn);
   root.appendChild(form);
@@ -80,6 +83,11 @@ export function renderFoodForm(root, opts, ctx) {
     if (fromAi && !confirm.checked) { show(status, message('Tick the box to confirm the values match the label.', 'error')); return; }
     saveBtn.disabled = true;
     try {
+      if (edit) {
+        await api.patchFood(edit.id, locked ? { name: out.name, brand: out.brand, barcode: out.barcode, label_text: out.label_text } : out);
+        ctx.back();
+        return;
+      }
       const food = await api.createFood(out);
       ctx.go('picker', { foodId: food.id, meal: mealSel.value === 'none' ? null : mealSel.value });
     } catch (err) {

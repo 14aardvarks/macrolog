@@ -38,6 +38,10 @@ The same guide is in Settings under "How to use Macrolog".
 - A food opens with the amount and unit from your last entry. Turn this off in Settings with "Start from my last entry" to open on the label's serving instead.
 - Tap the star to make a favorite. On Today, "Save today as a recipe" makes a recipe you can log later.
 - If a food is not found, ask Claude to read the label photo (if set up) or enter it manually, and check the numbers.
+- Tag favorites and recipes with Breakfast, Lunch, Dinner or Snack. A chosen meal on Add shows items tagged with it plus untagged items, with the ones you log most often as that meal first. Logging a favorite or recipe with a meal adds that tag.
+- Settings, then Saved, lists your favorites, recipes and the foods you created. Edit meal tags, rename or delete recipes, change recipe amounts, and edit or delete your own foods (a food already in a log entry or recipe cannot be deleted, and only its name can change).
+- "Remove from my lists" unfavorites a food, clears its tags and hides it from Recent and Yesterday. Past entries stay. Searching, logging or favoriting it again brings it back.
+- Add lists show 20 items at a time with a Show more button.
 - Each user has their own log, goals and settings. Foods are shared.
 - Settings also holds your own Claude key and limit, and Connect SSO when the server offers it. Administrators see an Admin page there for users, sign-in, Claude and USDA keys, and recent activity.
 
