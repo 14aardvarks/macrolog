@@ -75,9 +75,10 @@ function macroCell(label, id) {
 export async function renderPicker(root, params, ctx) {
   const food = await api.food(params.foodId);
   const edit = params.entryId != null;
+  const adjust = params.adjust && params.adjust.index != null ? params.adjust.index : null;  // picking for a recipe row
   const units = food.units;
   const st = { amount: 1, unit: '', idx: 0, seq: 0, ref: null, fav: !!food.favorite };
-  Object.assign(st, initialPick(units, startPreset(edit, params, food, ctx.settings && ctx.settings.use_last)));
+  Object.assign(st, initialPick(units, startPreset(edit || adjust != null, params, food, ctx.settings && ctx.settings.use_last)));
   st.ref = { amount: st.amount, unit: st.unit };  // last amount the user chose; unit changes convert from here so rounding never piles up
   st.idx = Math.max(0, units.findIndex((u) => u.unit === st.unit));
 
@@ -99,13 +100,13 @@ export async function renderPicker(root, params, ctx) {
   const star = h('button', { class: 'star', type: 'button', onclick: toggleFav });
   const estBadge = h('p', { class: 'badge', hidden: '' }, 'Estimated conversion');
   const status = h('div', { 'aria-live': 'polite' });
-  const logBtn = h('button', { class: 'btn primary', type: 'button', onclick: save }, edit ? 'Save changes' : 'Log');
+  const logBtn = h('button', { class: 'btn primary', type: 'button', onclick: save }, adjust != null ? 'Done' : edit ? 'Save changes' : 'Log');
 
   const kcal = h('span', { id: 'pv-kcal' }, '-');
   const mbar = h('div', { class: 'pick-bar' }, h('span', { class: 'macro-bar', role: 'img', hidden: '' }));
   root.appendChild(h('section', { class: 'screen picker' },
     h('div', { class: 'bar' },
-      h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back'), h('span', { class: 'spacer' }), star),
+      h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back'), h('span', { class: 'spacer' }), adjust != null ? null : star),
     h('h1', null, food.name),
     sub, baseLine,
     h('div', { class: 'pick-row' },
@@ -116,7 +117,7 @@ export async function renderPicker(root, params, ctx) {
     h('div', { class: 'macros' }, macroCell('Carbs g', 'pv-carbs'), macroCell('Protein g', 'pv-protein'),
       macroCell('Fat g', 'pv-fat'), macroCell('Fiber g', 'pv-fiber')),
     mbar, estBadge,
-    h('label', { class: 'field' }, h('span', null, 'Meal'), mealSel),
+    adjust != null ? null : h('label', { class: 'field' }, h('span', null, 'Meal'), mealSel),
     status, logBtn,
     edit ? h('button', { class: 'btn danger', type: 'button', onclick: remove }, 'Remove entry') : null));
 
@@ -242,6 +243,7 @@ export async function renderPicker(root, params, ctx) {
   async function save() {
     const m = mealSel.value === 'none' ? null : mealSel.value;
     finishTyping(false);
+    if (adjust != null) { ctx.finishAdjust(adjust, st.amount, st.unit); return; }  // hands the pick back, logs nothing
     logBtn.disabled = true;
     try {
       if (edit) await api.patchEntry(params.entryId, { amount: st.amount, unit: st.unit, meal: m });

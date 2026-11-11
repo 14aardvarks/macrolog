@@ -84,3 +84,29 @@ test('groupByMeal can name the leftover group', () => {
   const g = groupByMeal([{ meal: null, kcal: 5 }, { meal: 'lunch', kcal: 7 }], 'Other');
   assert.deepEqual(g.map((x) => x.label), ['Lunch', 'Other']);
 });
+
+import { rowAmountText, applyRowPick, draftFits } from '../../app/static/js/util.js';
+
+test('applyRowPick sets one row, ticks it and keeps the others', () => {
+  const draft = [{ checked: false, amount: '2', unit: 'slice' }, { checked: true, amount: '1', unit: 'tbsp' }];
+  const out = applyRowPick(draft, 0, 34, 'g');
+  assert.deepEqual(out[0], { checked: true, amount: '34', unit: 'g' });
+  assert.deepEqual(out[1], draft[1]);
+  assert.notEqual(out[1], draft[1]);
+  assert.equal(draft[0].checked, false);
+});
+
+test('rowAmountText formats servings and plain amounts', () => {
+  assert.equal(rowAmountText(1.5, 'g'), '1.5');
+  assert.equal(rowAmountText(120, 'g'), '120');
+  assert.equal(typeof rowAmountText(0.5, 'serving'), 'string');
+});
+
+test('draftFits needs the same recipe, depth and row count', () => {
+  const d = { mealId: 3, depth: 2, rows: [{}, {}] };
+  assert.equal(draftFits(d, 3, 2, 2), true);
+  assert.equal(draftFits(d, 4, 2, 2), false);
+  assert.equal(draftFits(d, 3, 1, 2), false);
+  assert.equal(draftFits(d, 3, 2, 3), false);
+  assert.equal(draftFits(null, 3, 2, 2), false);
+});

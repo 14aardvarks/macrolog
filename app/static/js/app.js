@@ -1,11 +1,11 @@
 import { api, setUnauthorizedHandler } from './api.js';
 import { h, clear, select, field, message, show, cameraIcon } from './dom.js';
 import {
-  MEALS, MEAL_LABELS, parseDecimal, parseAmount, amountText, servingText, setAmountFormat, unitLabel, fmtNum, fmtAmount, groupByMeal, checkedItems, canSaveRecipe, localDate, progressText, remainingText,
+  MEALS, MEAL_LABELS, parseDecimal, parseAmount, amountText, servingText, setAmountFormat, unitLabel, fmtNum, fmtAmount, groupByMeal, checkedItems, canSaveRecipe, rowAmountText, applyRowPick, draftFits, localDate, progressText, remainingText,
   barWidth, debounce, digitsOnly, guessMeal, pctTotal, latestGuard, MEAL_FILTERS, MEAL_FILTER_LABELS, filterByMeal, filterSaved, pageOf, PAGE_SIZE, emptyText,
 } from './util.js';
 import { renderPicker } from './picker.js';
-import { renderScan, barcodeForm } from './scan.js';
+import { renderScan } from './scan.js';
 import { renderAi } from './ai.js';
 import { renderFoodForm } from './foodform.js';
 import { splitChart, macroBar } from './chart.js';
@@ -17,7 +17,7 @@ import { renderClaudeSection, renderSignIn } from './claudekey.js';
 
 const main = document.getElementById('main');
 const nav = document.getElementById('nav');
-const state = { user: null, settings: { start_screen: 'today', default_meal: null, use_last: true, confirm_ai: true, amount_format: 'fraction' }, cleanup: null, depth: 0, tab: 'favorites', addMeal: 'all' };  // addMeal lives for the session only
+const state = { user: null, settings: { start_screen: 'today', default_meal: null, use_last: true, confirm_ai: true, amount_format: 'fraction' }, cleanup: null, depth: 0, tab: 'favorites', addMeal: 'all', draft: null };  // addMeal lives for the session only
 const NAV_OF = { today: 'today', settings: 'settings', admin: 'settings', saved: 'settings', editfood: 'settings' };  // every other screen belongs to Add
 
 const ctx = {
@@ -25,6 +25,11 @@ const ctx = {
   back: () => (state.depth > 0 ? history.back() : go('today', {}, true)),
   get settings() { return state.settings; },
   lookup: (code) => go('lookup', { code }),
+  // Recipe row adjust: the picker hands back the chosen amount and unit, then the recipe screen is shown again with its draft.
+  finishAdjust(index, amount, unit) {
+    if (state.draft) state.draft.rows = applyRowPick(state.draft.rows, index, amount, unit);
+    return ctx.back();
+  },
 };
 
 // ---------- routing ----------
@@ -90,7 +95,7 @@ setUnauthorizedHandler(showLogin);
 
 function startScreen() {
   const s = state.settings.start_screen;
-  if (s === 'scan') return go('scan', {}, true);
+  if (s === 'scan') return go('scan', { autostart: true }, true);
   if (s === 'search') return go('add', { focus: true }, true);
   if (s === 'ai') return go('ai', {}, true);
   return go('today', {}, true);
@@ -266,9 +271,9 @@ function addScreen(root, params) {
   root.appendChild(h('section', { class: 'screen wide add' },
     h('form', { class: 'row add-search', role: 'search', onsubmit: (e) => { e.preventDefault(); liveSearch.cancel(); search(true); } },
       q, h('button', { class: 'btn', type: 'submit' }, 'Search')),
-    h('div', { class: 'row add-scan' }, h('button', { class: 'btn primary scan-btn', type: 'button', onclick: () => go('scan') }, cameraIcon(), 'Scan barcode'),
+    h('div', { class: 'row add-scan' }, h('button', { class: 'btn primary scan-btn', type: 'button', onclick: () => go('scan', { autostart: true }) }, cameraIcon(), 'Scan barcode'),
       h('button', { class: 'btn', type: 'button', onclick: () => go('manual', {}) }, 'Enter manually')),
-    barcodeForm(ctx.lookup), mealPick, tabBar, h('div', { class: 'tab-list' }, listBox)));
+    mealPick, tabBar, h('div', { class: 'tab-list' }, listBox)));
   paintTabs();
   if (params.focus) root.addEventListener('mounted', () => q.focus());
 }
@@ -343,13 +348,30 @@ async function mealScreen(root, params) {
   if (!meal) throw new Error('Recipe not found');
   const status = h('div', { 'aria-live': 'polite' });
   const mealSel = mealSelect(params.meal || defaultMeal());
-  const rows = meal.items.map((it) => {
-    const box = h('input', { type: 'checkbox', checked: true, 'aria-label': 'Include ' + it.food.name });
-    const amt = h('input', { type: 'text', inputmode: 'decimal', value: it.unit === 'serving' ? servingText(it.amount) : fmtAmount(it.amount), 'aria-label': 'Amount of ' + it.food.name });
-    return { it, box, amt, el: h('li', { class: 'item meal-item' }, box, h('span', { class: 'item-title' }, it.food.name), amt, h('span', { class: 'unit' }, unitLabel(it.unit))) };
+  const draft = draftFits(state.draft, meal.id, state.depth, meal.items.length) ? state.draft : null;
+  state.draft = null;
+  if (draft && draft.meal !== undefined) mealSel.value = draft.meal;
+  const rows = meal.items.map((it, i) => {
+    const d = draft ? draft.rows[i] : null;
+    const row = { it, unit: d ? d.unit : it.unit };
+    row.box = h('input', { type: 'checkbox', checked: d ? d.checked : true, 'aria-label': 'Include ' + it.food.name });
+    row.amt = h('input', { type: 'text', inputmode: 'decimal', value: d ? d.amount : rowAmountText(it.amount, it.unit), 'aria-label': 'Amount of ' + it.food.name });
+    row.unitEl = h('span', { class: 'unit' }, unitLabel(row.unit));
+    const name = h('button', { class: 'item-name', type: 'button', 'aria-label': 'Adjust ' + it.food.name, onclick: () => adjust(i) },
+      h('span', { class: 'item-name-text' }, it.food.name), h('span', { class: 'item-name-hint', 'aria-hidden': 'true' }, 'Adjust \u203A'));
+    row.el = h('li', { class: 'item meal-item' }, row.box, name, row.amt, row.unitEl);
+    return row;
   });
+  // Open the picker for one ingredient. The screen is rebuilt on return, so every row is saved first.
+  function adjust(i) {
+    const r = rows[i];
+    state.draft = { mealId: meal.id, depth: state.depth, meal: mealSel.value,
+      rows: rows.map((x) => ({ checked: x.box.checked, amount: x.amt.value, unit: x.unit })) };
+    const a = parseAmount(r.amt.value);
+    go('picker', { foodId: r.it.food_id, adjust: { index: i }, ...(a != null && a > 0 ? { amount: a, unit: r.unit } : { unit: r.unit }) });
+  }
   async function log() {
-    const { items, error } = checkedItems(rows.map((r) => ({ checked: r.box.checked, amount: r.amt.value, food_id: r.it.food_id, unit: r.it.unit, name: r.it.food.name })));
+    const { items, error } = checkedItems(rows.map((r) => ({ checked: r.box.checked, amount: r.amt.value, food_id: r.it.food_id, unit: r.unit, name: r.it.food.name })));
     if (error) { show(status, message(error, 'error')); return; }
     try { await api.logMeal(meal.id, { items, meal: mealSel.value === 'none' ? null : mealSel.value }); await go('today', {}, true); } catch (e) {
       show(status, message(e.message, 'error'));
@@ -426,7 +448,7 @@ const SCREENS = {
   login: loginScreen, admin: (root) => renderAdmin(root, ctx), today: todayScreen, add: addScreen, lookup: lookupScreen, meal: mealScreen, settings: settingsScreen,
   saved: (root) => renderSaved(root, ctx), editfood: (root, p) => renderFoodForm(root, { edit: p.food }, ctx),
   picker: (root, p) => renderPicker(root, p, ctx),
-  scan: (root) => renderScan(root, ctx),
+  scan: (root, p) => { const auto = !!p.autostart; p.autostart = false; return renderScan(root, ctx, { autostart: auto }); },
   ai: (root, p) => renderAi(root, p, ctx),
   manual: (root, p) => renderFoodForm(root, { barcode: p.barcode }, ctx),
 };

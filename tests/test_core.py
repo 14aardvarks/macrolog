@@ -395,6 +395,18 @@ def test_favorites_quick_default_amount_and_isolation(a, b):
 
 # ---------- meals ----------
 
+def test_meal_log_items_accept_any_supported_unit(a):
+    pb = food(a, PB)
+    m = a.post("/api/meals", json={"name": "PB", "items": [{"food_id": pb["id"], "amount": 2, "unit": "tbsp"}]}).json()
+    supported = [u["unit"] for u in a.get(f"/api/foods/{pb['id']}").json()["units"]]
+    assert {"g", "oz", "cup", "ml"} <= set(supported)
+    for unit, amount in (("g", 16), ("cup", 0.25), ("oz", 1)):
+        e = a.post(f"/api/meals/{m['id']}/log", json={"items": [{"food_id": pb["id"], "amount": amount, "unit": unit}]}).json()["entries"][0]
+        assert (e["unit"], e["amount"]) == (unit, amount) and e["kcal"] > 0
+    assert a.post(f"/api/meals/{m['id']}/log", json={"items": [{"food_id": pb["id"], "amount": 1, "unit": "slice"}]}).status_code == 400
+    assert a.get("/api/meals").json()["meals"][0]["items"][0]["unit"] == "tbsp"  # the saved recipe is untouched
+
+
 def test_meal_create_list_log_delete(a, b):
     bread, pb = food(a, BREAD), food(a, PB)
     items = [{"food_id": bread["id"], "amount": 2, "unit": "slice"}, {"food_id": pb["id"], "amount": 1, "unit": "tbsp"}]

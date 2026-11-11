@@ -201,6 +201,19 @@ export function checkedItems(rows) {
   return items.length ? { items } : { error: 'Tick at least one item.' };
 }
 
+// Text for a recipe row's amount box: servings follow the fraction/decimal setting, everything else is a plain number.
+export const rowAmountText = (amount, unit) => (unit === SERVING ? servingText(amount) : fmtAmount(amount));
+
+// Rows of the recipe screen are kept as drafts {checked, amount (text), unit} while the picker is open.
+// Returns a copy with row i set to the picked amount and unit and ticked. Other rows are untouched.
+export function applyRowPick(draft, i, amount, unit) {
+  return draft.map((r, k) => (k === i ? { ...r, checked: true, amount: rowAmountText(amount, unit), unit } : { ...r }));
+}
+
+// A draft is only restored when it was saved for this recipe, from this point in the history, and has one row per item.
+export const draftFits = (draft, mealId, depth, count) =>
+  !!draft && draft.mealId === mealId && draft.depth === depth && Array.isArray(draft.rows) && draft.rows.length === count;
+
 // Save as recipe is allowed with at least one ticked row and a non-empty name.
 export const canSaveRecipe = (ticked, name) => ticked > 0 && String(name || '').trim() !== '';
 

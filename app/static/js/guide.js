@@ -5,7 +5,8 @@ export const GUIDE_TITLE = 'How to use Macrolog';
 export const GUIDE = [
   { heading: 'Logging a food', bullets: [
     'Tap Add, then pick from Favorites, Yesterday or Recipes.',
-    'Or search, scan a barcode, or type the digits under the barcode.',
+    'Or search, or tap Scan barcode. The camera starts at once.',
+    'No camera? On the scan screen, type the digits under the barcode.',
     'Set the amount, then tap Log.',
   ] },
   { heading: 'The Meal selector on Add', bullets: [
@@ -38,6 +39,7 @@ export const GUIDE = [
     'On Today, tap Save as recipe under a meal.',
     'Log it later from Add, then Recipes.',
     'Untick items to skip them, and change amounts.',
+    'Tap an item\'s name to adjust it in the picker, with any unit, then tap Done.',
   ] },
   { heading: 'Today', bullets: [
     'The chart splits your calories, with your goal in the middle.',

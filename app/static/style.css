@@ -78,6 +78,10 @@ input[type=checkbox] { width: 24px; height: 24px; flex: none; accent-color: var(
 .item-sub { color: var(--muted); font-size: .875rem; }
 .meal-item { padding: 4px 8px; }
 .meal-item .item-title { flex: 1; }
+.item-name { flex: 1; min-width: 0; min-height: 44px; display: flex; align-items: center; gap: 6px; padding: 0 4px; border: 0;
+  background: transparent; color: inherit; font: inherit; font-weight: 600; text-align: left; cursor: pointer; border-radius: 8px; }
+.item-name-text { flex: 0 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.item-name-hint { flex: none; margin-left: auto; color: var(--muted); font-size: .8125rem; font-weight: 400; white-space: nowrap; }
 .meal-item input[type=text] { width: 80px; text-align: right; }
 .unit { color: var(--muted); min-width: 36px; }
 .group { display: flex; justify-content: space-between; }
@@ -277,8 +281,7 @@ input[type=text], input[type=search], input[type=password], input[type=email], s
   .add > .add-scan { grid-column: 2; grid-row: 1; }
   .add > .meal-pick { grid-column: 1; grid-row: 2; }
   .add > .tabs { grid-column: 2; grid-row: 2; margin: 0 0 8px; }
-  .add > .tab-list { grid-column: 1 / -1; grid-row: 4; max-height: none; min-height: 0; overflow: visible; margin-top: 8px; }
-  .add > div:not(.tab-list):not(.add-scan):not(.tabs) { grid-column: 1 / -1; grid-row: 3; }
+  .add > .tab-list { grid-column: 1 / -1; grid-row: 3; max-height: none; min-height: 0; overflow: visible; margin-top: 8px; }
   .tab-list .list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; background: transparent; border: 0; }
   .tab-list .list > .item { background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
   .tab-list .list > .item:last-child { border-bottom: 1px solid var(--line); }

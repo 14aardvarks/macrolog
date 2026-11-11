@@ -22,7 +22,7 @@ Dark mode follows the device setting, and the layout also works on desktop.
 - Custom foods can be created by hand.
 - The Today screen shows calorie and macro bars against your targets, with entries grouped by meal.
 - Each user has their own daily goal (calories and the carb, protein and fat split) and start screen.
-- Barcode scanning uses the browser's BarcodeDetector when it exists. Otherwise a vendored ZXing decoder (Apache-2.0, in `app/static/vendor`) loads on demand, then a photo fallback, then typed digits.
+- Barcode scanning uses the browser's BarcodeDetector when it exists. Otherwise a vendored ZXing decoder (Apache-2.0, in `app/static/vendor`) loads on demand, then a photo fallback, then typed digits on the scan screen.
 - Each food shows a thin bar with its calorie share from carbs, protein and fat (blue, green, red) on Today, in Add lists and search results, and live in the picker.
 - Installable as an app, with PNG and maskable icons and a short launch splash. iOS apple-touch-startup-image sizes are not provided, so iOS shows its own blank launch screen briefly.
 - Light and dark themes follow the system setting.
@@ -34,12 +34,12 @@ Dark mode follows the device setting, and the layout also works on desktop.
 
 The same guide is in Settings under "How to use Macrolog".
 
-- Tap Add, then pick from Favorites, Yesterday or Recipes, or search, scan, or type the barcode digits. Set the amount and tap Log.
+- Tap Add, then pick from Favorites, Yesterday or Recipes, or search, or tap Scan barcode (the camera starts at once; if it cannot, type the barcode digits on the scan screen). Set the amount and tap Log.
 - The Meal selector on Add filters the lists by meal. All shows everything.
 - In the picker, the wheel chooses the unit, and the chips set 1/4 to 2 servings. Macros update live.
 - A food opens with the amount and unit from your last entry. Turn this off in Settings with "Start from my last entry" to open on the label's serving instead.
 - Tap the star to make a favorite. On Today, each meal has "Save as recipe": untick any entries, name it, and the recipe is tagged with that meal. Days are never saved as recipes.
-- When you log a recipe, untick items to leave them out and adjust amounts. Only ticked items are logged.
+- When you log a recipe, untick items to leave them out and adjust amounts. Only ticked items are logged. Tap an item's name to adjust it in the picker with any of its units, then tap Done. That changes only this log, not the recipe or the food's last used amount.
 - If a food is not found, ask Claude to read the label photo (if set up) or enter it manually, and check the numbers.
 - Tag favorites and recipes with Breakfast, Lunch, Dinner or Snack. A chosen meal on Add shows items tagged with it plus untagged items, with the ones you log most often as that meal first. Logging a favorite or recipe with a meal adds that tag.
 - Settings, then Saved, lists your favorites, recipes and the foods you created. Edit meal tags, rename or delete recipes, change recipe amounts, and edit or delete your own foods (a food already in a log entry or recipe cannot be deleted, and only its name can change).

@@ -79,23 +79,23 @@ export function barcodeForm(onCode) {
 }
 
 // Scan screen. ctx.lookup(code) handles a found code. Returns a cleanup function that stops the camera.
-export function renderScan(root, ctx) {
+export function renderScan(root, ctx, opts = {}) {
   let stream = null;
   let timer = null;
   const status = h('div', { 'aria-live': 'polite' });
   const video = h('video', { class: 'video', playsinline: '', muted: '', hidden: '', 'aria-label': 'Camera view' });
   video.muted = true;
-  const startBtn = h('button', { class: 'btn primary', type: 'button', onclick: start }, 'Start camera');
+  const startBtn = h('button', { class: 'btn', type: 'button', hidden: '', onclick: start }, 'Try camera again');  // only shown after a failed start
   const stopBtn = h('button', { class: 'btn', type: 'button', hidden: '', onclick: stop }, 'Stop camera');
   const fileIn = h('input', { type: 'file', accept: 'image/*', capture: 'environment', class: 'visually-hidden', onchange: onFile });
   const fileBtn = h('label', { class: 'btn' }, 'Take or choose a photo', fileIn);
 
   root.appendChild(h('section', { class: 'screen' },
     h('h1', null, 'Scan a barcode'),
-    h('p', { class: 'sub' }, 'The camera only starts when you tap Start camera.'),
+    h('p', { class: 'sub' }, 'The camera starts as soon as you tap Scan barcode. If it cannot, type the digits under the barcode below.'),
     video, status,
     h('div', { class: 'row wrap' }, startBtn, stopBtn, fileBtn),
-    h('h2', null, 'Or type the digits'),
+    h('h2', null, 'Type the digits'),
     barcodeForm(found)));
 
   function stop() {
@@ -106,36 +106,46 @@ export function renderScan(root, ctx) {
     video.srcObject = null;
     video.hidden = true;
     stopBtn.hidden = true;
-    startBtn.hidden = false;
   }
   function found(code) { stop(); ctx.lookup(code); }
 
   async function start() {
     const md = navigator.mediaDevices;
     if (!md || !md.getUserMedia || window.isSecureContext === false) {
-      show(status, message('The camera needs a secure (HTTPS) page. Take a photo instead, or type the digits.', 'error'));
+      show(status, message('The camera needs a secure (HTTPS) page. Take a photo instead, or type the digits below.', 'error'));
       return;
     }
+    startBtn.hidden = true;
     show(status, message('Starting camera...'));
+    // Called synchronously from the Scan barcode tap (go and render run up to here without awaiting), so iOS and Chrome
+    // still count it as a user gesture. Ask for the camera first, then load the barcode reader.
+    try {
+      stream = await md.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+    } catch (e) {
+      const denied = e && (e.name === 'NotAllowedError' || e.name === 'SecurityError');
+      const none = e && (e.name === 'NotFoundError' || e.name === 'OverconstrainedError');
+      startBtn.hidden = false;
+      show(status, message((denied ? 'Camera access was blocked. Allow it in the browser settings to scan.' : none ? 'No camera was found.' : 'Could not start the camera.') +
+        ' Take a photo instead, or type the digits below.', 'error'));
+      return;
+    }
     let detect;
     try { detect = await getDetector(); } catch (e) {
-      show(status, message('Barcode reading is not available in this browser. Type the digits instead.', 'error'));
+      stop();
+      show(status, message('Barcode reading is not available in this browser. Type the digits below.', 'error'));
       return;
     }
     try {
-      stream = await md.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
       video.srcObject = stream;
       video.hidden = false;
       stopBtn.hidden = false;
-      startBtn.hidden = true;
       await video.play();
       show(status, message('Point the camera at the barcode.'));
       loop(detect);
     } catch (e) {
       stop();
-      const denied = e && (e.name === 'NotAllowedError' || e.name === 'SecurityError');
-      show(status, message((denied ? 'Camera access was blocked.' : 'Could not start the camera.') +
-        ' Take a photo instead, or type the digits.', 'error'));
+      show(status, message('Could not start the camera. Take a photo instead, or type the digits below.', 'error'));
+      startBtn.hidden = false;
     }
   }
 
@@ -157,11 +167,12 @@ export function renderScan(root, ctx) {
       const detect = await getDetector();
       const code = await detect(await loadImage(file));
       if (code) found(code);
-      else show(status, message('No barcode found in that photo. Try again closer, or type the digits.', 'error'));
+      else show(status, message('No barcode found in that photo. Try again closer, or type the digits below.', 'error'));
     } catch (e) {
       show(status, message(e.message + '. You can still type the digits.', 'error'));
     }
     fileIn.value = '';
   }
+  if (opts.autostart) start();
   return stop;
 }
