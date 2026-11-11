@@ -15,7 +15,7 @@ export function viewToggle(current, onPick) {
 export function dayTable(entries, opts) {
   const t = buildTable(entries, opts.display);
   const head = h('tr', null, h('th', { scope: 'col', class: 'food-col' }, 'Food'), h('th', { scope: 'col', class: 'amt-col' }, 'Amount'),
-    t.cols.map((c) => h('th', { scope: 'col', class: 'num', 'aria-label': columnHeader(c) }, c.label, c.unit ? h('span', { class: 'th-unit' }, c.unit) : null)), h('th', { scope: 'col', class: 'del-col' }, h('span', { class: 'sr-only' }, 'Remove')));
+    t.cols.map((c) => h('th', { scope: 'col', class: 'num', 'aria-label': columnHeader(c) }, c.label, c.unit ? h('span', { class: 'th-unit' }, ' (' + c.unit.replace(/^\(|\)$/g, '') + ')') : null)), h('th', { scope: 'col', class: 'del-col' }, h('span', { class: 'sr-only' }, 'Remove')));
   const rows = [];
   for (const g of t.groups) {
     rows.push(h('tr', { class: 'meal-row' }, h('th', { scope: 'row', class: 'food-col' }, g.label), h('td', { class: 'amt-col' }, 'Subtotal'),

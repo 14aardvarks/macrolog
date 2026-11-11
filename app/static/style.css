@@ -341,7 +341,7 @@ input[type=text], input[type=search], input[type=password], input[type=email], s
 .day-table th, .day-table td { padding: 6px 8px; border-bottom: 1px solid var(--line); background: var(--card); text-align: left; font-weight: 400; vertical-align: middle; }
 .day-table thead th { font-weight: 600; color: var(--muted); line-height: 1.2; vertical-align: bottom; }
 .day-table thead th.num { white-space: normal; }
-.th-unit { display: block; font-weight: 400; font-size: .75rem; }
+.th-unit { font-weight: 400; font-size: .75rem; }
 .day-table .num { text-align: right; white-space: nowrap; }
 .day-table .amt-col { white-space: nowrap; color: var(--muted); }
 .day-table .food-col { position: sticky; left: 0; z-index: 1; min-width: 120px; max-width: 160px; font-weight: 600; border-right: 1px solid var(--line); overflow-wrap: anywhere; }
