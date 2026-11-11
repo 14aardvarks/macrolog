@@ -1,7 +1,7 @@
 // Refresh Nutrients: fills blank micronutrients from the food's original source. Never changes existing values.
 import { api } from './api.js';
 import { h, message, show } from './dom.js';
-import { missingMicros, refreshTargets, bulkSummary, pendingPlan, planText } from './util.js';
+import { missingMicros, refreshTargets, bulkSummary, pendingPlan } from './util.js';
 
 // food is updated in place. onDone(result) runs after a successful call. Returns { el } with a button and a status line.
 export function refreshControl(food, onDone) {
@@ -62,6 +62,7 @@ export function refreshAllControl(getFoods, reload) {
 }
 
 // Per scope (a day or "all") the ids already checked in this visit and the last summary, kept across repaints.
+const NOTE_MS = 8000;
 const scopes = new Map();
 function scopeState(key) {
   if (!scopes.has(key)) scopes.set(key, { done: new Set(), note: null });
@@ -81,7 +82,9 @@ export function refreshLoggedControl({ scope, load, label, quiet, onFinish }) {
       const plan = pendingPlan((await load()).ids, st.done);
       btn.hidden = !plan.todo.length;
       el.hidden = !!quiet && !plan.total && !st.note;
-      show(status, st.note ? message(st.note.text, st.note.kind) : message(planText(plan)));
+      if (st.note && Date.now() >= st.note.until) st.note = null;
+      show(status, st.note ? message(st.note.text, st.note.kind) : '');
+      if (st.note) setTimeout(paint, st.note.until - Date.now() + 50);  // the summary shows only for a few seconds
     } catch (e) {
       el.hidden = !!quiet;
       show(status, message(e.message, 'error'));
@@ -93,9 +96,9 @@ export function refreshLoggedControl({ scope, load, label, quiet, onFinish }) {
       const plan = pendingPlan((await load()).ids, st.done);
       const sum = await refreshBatch(plan.todo, plan.left);
       sum.checkedIds.forEach((id) => st.done.add(id));
-      st.note = { text: bulkSummary(sum), kind: sum.failed ? 'error' : '' };
+      st.note = { text: bulkSummary(sum), kind: sum.failed ? 'error' : '', until: Date.now() + NOTE_MS };
     } catch (e) {
-      st.note = { text: e.message, kind: 'error' };
+      st.note = { text: e.message, kind: 'error', until: Date.now() + NOTE_MS };
     }
     btn.disabled = false;
     if (onFinish) onFinish(); else await paint();
