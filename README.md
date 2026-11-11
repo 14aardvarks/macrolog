@@ -2,6 +2,18 @@
 
 Macrolog is a small self-hosted calorie and macro tracker for a household. It is built to be quick: pick up the phone, find the food, enter the amount, put the phone down. It works without any AI service. Claude is an optional helper that reads nutrition labels from photos.
 
+## Screenshots
+
+| Today | Add | Picker | Settings |
+| --- | --- | --- | --- |
+| ![Today](docs/screenshots/phone-today.png) | ![Add](docs/screenshots/phone-add.png) | ![Picker](docs/screenshots/phone-picker.png) | ![Settings](docs/screenshots/phone-settings.png) |
+
+Dark mode follows the device setting, and the layout also works on desktop.
+
+![Today, dark mode](docs/screenshots/phone-today-dark.png)
+![Today, desktop](docs/screenshots/desktop-today.png)
+![Picker, desktop](docs/screenshots/desktop-picker.png)
+
 ## Features
 
 - Log food by searching, by scanning a barcode, or from favorites, yesterday's entries and saved recipes, with a Meal selector to show one meal at a time.
