@@ -170,7 +170,7 @@ nav button[aria-current=page] { color: var(--accent); box-shadow: inset 0 3px 0 
 .ring-empty { stroke: var(--track); }
 .ring-goal .seg { stroke-width: 1.5; }
 .legend { flex: 1; min-width: 0; }
-.legend-head { margin: 0 0 6px; color: var(--muted); font-size: .8rem; }
+.legend-head { margin: 0 0 6px; color: var(--text); font-size: .95rem; font-weight: 600; }
 .legend ul { list-style: none; margin: 0; padding: 0; }
 .legend li { display: grid; grid-template-columns: 14px 1fr; column-gap: 8px; align-items: baseline; padding: 4px 0; }
 .legend .sw { width: 14px; height: 14px; border-radius: 3px; grid-row: 1 / span 2; align-self: center; }

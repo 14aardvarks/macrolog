@@ -17,13 +17,14 @@ export function splitChart(d) {
   const pg = percentParts(goal);
   const kcal = fmtNum(d.totals.kcal, 0);
   const goalKcal = fmtNum(d.targets.kcal, 0);
-  const art = svg('svg', { viewBox: '-4 -22 168 186', class: 'donut', role: 'img',
-    'aria-label': kcal + ' of ' + goalKcal + ' calories. ' + (eaten ? 'Outer ring eaten, inner ring goal' : 'Nothing logged yet') },
+  const art = svg('svg', { viewBox: '-4 -4 168 168', class: 'donut', role: 'img',
+    'aria-label': kcal + ' of ' + goalKcal + ' calories. ' + (eaten ? 'Outer ring logged, inner ring goal' : 'Nothing logged yet') },
   ring(80, 80, 76, 50, eaten, 'ring-eaten'), ring(80, 80, 42, 30, goal, 'ring-goal'),
   svg('text', { x: 80, y: 67, class: 'donut-unit', 'text-anchor': 'middle' }, 'Goal'),
   svg('text', { x: 80, y: 86, class: 'donut-num', 'text-anchor': 'middle' }, goalKcal),
-  svg('text', { x: 80, y: 97, class: 'donut-unit', 'text-anchor': 'middle' }, 'kcal'),
-  svg('text', { x: 80, y: -8, class: 'donut-goal', 'text-anchor': 'middle' }, kcal + ' kcal eaten'));
+  svg('text', { x: 80, y: 97, class: 'donut-unit', 'text-anchor': 'middle' }, 'kcal'));
+  const goalNum = Number(d.targets.kcal);
+  const loggedPct = goalNum > 0 ? ' (' + Math.round(Number(d.totals.kcal) / goalNum * 100) + '%)' : '';
   const rows = MACRO_KEYS.map((k) => h('li', null,
     h('span', { class: 'sw sw-' + k, 'aria-hidden': 'true' }),
     h('div', { class: 'lg-main' }, h('span', { class: 'lg-name' }, LABELS[k]),
@@ -31,6 +32,7 @@ export function splitChart(d) {
     h('div', { class: 'lg-goal' }, 'Goal ' + pg[k] + '%')));
   return h('div', { class: 'split' }, art,
     h('div', { class: 'legend' },
+      h('p', { class: 'legend-head' }, 'Logged: ' + kcal + ' kcal' + loggedPct),
       h('ul', null, rows)));
 }
 
