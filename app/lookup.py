@@ -16,6 +16,7 @@ from .units import MASS, VOLUME, parse_unit
 OFF_URL = "https://world.openfoodfacts.org/api/v2/product/{code}.json"
 OFF_FIELDS = "code,product_name,generic_name,brands,serving_size,serving_quantity,serving_quantity_unit,nutriments"
 FDC_URL = "https://api.nal.usda.gov/fdc/v1/foods/search"
+FDC_DETAIL_URL = "https://api.nal.usda.gov/fdc/v1/food/{id}"
 USER_AGENT = "macrolog/0.1"
 FDC_NUTRIENTS = {"208": "kcal", "205": "carbs", "203": "protein", "204": "fat", "291": "fiber"}
 # Micronutrients: our key -> (unit we store, OFF nutriment name, FDC nutrient id, FDC nutrient number, FDC labelNutrients name).
@@ -323,3 +324,62 @@ async def search(query, limit=8):
     except (httpx.HTTPError, ValueError):
         return []
     return [f for f in foods if f][:limit]
+
+
+# ---------- refresh from the original source ----------
+
+def refresh_kind(food):
+    """How a saved food can be looked up again: "off" (source id), "fdc" (fdc id), "barcode" or None."""
+    src, sid = food.get("source"), str(food.get("source_id") or "").strip()
+    if src == "off" and sid:
+        return "off"
+    if src == "fdc" and sid.isdigit():
+        return "fdc"
+    return "barcode" if normalize_barcode(food.get("barcode"))["candidates"] else None
+
+
+def _detail_to_search(item):
+    """Reshape an FDC food detail (foodNutrients with a nested nutrient and amount) like a search hit."""
+    out = []
+    for fn in item.get("foodNutrients") or []:
+        nut = fn.get("nutrient") or {}
+        out.append({"nutrientId": nut.get("id") or fn.get("nutrientId"),
+                    "nutrientNumber": nut.get("number") or fn.get("nutrientNumber") or fn.get("number"),
+                    "unitName": nut.get("unitName") or fn.get("unitName"),
+                    "value": fn.get("amount", fn.get("value"))})
+    return {**item, "foodNutrients": out}
+
+
+async def _fdc_detail(client, fdc_id):
+    r = await client.get(FDC_DETAIL_URL.format(id=fdc_id), params=_fdc_params())
+    if r.status_code == 404:
+        return None
+    r.raise_for_status()
+    return fdc_food(_detail_to_search(r.json()))
+
+
+async def refresh(food):
+    """Look a saved food up again in its original source. Returns {"food", "note", "error"} where error is
+    None, "nothing" (no source id or barcode), "rate_limited" or "unreachable". Never raises."""
+    kind = refresh_kind(food)
+    if kind is None:
+        return {"food": None, "note": "This food has no source or barcode, so there is nothing to look up", "error": "nothing"}
+    notes, cands = [], normalize_barcode(food.get("barcode"))["candidates"]
+    sid = str(food.get("source_id") or "")
+    steps = {"off": [("Open Food Facts", lambda c: _off(c, [sid], notes))],
+             "fdc": [("USDA FoodData Central", lambda c: _fdc_detail(c, sid))],
+             "barcode": [("Open Food Facts", lambda c: _off(c, cands, notes)),
+                         ("USDA FoodData Central", lambda c: _fdc(c, cands, notes))]}[kind]
+    async with _client() as client:
+        for name, step in steps:
+            try:
+                found = await step(client)
+            except httpx.HTTPStatusError as e:
+                limited = e.response.status_code == 429
+                return {"food": None, "error": "rate_limited" if limited else "unreachable",
+                        "note": f"{name} rate limit reached, try again later" if limited else f"{name} unreachable"}
+            except (httpx.HTTPError, ValueError):
+                return {"food": None, "error": "unreachable", "note": f"{name} unreachable"}
+            if found:
+                return {"food": found, "note": "", "error": None}
+    return {"food": None, "error": None, "note": "; ".join(notes) or "The source no longer lists this food"}

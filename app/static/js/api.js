@@ -88,6 +88,7 @@ export const api = {
   removeFromLists: (id) => send('POST', '/api/saved/favorites/' + id + '/remove'),
   patchMeal: (id, body) => send('PATCH', '/api/meals/' + id, body),
   patchFood: (id, body) => send('PATCH', '/api/foods/' + id, body),
+  refreshNutrients: (id) => send('POST', '/api/foods/' + id + '/refresh-nutrients'),
   deleteFood: (id) => request('DELETE', '/api/foods/' + id),
   aiStatus: (images) => get('/api/ai/status', images ? { images } : undefined),
   aiLabel: (form) => request('POST', '/api/ai/label', { form }),

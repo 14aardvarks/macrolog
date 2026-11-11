@@ -2,8 +2,9 @@ import { api } from './api.js';
 import { h, clear, select, message, show } from './dom.js';
 import { fillMacroBar } from './chart.js';
 import { microGrid } from './micros.js';
+import { refreshControl } from './refresh.js';
 import {
-  MEALS, MEAL_LABELS, parseAmount, fmtNum, fmtAmount, indexFromScroll, debounce, guessMeal,
+  MEALS, MEAL_LABELS, canRefresh, parseAmount, fmtNum, fmtAmount, indexFromScroll, debounce, guessMeal,
   initialPick, startPreset, convertAmount, gramsFor, SERVING, PCT, amountText, amountLabel, amountValues, withValue,
 } from './util.js';
 
@@ -120,7 +121,7 @@ export async function renderPicker(root, params, ctx) {
     h('div', { class: 'kcal-big' }, kcal, ' kcal'),
     h('div', { class: 'macros' }, macroCell('Carbs g', 'pv-carbs'), macroCell('Protein g', 'pv-protein'),
       macroCell('Fat g', 'pv-fat'), macroCell('Fiber g', 'pv-fiber')),
-    showBar ? mbar : null, micros.el, estBadge,
+    showBar ? mbar : null, micros.el, canRefresh(food) ? refreshControl(food, () => runPreview()).el : null, estBadge,
     adjust != null ? null : h('label', { class: 'field' }, h('span', null, 'Meal'), mealSel),
     status, logBtn,
     edit ? h('button', { class: 'btn danger', type: 'button', onclick: remove }, 'Remove Entry') : null));

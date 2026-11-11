@@ -165,6 +165,12 @@ POST /api/saved/favorites/{food_id}/remove           # unfavorite + delete tags 
 PATCH /api/meals/{id} {"name"?,"meals"?,"items"?}    # items replaces the list (amounts, units, removals), at least one item
 PATCH /api/foods/{id} {name,brand,barcode,label_text,serving_*,kcal,carbs,protein,fat,fiber}   # creator only (403 otherwise);
                                                      # 409 when the food is in any entry or recipe and nutrition or serving changes (rename still allowed)
+POST /api/foods/{id}/refresh-nutrients -> {"food","filled":[nutrient...],"message"}
+        # looks the food up again (off: source_id, fdc: fdc id via /fdc/v1/food/{id}, custom or ai with a barcode: barcode lookup) and fills ONLY
+        # micronutrients that are null, scaled to the stored serving by weight or volume when the source serving differs; never overwrites a value or
+        # changes name, calories or macros, so it works on foods already in logs or recipes. Empty filled means the source had no more data.
+        # 400 no source id or barcode, 403 custom or ai food of someone else (off and fdc foods are shared), 404, 409 serving cannot be compared,
+        # 429 source rate limit (USDA included), 502 source unreachable. lookup.refresh(food) and lookup.refresh_kind(food) do the network part.
 DELETE /api/foods/{id}                               # creator only; 409 when in any entry or recipe, or in another user's favorites
 ```
 Quick favorites items also carry `meals` (tags) and `counts` ({meal: times logged}); recipes carry `meals` and `counts` (from recipe_logs).
@@ -281,6 +287,7 @@ Screens: Login, Today, Add, Picker, Claude fallback, Settings. Bottom nav: Today
   with any warnings, and only saves via POST /api/foods after the user confirms.
 - Add: Search, Scan and the Meal selector sit above the Favorites/Yesterday/Recipes tabs and list. Lists show 20 items with a Show More button.
 - Saved (Settings, then Saved): Favorites, Recipes and My foods lists with meal tag chips, rename, delete, recipe item editing, Remove From My Lists, and the food form for My foods.
+  Refresh Nutrients (js/refresh.js) is a button in the food edit form (shown for every edited food, with a hint when it has no barcode) and in the picker (only when the food can be looked up and has a blank nutrient); it fills the blank boxes and never overwrites. My Foods also has Refresh All Missing, at most 10 foods per tap, one after another, stopping at a rate limit, with a summary of how many were done and how many are left.
   A search box filters all three sections by name (every word must match, case ignored). The Meal filter (All, Breakfast, Lunch, Dinner, Snack, Untagged) uses the tags and applies to Favorites and Recipes only, strictly (an untagged item is not shown under a meal here). Each section shows 20 items with a Show More button. Remove and delete reload in place, so the search and filter stay.
 - Create Recipe (Add tab button, js/recipe.js): name, ingredients, meal tags, Save (POST /api/meals). Add Ingredient opens the Add screen in ingredient mode (search, Scan Barcode, Enter Manually, Favorites and Past Foods tabs, no meal choice); a food opens the picker with a Done button, which returns the amount and unit to the draft (the picker's Serving unit works as usual). Tapping a draft ingredient adjusts it the same way, and the x removes it. The draft lives in app state until Save, and Save returns to Add on the Recipes tab.
 - Settings: start screen, goals (kcal and split), sign out, Claude status (used/cap), personal Claude key and cap,

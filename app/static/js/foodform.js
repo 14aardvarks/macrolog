@@ -1,6 +1,7 @@
 import { api } from './api.js';
 import { h, field, message, show, select } from './dom.js';
-import { sentence, parseDecimal, fmtAmount, MEALS, MEAL_LABELS, guessMeal, MICROS } from './util.js';
+import { refreshControl } from './refresh.js';
+import { sentence, canLookUp, parseDecimal, fmtAmount, MEALS, MEAL_LABELS, guessMeal, MICROS } from './util.js';
 
 const NUM = [
   ['serving_amount', 'Serving amount', true, 'e.g. 2'],
@@ -58,6 +59,8 @@ export function renderFoodForm(root, opts, ctx) {
       h('p', { class: 'sub' }, 'Optional. Leave a box empty when the label does not show it.'),
       h('div', { class: 'grid2' }, MORE.map((k) => f[k]))),
     f.barcode,
+    edit ? (canLookUp(edit) ? refreshControl(edit, fillBlanks).el
+      : h('p', { class: 'sub' }, 'Nothing to look up. Add a barcode to fill blank nutrients from Open Food Facts or USDA.')) : null,
     edit ? null : h('label', { class: 'field' }, h('span', null, 'Meal when you log it'), mealSel),
     fromAi ? h('label', { class: 'check' }, confirm, ' I checked these values against the label') : null,
     status, saveBtn);
@@ -68,6 +71,13 @@ export function renderFoodForm(root, opts, ctx) {
     for (const k of ['name', 'serving_unit', ...NUM.filter((n) => n[2]).map((n) => n[0])]) {
       f[k].input.setAttribute('aria-invalid', f[k].input.value.trim() === '' ? 'true' : 'false');
     }
+  }
+  // After Refresh Nutrients: put the new values into boxes that are still empty and open More Nutrients.
+  function fillBlanks() {
+    for (const k of ['fiber', ...MORE]) {
+      if (edit[k] != null && f[k].input.value.trim() === '') f[k].input.value = fmtAmount(edit[k]);
+    }
+    if (MORE.some((k) => edit[k] != null)) form.querySelector('details.more').open = true;
   }
   function num(k) { const t = f[k].input.value.trim(); return t === '' ? null : parseDecimal(t); }
 

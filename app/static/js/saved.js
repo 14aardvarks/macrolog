@@ -1,6 +1,7 @@
 // Saved screen: favorites, recipes and the foods I made, with meal tags, rename, delete and edit.
 import { api } from './api.js';
 import { h, clear, field, message, show, select } from './dom.js';
+import { refreshAllControl } from './refresh.js';
 import { MEALS, MEAL_LABELS, toggleMeal, parseAmount, fmtAmount, unitLabel, fmtNum, amountText, SAVED_FILTERS, SAVED_FILTER_LABELS, filterSavedItems, pageOf, PAGE_SIZE } from './util.js';
 
 const title = (f) => (f.brand ? f.name + ' (' + f.brand + ')' : f.name);
@@ -103,16 +104,17 @@ export async function renderSaved(root, ctx) {
   const q = h('input', { type: 'search', placeholder: 'Search saved items', 'aria-label': 'Search saved items', autocomplete: 'off', enterkeyhint: 'search' });
   const mealSel = select(SAVED_FILTERS.map((m) => ({ value: m, label: SAVED_FILTER_LABELS[m] })), 'all', { 'aria-label': 'Meal' });
   const lists = h('div');
+  const bulk = refreshAllControl(() => data.foods, again);  // one node, so its summary survives repaints
   const reset = () => { view.shown = { favorites: PAGE_SIZE, recipes: PAGE_SIZE, foods: PAGE_SIZE }; paint(); };
   q.addEventListener('input', () => { view.query = q.value; reset(); });
   mealSel.addEventListener('change', () => { view.meal = mealSel.value; reset(); });
 
   // key names the section. all is the unfiltered list, rows builds the nodes for the visible page.
-  const section = (key, name, all, text, rows, empty, tagged) => {
+  const section = (key, name, all, text, rows, empty, tagged, extra) => {
     const items = filterSavedItems(all, view.query, tagged ? view.meal : 'all', text);  // My foods have no tags
     const page = pageOf(items, view.shown[key]);
     const filtering = view.query.trim() !== '' || (tagged && view.meal !== 'all');
-    return h('div', null, h('h2', null, name),
+    return h('div', null, h('h2', null, name), extra,
       items.length ? h('ul', { class: 'list' }, rows(page.items)) : h('p', { class: 'sub' }, all.length && filtering ? 'Nothing matches.' : empty),
       page.more ? h('button', { class: 'btn', type: 'button', onclick: () => { view.shown[key] += PAGE_SIZE; paint(); } }, 'Show More') : null);
   };
@@ -120,7 +122,8 @@ export async function renderSaved(root, ctx) {
     clear(lists).append(
       section('favorites', 'Favorites', data.favorites, (f) => title(f.food), (p) => p.map((f) => favoriteRow(f, again)), 'No favorites yet.', true),
       section('recipes', 'Recipes', data.recipes, (r) => r.name, (p) => p.map((r) => recipeRow(r, again)), 'No recipes yet.', true),
-      section('foods', 'My Foods', data.foods, (f) => title(f), (p) => p.map((f) => foodRowMine(f, ctx, again)), 'Foods you create by hand or with Claude appear here.', false));
+      section('foods', 'My Foods', data.foods, (f) => title(f), (p) => p.map((f) => foodRowMine(f, ctx, again)), 'Foods you create by hand or with Claude appear here.', false, bulk.el));
+    bulk.update();
   }
   paint();
   root.appendChild(h('section', { class: 'screen saved' },

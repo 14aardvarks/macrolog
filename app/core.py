@@ -948,6 +948,56 @@ def patch_food(food_id: int, user: CurrentUser, body: dict = Body(...)):
         return need_food(c, food_id)
 
 
+def serving_ratio(old: dict, new: dict) -> float | None:
+    """Factor that turns the source's per serving values into values for the stored serving, or None when the
+    two servings cannot be compared (then nothing is copied)."""
+    if old["serving_unit"] == new["serving_unit"] and abs(old["serving_amount"] - new["serving_amount"]) <= 0.01 * old["serving_amount"]:
+        return 1.0
+    for key in ("serving_g", "serving_ml"):
+        if old.get(key) and new.get(key):
+            return old[key] / new[key]
+    return None
+
+
+@router.post("/foods/{food_id}/refresh-nutrients")
+async def refresh_nutrients(food_id: int, user: CurrentUser):
+    """Look a saved food up again in its source and fill ONLY micronutrients that are null. Existing values,
+    calories, macros and the name never change, so this is safe for foods already in logs or recipes.
+    Foods from Open Food Facts or USDA are shared and any user may refresh them; custom and AI foods only by their creator."""
+    with db.conn() as c:
+        row = c.execute("SELECT id, source FROM foods WHERE id=?", (food_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Food not found")
+        if row["source"] in ("custom", "ai"):
+            own_food(c, user["id"], food_id)
+        food = need_food(c, food_id)
+    if lookup.refresh_kind(food) is None:
+        raise bad("This food has no source ID or barcode, so there is nothing to look up")
+    if all(food[k] is not None for k in MICROS):
+        return {"food": food, "filled": [], "message": "This food already has every nutrient"}
+    res = await lookup.refresh(food)
+    if res.get("error") == "rate_limited":
+        raise HTTPException(429, res["note"])
+    if res.get("error"):
+        raise HTTPException(502, res["note"])
+    found = res.get("food")
+    if not found:
+        return {"food": food, "filled": [], "message": res.get("note") or "The source has no more data for this food"}
+    ratio = serving_ratio(food, found)
+    if ratio is None:
+        raise HTTPException(409, "The source lists a different serving size, so its values were not copied")
+    filled = []
+    with db.conn() as c:
+        for key in MICROS:
+            v = found.get(key)
+            if food[key] is None and isinstance(v, (int, float)) and v >= 0:
+                if c.execute(f"UPDATE foods SET {key}=? WHERE id=? AND {key} IS NULL", (r2(v * ratio), food_id)).rowcount:
+                    filled.append(key)
+        updated = need_food(c, food_id)
+    msg = "Filled " + ", ".join(MICRO_INFO[k][0].lower() for k in filled) if filled else "The source has no more data for this food"
+    return {"food": updated, "filled": filled, "message": msg}
+
+
 @router.delete("/foods/{food_id}")
 def delete_food(food_id: int, user: CurrentUser):
     with db.conn() as c:

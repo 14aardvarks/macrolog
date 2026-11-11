@@ -247,6 +247,34 @@ export function pageOf(items, shown) {
   return { items: list.slice(0, shown), more: Math.max(0, list.length - shown) };
 }
 
+// Refresh Nutrients. A food can be looked up again with a source id (Open Food Facts or USDA) or a barcode.
+export const REFRESH_CAP = 10;
+export function missingMicros(food) {
+  return MICROS.filter((m) => !food || food[m.key] == null).map((m) => m.key);
+}
+export function canLookUp(food) {
+  if (!food) return false;
+  const sid = String(food.source_id == null ? '' : food.source_id).trim();
+  if ((food.source === 'off' && sid) || (food.source === 'fdc' && /^\d+$/.test(sid))) return true;
+  return String(food.barcode == null ? '' : food.barcode).replace(/\D/g, '').length >= 8;
+}
+// Shows the button only when the food can be looked up and has a blank nutrient.
+export function canRefresh(food) { return canLookUp(food) && missingMicros(food).length > 0; }
+// The first `cap` foods worth refreshing, and how many more were left for another click.
+export function refreshTargets(foods, cap = REFRESH_CAP) {
+  const all = (foods || []).filter(canRefresh);
+  return { todo: all.slice(0, cap), left: Math.max(0, all.length - cap) };
+}
+// Summary after a Refresh All Missing run. checked foods asked, filled values added, failed errors, stopped says a rate limit ended the run early.
+export function bulkSummary({ checked, filled, failed, left, stopped }) {
+  const word = (n, one, many) => n + ' ' + (n === 1 ? one : many);
+  const parts = ['Checked ' + word(checked, 'food', 'foods') + ' and filled ' + word(filled, 'value', 'values')];
+  if (failed) parts.push(word(failed, 'food', 'foods') + ' could not be refreshed');
+  if (stopped) parts.push('Stopped at the rate limit, try again later');
+  else if (left) parts.push(word(left, 'food', 'foods') + ' left, tap again to continue');
+  return parts.join('. ');
+}
+
 // The tag set after tapping a meal chip, in breakfast to snack order.
 export function toggleMeal(meals, meal) {
   const set = new Set(meals || []);
