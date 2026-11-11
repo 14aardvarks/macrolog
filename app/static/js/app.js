@@ -246,7 +246,7 @@ function addScreen(root, params) {
     try {
       const r = (await api.search(text, remote)).results;
       if (mine !== searchSeq) return;
-      const manual = h('button', { class: 'btn', type: 'button', onclick: () => go('manual', {}) }, 'Enter manually');
+      const manual = h('button', { class: 'btn', type: 'button', onclick: () => go('manual', {}) }, 'Enter Manually');
       const empty = remote ? message('No results.') : message('Press Search to check Open Food Facts and USDA');
       show(listBox, h('div', null, r.length ? h('ul', { class: 'list' }, r.map((f) => foodRow(foodTitle(f),
         (f.label_text || unitText(f.serving_amount, f.serving_unit)) + ' - ' + fmtNum(f.kcal, 0) + ' kcal',
@@ -271,8 +271,9 @@ function addScreen(root, params) {
   root.appendChild(h('section', { class: 'screen wide add' },
     h('form', { class: 'row add-search', role: 'search', onsubmit: (e) => { e.preventDefault(); liveSearch.cancel(); search(true); } },
       q, h('button', { class: 'btn', type: 'submit' }, 'Search')),
-    h('div', { class: 'row add-scan' }, h('button', { class: 'btn primary scan-btn', type: 'button', onclick: () => go('scan', { autostart: true }) }, cameraIcon(), 'Scan barcode'),
-      h('button', { class: 'btn', type: 'button', onclick: () => go('manual', {}) }, 'Enter manually')),
+    h('div', { class: 'row add-scan' },
+      h('button', { class: 'btn', type: 'button', onclick: () => go('manual', {}) }, 'Enter Manually'),
+      h('button', { class: 'btn primary scan-btn', type: 'button', onclick: () => go('scan', { autostart: true }) }, cameraIcon(), 'Scan Barcode')),
     mealPick, tabBar, h('div', { class: 'tab-list' }, listBox)));
   paintTabs();
   if (params.focus) root.addEventListener('mounted', () => q.focus());
@@ -339,7 +340,7 @@ async function lookupScreen(root, params) {
     h('p', { class: 'sub' }, r.note || 'No product matched ' + params.code + '.'),
     h('div', { class: 'row wrap' },
       r.can_ask_ai ? h('button', { class: 'btn primary', type: 'button', onclick: () => go('ai', { barcode: params.code }) }, 'Ask Claude') : null,
-      h('button', { class: 'btn', type: 'button', onclick: () => go('manual', { barcode: params.code }) }, 'Enter manually'),
+      h('button', { class: 'btn', type: 'button', onclick: () => go('manual', { barcode: params.code }) }, 'Enter Manually'),
       h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back'))));
 }
 

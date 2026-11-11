@@ -26,7 +26,7 @@ export async function toJpeg(file) {
 export async function renderAi(root, params, ctx) {
   let st = null;
   try { st = await api.aiStatus(); } catch (e) { st = { enabled: false }; }
-  const manualBtn = h('button', { class: 'btn', type: 'button', onclick: () => ctx.go('manual', { barcode: params.barcode }) }, 'Enter manually');
+  const manualBtn = h('button', { class: 'btn', type: 'button', onclick: () => ctx.go('manual', { barcode: params.barcode }) }, 'Enter Manually');
   if (!st.enabled) {
     root.appendChild(h('section', { class: 'screen' }, h('h1', null, 'Ask Claude'),
       message('Claude is not set up on this server. You can still enter the food by hand.'), manualBtn));

@@ -5,7 +5,7 @@ export const GUIDE_TITLE = 'How to use Macrolog';
 export const GUIDE = [
   { heading: 'Logging a food', bullets: [
     'Tap Add, then pick from Favorites, Yesterday or Recipes.',
-    'Or search, or tap Scan barcode. The camera starts at once.',
+    'Or search, or tap Scan Barcode. The camera starts at once.',
     'No camera? On the scan screen, type the digits under the barcode.',
     'Set the amount, then tap Log.',
   ] },
@@ -50,7 +50,7 @@ export const GUIDE = [
   ] },
   { heading: 'Not found?', bullets: [
     'Ask Claude to read a photo of the nutrition label, if it is set up.',
-    'Or choose Enter manually.',
+    'Or choose Enter Manually.',
     'Always check the numbers before saving.',
   ] },
   { heading: 'Claude', bullets: [

@@ -92,7 +92,7 @@ export function renderScan(root, ctx, opts = {}) {
 
   root.appendChild(h('section', { class: 'screen' },
     h('h1', null, 'Scan a barcode'),
-    h('p', { class: 'sub' }, 'The camera starts as soon as you tap Scan barcode. If it cannot, type the digits under the barcode below.'),
+    h('p', { class: 'sub' }, 'The camera starts as soon as you tap Scan Barcode. If it cannot, type the digits under the barcode below.'),
     video, status,
     h('div', { class: 'row wrap' }, startBtn, stopBtn, fileBtn),
     h('h2', null, 'Type the digits'),
