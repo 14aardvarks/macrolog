@@ -47,7 +47,7 @@ You need Docker with the Compose plugin.
 
 ```
 cp .env.example .env
-# Edit .env and set SECRET_KEY (and PUBLIC_URL if you will use single sign-on)
+# Optional: edit .env (PUBLIC_URL if you will use single sign-on). SECRET_KEY is generated on first start if left empty.
 docker compose up -d --build
 ```
 
@@ -57,13 +57,15 @@ The setup screen is available only while there are no users at all, and only onc
 
 **First account and single sign-on.** While there are no users, a sign-in through SSO never creates the first administrator when password sign-in is on: it is refused with "Finish first-run setup first", so a stranger at your identity provider cannot claim the app. If password sign-in is off (`LOCAL_LOGIN=0`) and SSO is configured in `.env`, there is no setup screen. `POST /api/auth/setup` answers 409 ("Password sign-in is off. Sign in with SSO to create the first admin"), and the first SSO sign-in creates the first user as administrator, even when `OIDC_ALLOW_SIGNUP=0`. It is written to the audit log. `GET /api/auth/config` reports `needs_setup` for the setup screen case and `first_admin_via_sso` for the SSO case.
 
+**Bind-mounted data folder.** The container starts as root only long enough to fix ownership of the data folder, then runs as an unprivileged user. A host folder mounted at `/data` therefore works without a manual `chown`.
+
 ## Configuration
 
 All settings can be given as environment variables in `.env`. Anything left empty uses the default shown. The settings marked "live" can also be changed by an administrator in the app, and a value saved there takes precedence over `.env`. See [Administration](#administration).
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `SECRET_KEY` | none, required | Signs the session cookie. Must be at least 32 characters or the app refuses to start. Changing it signs everyone out. |
+| `SECRET_KEY` | generated on first start | Signs the session cookie and encrypts saved secrets. If empty, a key is generated once and saved as `secret_key` in the data folder (next to the database, so it is in your backups). A value set here wins over the saved one. Must be at least 32 characters. Changing it signs everyone out. |
 | `DB_PATH` | `/data/macrolog.db` in the image | SQLite database file. The image places it on the `macrolog-data` volume. |
 | `LOCAL_LOGIN` | `1` | Live. Set to `0` to turn off password sign-in. Do this only when SSO is configured. |
 | `ADMIN_USER`, `ADMIN_PASSWORD` | empty | Optional alternative to the first-run setup screen. Creates this user as an administrator at startup, only while the users table is empty. The password needs at least 8 characters. `ADMIN_USER` is also made an administrator at every start, but only when that account has a password, and an SSO sign-up is never given that name. Remove both after the first start. |
@@ -160,7 +162,7 @@ Users marked as administrators see an Admin page with Users, Sign-in, Claude and
 
 **Personal Claude keys.** Each user can add their own Claude API key and a monthly request limit (1 to 10000, default 100) in Settings. It is used before the household key, counts only against that user's own limit, is stored encrypted and is never shown again. Personal keys belong to the user: an administrator can refuse someone the household key, but cannot see, remove or disable a personal key.
 
-**Secrets and SECRET_KEY.** Saved secrets and personal keys are encrypted (Fernet, with a key derived from `SECRET_KEY` by HKDF-SHA256). If you change `SECRET_KEY`, they can no longer be read. The app then treats them as unset, falls back to `.env` where there is a value, and shows a warning in the Admin page. Enter them again. Keep `SECRET_KEY` with your backups.
+**Secrets and SECRET_KEY.** Saved secrets and personal keys are encrypted (Fernet, with a key derived from `SECRET_KEY` by HKDF-SHA256). If you change `SECRET_KEY`, they can no longer be read. The app then treats them as unset, falls back to `.env` where there is a value, and shows a warning in the Admin page. Enter them again. Keep `SECRET_KEY` (or the generated `secret_key` file) with your backups. A key stored beside the data protects less than one kept elsewhere, so set `SECRET_KEY` yourself if that matters to you.
 
 **Lockout safeguards.** Password sign-in can be turned off only when all of these hold: the SSO issuer and client ID are set, `PUBLIC_URL` is set, Test connection has passed for exactly those values, and at least one active administrator has connected SSO. Only administrators linked to the issuer that stays in effect count, so switching providers cannot bypass this. The SSO provider (issuer) cannot be changed at all while password sign-in is off or being turned off: the change is refused with "Turn password sign-in on before changing the SSO provider". After a provider change, accounts stay linked to the old provider until they disconnect and connect SSO again. Databases from earlier versions get the issuer recorded for existing links from the issuer configured at upgrade (links made with no issuer configured are treated as belonging to the current one until the next SSO sign-in). While password sign-in is off, the client ID cannot be blanked or changed to an untested value, and the last administrator who can sign in with SSO cannot be demoted, disabled or unlinked. Users cannot disconnect SSO from their own account while password sign-in is off or when they have no password.
 

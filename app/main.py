@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -15,6 +16,29 @@ from . import admin, ai, auth, config, core, db
 
 MIN_SECRET_LEN = 32
 STATIC = Path(__file__).parent / "static"
+
+
+def resolve_secret_key() -> str:
+    """SECRET_KEY from the environment, else a key generated once and kept next to the database."""
+    secret = os.environ.get("SECRET_KEY", "")
+    if not secret:
+        secret = _stored_secret(Path(db.db_path()).parent / "secret_key")
+        os.environ["SECRET_KEY"] = secret
+    if len(secret) < MIN_SECRET_LEN:
+        raise RuntimeError(f"SECRET_KEY must be at least {MIN_SECRET_LEN} characters long. "
+                           'Generate one with: python3 -c "import secrets; print(secrets.token_urlsafe(48))"')
+    return secret
+
+
+def _stored_secret(path: Path) -> str:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        return path.read_text().strip()
+    with os.fdopen(fd, "w") as f:
+        f.write(secrets.token_urlsafe(48))
+    return path.read_text().strip()
 
 
 @asynccontextmanager
@@ -34,10 +58,7 @@ async def validation_error(request: Request, exc: RequestValidationError) -> JSO
 
 
 def create_app() -> FastAPI:
-    secret = os.environ.get("SECRET_KEY", "")
-    if len(secret) < MIN_SECRET_LEN:
-        raise RuntimeError(f"SECRET_KEY must be set and at least {MIN_SECRET_LEN} characters long. "
-                           'Generate one with: python3 -c "import secrets; print(secrets.token_urlsafe(48))"')
+    secret = resolve_secret_key()
     app = FastAPI(title="Macrolog", lifespan=lifespan, dependencies=[Depends(auth.require_same_origin)])
     app.add_exception_handler(RequestValidationError, validation_error)
     app.add_middleware(
