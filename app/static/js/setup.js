@@ -21,7 +21,7 @@ export function renderSetup(root, onDone) {
     } catch (err) { show(status, message(err.message, 'error')); }
   } }, user, name, pass,
   h('div', { class: 'switch-row' }, h('label', { for: 'show-pass' }, showPass, h('span', null, 'Show password'))),
-  status, h('button', { class: 'btn primary', type: 'submit' }, 'Create account'));
+  status, h('button', { class: 'btn primary', type: 'submit' }, 'Create Account'));
   root.appendChild(h('section', { class: 'screen login' }, h('h1', null, 'Macrolog'),
     h('p', { class: 'sub' }, 'Welcome to Macrolog. Create the first admin account.'), form));
 }

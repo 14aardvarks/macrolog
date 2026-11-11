@@ -2,7 +2,7 @@ import { api, setUnauthorizedHandler } from './api.js';
 import { h, clear, select, field, message, show, cameraIcon } from './dom.js';
 import {
   MEALS, MEAL_LABELS, parseDecimal, parseAmount, amountText, servingText, setAmountFormat, unitLabel, fmtNum, fmtAmount, groupByMeal, checkedItems, canSaveRecipe, rowAmountText, applyRowPick, draftFits, localDate, progressText, remainingText,
-  barWidth, debounce, digitsOnly, guessMeal, pctTotal, latestGuard, MEAL_FILTERS, MEAL_FILTER_LABELS, filterByMeal, filterSaved, pageOf, PAGE_SIZE, emptyText,
+  sentence, barWidth, debounce, digitsOnly, guessMeal, pctTotal, latestGuard, MEAL_FILTERS, MEAL_FILTER_LABELS, filterByMeal, filterSaved, pageOf, PAGE_SIZE, emptyText,
 } from './util.js';
 import { renderPicker } from './picker.js';
 import { renderScan } from './scan.js';
@@ -69,7 +69,7 @@ async function render(entry) {
   } catch (e) {
     if (!guard.isLatest(ticket) || e.status === 401) return;
     box.appendChild(h('section', { class: 'screen' }, message(e.message || 'Something went wrong', 'error'),
-      h('button', { class: 'btn', type: 'button', onclick: () => render(entry) }, 'Try again')));
+      h('button', { class: 'btn', type: 'button', onclick: () => render(entry) }, 'Try Again')));
   }
   if (!guard.isLatest(ticket)) { if (cleanup) cleanup(); return; }
   state.cleanup = cleanup;
@@ -145,10 +145,10 @@ async function loginScreen(root) {
       state.user = await api.login(user.input.value.trim(), pass.input.value);
       await afterLogin();
     } catch (err) { show(status, message(err.status === 401 ? 'Wrong username or password.' : err.message, 'error')); }
-  } }, user, pass, status, h('button', { class: 'btn primary', type: 'submit' }, 'Sign in'));
+  } }, user, pass, status, h('button', { class: 'btn primary', type: 'submit' }, 'Sign In'));
   root.appendChild(h('section', { class: 'screen login' }, h('h1', null, 'Macrolog'),
     cfg.local ? form : null,
-    cfg.oidc ? h('a', { class: 'btn', href: '/auth/oidc/login' }, 'Sign in with ' + (cfg.oidc_name || 'single sign-on')) : null,
+    cfg.oidc ? h('a', { class: 'btn', href: '/auth/oidc/login' }, 'Sign In With ' + (cfg.oidc_name || 'single sign-on')) : null,
     !cfg.local && !cfg.oidc ? message('Sign-in is not configured on this server.', 'error') : null));
 }
 
@@ -189,7 +189,7 @@ function entryRow(e, root) {
 // One Save as recipe button per meal group. It opens a checklist of that group's entries, all ticked.
 function saveMealBox(g, status) {
   const box = h('div', { class: 'save-meal' });
-  const reset = () => show(box, h('button', { class: 'btn', type: 'button', onclick: ask }, 'Save as recipe'));
+  const reset = () => show(box, h('button', { class: 'btn', type: 'button', onclick: ask }, 'Save As Recipe'));
   function ask() {
     const rows = g.entries.filter((e) => e.food_id != null).map((e) => ({ e,
       box: h('input', { type: 'checkbox', checked: true, 'aria-label': 'Include ' + e.name }) }));
@@ -247,7 +247,7 @@ function addScreen(root, params) {
       const r = (await api.search(text, remote)).results;
       if (mine !== searchSeq) return;
       const manual = h('button', { class: 'btn', type: 'button', onclick: () => go('manual', {}) }, 'Enter Manually');
-      const empty = remote ? message('No results.') : message('Press Search to check Open Food Facts and USDA');
+      const empty = remote ? message('No results.') : message('Press Search to check Open Food Facts and USDA.');
       show(listBox, h('div', null, r.length ? h('ul', { class: 'list' }, r.map((f) => foodRow(foodTitle(f),
         (f.label_text || unitText(f.serving_amount, f.serving_unit)) + ' - ' + fmtNum(f.kcal, 0) + ' kcal',
         () => go('picker', { foodId: f.id }), null, f))) : empty, r.length ? null : manual));
@@ -286,7 +286,7 @@ function paged(items, build) {
   const paint = () => {
     const page = pageOf(items, shown);
     clear(box).appendChild(build(page.items));
-    if (page.more) box.appendChild(h('button', { class: 'btn', type: 'button', onclick: () => { shown += PAGE_SIZE; paint(); } }, 'Show more'));
+    if (page.more) box.appendChild(h('button', { class: 'btn', type: 'button', onclick: () => { shown += PAGE_SIZE; paint(); } }, 'Show More'));
   };
   paint();
   return box;
@@ -336,8 +336,8 @@ async function lookupScreen(root, params) {
   const r = await api.barcode(params.code);
   if (r.food) { await go('picker', { foodId: r.food.id }, true); return; }
   clear(root);
-  root.appendChild(h('section', { class: 'screen' }, h('h1', null, 'Not found'),
-    h('p', { class: 'sub' }, r.note || 'No product matched ' + params.code + '.'),
+  root.appendChild(h('section', { class: 'screen' }, h('h1', null, 'Not Found'),
+    h('p', { class: 'sub' }, sentence(r.note) || 'No product matched ' + params.code + '.'),
     h('div', { class: 'row wrap' },
       r.can_ask_ai ? h('button', { class: 'btn primary', type: 'button', onclick: () => go('ai', { barcode: params.code }) }, 'Ask Claude') : null,
       h('button', { class: 'btn', type: 'button', onclick: () => go('manual', { barcode: params.code }) }, 'Enter Manually'),
@@ -432,7 +432,7 @@ async function settingsScreen(root) {
       h('div', { class: 'switch-row' },
         h('label', { for: 'confirm-ai' }, confirmAi, h('span', null, 'Confirm before using Claude')),
         h('p', { class: 'sub', id: 'confirm-ai-help' }, 'On: you see the request count and estimated cost before anything is sent.')),
-      h('h2', null, 'Daily goals'), kcal, h('div', { class: 'grid3' }, pcts.map((p) => p[1])), total, status,
+      h('h2', null, 'Daily Goals'), kcal, h('div', { class: 'grid3' }, pcts.map((p) => p[1])), total, status,
       h('button', { class: 'btn primary', type: 'submit' }, 'Save')),
     h('div', { class: 'col-b' },
     h('h2', null, 'Claude'), ai ? renderClaudeSection(ai, me.use_global_ai) : h('p', { class: 'sub' }, 'Claude status is not available.'),
@@ -442,7 +442,7 @@ async function settingsScreen(root) {
     me.is_admin ? h('div', null, h('h2', null, 'Admin'), h('p', { class: 'sub' }, 'Users, sign-in, Claude and server settings.'),
       h('button', { class: 'btn', type: 'button', onclick: () => go('admin') }, 'Open Admin')) : null,
     renderGuide(),
-    h('button', { class: 'btn', type: 'button', onclick: async () => { try { await api.logout(); } catch (e) { /* ignore */ } showLogin(); } }, 'Sign out')))));
+    h('button', { class: 'btn', type: 'button', onclick: async () => { try { await api.logout(); } catch (e) { /* ignore */ } showLogin(); } }, 'Sign Out')))));
 }
 
 const SCREENS = {

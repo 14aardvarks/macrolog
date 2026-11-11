@@ -74,28 +74,36 @@ export function barcodeForm(onCode) {
     if (code.length < 8) { show(err, message('Enter at least 8 digits.', 'error')); return; }
     show(err, null);
     onCode(code);
-  } }, input, h('button', { class: 'btn', type: 'submit' }, 'Look up'));
+  } }, input, h('button', { class: 'btn', type: 'submit' }, 'Look Up'));
   return h('div', null, form, err);
 }
 
 // Scan screen. ctx.lookup(code) handles a found code. Returns a cleanup function that stops the camera.
+// Leaving the screen (Back, a nav tab, any other navigation) runs the cleanup, which stops every track.
 export function renderScan(root, ctx, opts = {}) {
   let stream = null;
   let timer = null;
+  let closed = false;
   const status = h('div', { 'aria-live': 'polite' });
-  const video = h('video', { class: 'video', playsinline: '', muted: '', hidden: '', 'aria-label': 'Camera view' });
+  const video = h('video', { class: 'video', playsinline: '', muted: '', 'aria-label': 'Camera view' });
   video.muted = true;
-  const startBtn = h('button', { class: 'btn', type: 'button', hidden: '', onclick: start }, 'Try camera again');  // only shown after a failed start
-  const stopBtn = h('button', { class: 'btn', type: 'button', hidden: '', onclick: stop }, 'Stop camera');
+  const camBox = h('div', { class: 'cam', hidden: '' }, video);
+  const startBtn = h('button', { class: 'btn', type: 'button', hidden: '', onclick: start }, 'Try Camera Again');  // only shown after a failed start
   const fileIn = h('input', { type: 'file', accept: 'image/*', capture: 'environment', class: 'visually-hidden', onchange: onFile });
-  const fileBtn = h('label', { class: 'btn' }, 'Take or choose a photo', fileIn);
+  const fileBtn = h('label', { class: 'btn' }, 'Take or Choose a Photo', fileIn);
+  const below = h('div', { class: 'row wrap' }, startBtn, fileBtn);
+
+  // The photo button sits over the camera view while the camera runs, and below the message otherwise.
+  function placePhotoBtn(overCamera) {
+    fileBtn.classList.toggle('cam-over', overCamera);
+    if (overCamera) camBox.appendChild(fileBtn); else below.appendChild(fileBtn);
+  }
 
   root.appendChild(h('section', { class: 'screen' },
-    h('h1', null, 'Scan a barcode'),
-    h('p', { class: 'sub' }, 'The camera starts as soon as you tap Scan Barcode. If it cannot, type the digits under the barcode below.'),
-    video, status,
-    h('div', { class: 'row wrap' }, startBtn, stopBtn, fileBtn),
-    h('h2', null, 'Type the digits'),
+    h('div', { class: 'bar' }, h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back')),
+    h('h1', null, 'Scan Barcode'),
+    camBox, status, below,
+    h('h2', null, 'Type the Digits'),
     barcodeForm(found)));
 
   function stop() {
@@ -104,9 +112,11 @@ export function renderScan(root, ctx, opts = {}) {
     if (stream) stream.getTracks().forEach((t) => t.stop());
     stream = null;
     video.srcObject = null;
-    video.hidden = true;
-    stopBtn.hidden = true;
+    camBox.hidden = true;
+    placePhotoBtn(false);
   }
+  // Cleanup for navigation. After this a late camera grant is released at once.
+  function dispose() { closed = true; stop(); }
   function found(code) { stop(); ctx.lookup(code); }
 
   async function start() {
@@ -117,11 +127,13 @@ export function renderScan(root, ctx, opts = {}) {
     }
     startBtn.hidden = true;
     show(status, message('Starting camera...'));
-    // Called synchronously from the Scan barcode tap (go and render run up to here without awaiting), so iOS and Chrome
+    // Called synchronously from the Scan Barcode tap (go and render run up to here without awaiting), so iOS and Chrome
     // still count it as a user gesture. Ask for the camera first, then load the barcode reader.
+    let got;
     try {
-      stream = await md.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+      got = await md.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
     } catch (e) {
+      if (closed) return;
       const denied = e && (e.name === 'NotAllowedError' || e.name === 'SecurityError');
       const none = e && (e.name === 'NotFoundError' || e.name === 'OverconstrainedError');
       startBtn.hidden = false;
@@ -129,21 +141,26 @@ export function renderScan(root, ctx, opts = {}) {
         ' Take a photo instead, or type the digits below.', 'error'));
       return;
     }
+    if (closed) { got.getTracks().forEach((t) => t.stop()); return; }  // the screen was left while the browser asked
+    stream = got;
     let detect;
     try { detect = await getDetector(); } catch (e) {
       stop();
+      if (closed) return;
       show(status, message('Barcode reading is not available in this browser. Type the digits below.', 'error'));
       return;
     }
+    if (closed || !stream) { stop(); return; }
     try {
       video.srcObject = stream;
-      video.hidden = false;
-      stopBtn.hidden = false;
+      camBox.hidden = false;
+      placePhotoBtn(true);
       await video.play();
-      show(status, message('Point the camera at the barcode.'));
+      show(status, null);
       loop(detect);
     } catch (e) {
       stop();
+      if (closed) return;
       show(status, message('Could not start the camera. Take a photo instead, or type the digits below.', 'error'));
       startBtn.hidden = false;
     }
@@ -152,7 +169,7 @@ export function renderScan(root, ctx, opts = {}) {
   function loop(detect) {
     timer = setTimeout(async () => {
       if (!stream) return;
-      if (!root.isConnected) { stop(); return; }
+      if (!root.isConnected) { dispose(); return; }
       let code = null;
       try { if (video.readyState >= 2) code = await detect(video); } catch (e) { code = null; }
       if (code && stream) found(code); else if (stream) loop(detect);
@@ -174,5 +191,5 @@ export function renderScan(root, ctx, opts = {}) {
     fileIn.value = '';
   }
   if (opts.autostart) start();
-  return stop;
+  return dispose;
 }

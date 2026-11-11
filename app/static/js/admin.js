@@ -1,4 +1,5 @@
 import { api } from './api.js';
+import { sentence } from './util.js';
 import { h, clear, field, message, show } from './dom.js';
 import {
   sourceLabel, userName, userBadges, initialValue, buildChanges, SIGNIN_SPECS, CLAUDE_SPECS, FOOD_SPECS, envRows, testLine, logLine, setupError,
@@ -28,7 +29,7 @@ function configField(spec, item, extra) {
     st.revert = true; st.clear = false;
     if (control.type === 'checkbox') control.disabled = true; else { control.value = ''; control.disabled = true; }
     undo.hidden = false; useDefault.hidden = true; paintHint();
-  } }, 'Use default') : null;
+  } }, 'Use Default') : null;
   const undo = h('button', { class: 'link-btn', type: 'button', hidden: true, onclick: () => {
     st.revert = false; control.disabled = false;
     if (control.type === 'checkbox') control.checked = bool(initialValue(spec, item)); else control.value = initialValue(spec, item);
@@ -106,7 +107,7 @@ function signInSection(cfg, note, onSaved) {
     uri ? h('div', { class: 'row wrap' }, h('code', { class: 'uri' }, uri), copy, copyStatus) : null,
     cfg.oidc_redirect_uri_warning ? message(cfg.oidc_redirect_uri_warning, 'error') : null,
     h('p', { class: 'sub' }, 'Paste this into authentik. In authentik:'),
-    h('ul', { class: 'checklist' }, cfg.authentik_checklist.map((t) => h('li', null, t))));
+    h('ul', { class: 'checklist' }, cfg.authentik_checklist.map((t) => h('li', null, sentence(t)))));
   const testOut = h('div', { 'aria-live': 'polite' });
   const lastTest = h('p', { class: 'src' }, testLine(cfg.oidc_test));
   const section = configSection('Sign-in', SIGNIN_SPECS, cfg, note, { onSaved });
@@ -120,12 +121,12 @@ function signInSection(cfg, note, onSaved) {
       if (!iss.state.revert && iss.state.value.trim()) body.issuer = iss.state.value.trim();
       if (!cid.state.revert && cid.state.value.trim()) body.client_id = cid.state.value.trim();
       const r = await api.adminTestOidc(body);
-      show(testOut, message((r.ok ? 'Works. ' : 'Failed. ') + r.message, r.ok ? '' : 'error'));
+      show(testOut, message((r.ok ? 'Works. ' : 'Failed. ') + sentence(r.message), r.ok ? '' : 'error'));
       const fresh = await api.adminConfig();
       lastTest.textContent = testLine(fresh.oidc_test);
     } catch (err) { show(testOut, message(err.message, 'error')); }
     b.disabled = false;
-  } }, 'Test connection');
+  } }, 'Test Connection');
   return h('section', { class: 'admin-sec' }, h('h2', null, 'Sign-in'),
     h('p', { class: 'sub' }, 'Local password sign-in and single sign-on (OpenID Connect).'),
     section.el, h('h3', null, 'Test'), h('div', { class: 'row wrap' }, test), testOut, lastTest, redirect);
@@ -138,16 +139,16 @@ function claudeSection(cfg, note, onSaved) {
 }
 
 function foodSection(cfg, note, onSaved) {
-  const s = configSection('Food data', FOOD_SPECS, cfg, note, { onSaved });
-  return h('section', { class: 'admin-sec' }, h('h2', null, 'Food data'),
+  const s = configSection('Food Data', FOOD_SPECS, cfg, note, { onSaved });
+  return h('section', { class: 'admin-sec' }, h('h2', null, 'Food Data'),
     h('p', { class: 'sub' }, 'DEMO_KEY is rate limited. Get a free key at api.data.gov.'), s.el);
 }
 
 function serverSection(cfg) {
   const rows = envRows(cfg.environment);
-  return h('section', { class: 'admin-sec' }, h('h2', null, 'Server info'),
+  return h('section', { class: 'admin-sec' }, h('h2', null, 'Server Info'),
     h('p', { class: 'sub' }, 'These are set in your .env or compose file and need a restart to change.'),
-    cfg.warnings.length ? h('ul', { class: 'warnings' }, cfg.warnings.map((w) => h('li', null, w))) : null,
+    cfg.warnings.length ? h('ul', { class: 'warnings' }, cfg.warnings.map((w) => h('li', null, sentence(w)))) : null,
     h('dl', { class: 'env' }, rows.map(([k, v]) => [h('dt', null, k), h('dd', null, v)]).flat()));
 }
 
@@ -175,22 +176,22 @@ function userRow(u, me, onChange) {
     const name = field('Name', { value: user.display_name || '', autocomplete: 'off' });
     const email = field('Email', { value: user.email || '', type: 'text', inputmode: 'email', autocomplete: 'off', autocapitalize: 'none' });
     const profile = h('form', { onsubmit: (e) => { e.preventDefault(); patch({ display_name: name.input.value, email: email.input.value }, 'Saved.', status); } },
-      name, email, h('button', { class: 'btn', type: 'submit' }, 'Save name and email'));
+      name, email, h('button', { class: 'btn', type: 'submit' }, 'Save Name and Email'));
     const pw = field('New password', { type: 'password', autocomplete: 'new-password', minlength: '8' });
     const reset = h('form', { onsubmit: (e) => {
       e.preventDefault();
       const bad = setupError('x', pw.input.value);
       if (bad) { show(status, message(bad, 'error')); return; }
       patch({ password: pw.input.value }, 'Password changed. They are signed out everywhere.', status);
-    } }, pw, h('button', { class: 'btn', type: 'submit' }, 'Reset password'));
+    } }, pw, h('button', { class: 'btn', type: 'submit' }, 'Reset Password'));
     const act = (label, body, okText) => h('button', { class: 'btn', type: 'button', onclick: () => patch(body, okText, status) }, label);
     const isSelf = me && me.id === user.id;
     return h('div', { class: 'user-panel', id: panelId },
       profile, reset,
       h('div', { class: 'row wrap' },
-        user.admin_by_group ? null : act(user.is_admin ? 'Remove admin' : 'Make admin', { is_admin: !user.is_admin }),
+        user.admin_by_group ? null : act(user.is_admin ? 'Remove Admin' : 'Make Admin', { is_admin: !user.is_admin }),
         isSelf && !user.disabled ? null : act(user.disabled ? 'Enable' : 'Disable', { disabled: !user.disabled }),
-        act(user.use_global_ai ? 'Turn shared Claude key off' : 'Turn shared Claude key on', { use_global_ai: !user.use_global_ai }),
+        act(user.use_global_ai ? 'Turn Shared Claude Key Off' : 'Turn Shared Claude Key On', { use_global_ai: !user.use_global_ai }),
         user.sso_linked ? act('Disconnect SSO', { unlink_sso: true }, 'SSO disconnected.') : null),
       user.admin_by_group ? h('p', { class: 'sub' }, 'Admin role is managed by the authentik group.') : null,
       status);
@@ -230,8 +231,8 @@ function addUserForm(onCreated) {
     } catch (err) { show(status, message(err.message, 'error')); }
   } }, username, name, email, pass,
   h('div', { class: 'switch-row' }, h('label', { for: 'new-admin' }, admin, h('span', null, 'Administrator'))),
-  status, h('button', { class: 'btn primary', type: 'submit' }, 'Add user'));
-  return h('details', { class: 'guide add-user' }, h('summary', null, 'Add user'), h('div', { class: 'guide-group' }, form));
+  status, h('button', { class: 'btn primary', type: 'submit' }, 'Add User'));
+  return h('details', { class: 'guide add-user' }, h('summary', null, 'Add User'), h('div', { class: 'guide-group' }, form));
 }
 
 function usersSection(me) {

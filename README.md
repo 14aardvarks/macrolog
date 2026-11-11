@@ -32,19 +32,19 @@ Dark mode follows the device setting, and the layout also works on desktop.
 
 ## Using the app
 
-The same guide is in Settings under "How to use Macrolog".
+The same guide is in Settings under "How to Use Macrolog".
 
-- Tap Add, then pick from Favorites, Yesterday or Recipes, or search, or tap Scan barcode (the camera starts at once; if it cannot, type the barcode digits on the scan screen). Set the amount and tap Log.
+- Tap Add, then pick from Favorites, Yesterday or Recipes, or search, or tap Scan Barcode (the camera starts at once, with a Back button and a Take or Choose a Photo button over the view; if it cannot start, take a photo or type the barcode digits on the scan screen). Set the amount and tap Log.
 - The Meal selector on Add filters the lists by meal. All shows everything.
 - In the picker, the wheel chooses the unit, and the chips set 1/4 to 2 servings. Macros update live.
 - A food opens with the amount and unit from your last entry. Turn this off in Settings with "Start from my last entry" to open on the label's serving instead.
-- Tap the star to make a favorite. On Today, each meal has "Save as recipe": untick any entries, name it, and the recipe is tagged with that meal. Days are never saved as recipes.
+- Tap the star to make a favorite. On Today, each meal has "Save As Recipe": untick any entries, name it, and the recipe is tagged with that meal. Days are never saved as recipes.
 - When you log a recipe, untick items to leave them out and adjust amounts. Only ticked items are logged. Tap an item's name to adjust it in the picker with any of its units, then tap Done. That changes only this log, not the recipe or the food's last used amount.
 - If a food is not found, ask Claude to read the label photo (if set up) or enter it manually, and check the numbers.
 - Tag favorites and recipes with Breakfast, Lunch, Dinner or Snack. A chosen meal on Add shows items tagged with it plus untagged items, with the ones you log most often as that meal first. Logging a favorite or recipe with a meal adds that tag.
 - Settings, then Saved, lists your favorites, recipes and the foods you created. Edit meal tags, rename or delete recipes, change recipe amounts, and edit or delete your own foods (a food already in a log entry or recipe cannot be deleted, and only its name can change).
-- "Remove from my lists" unfavorites a food, clears its tags and hides it from Recent and Yesterday. Past entries stay. Searching, logging or favoriting it again brings it back.
-- Add lists show 20 items at a time with a Show more button.
+- "Remove From My Lists" unfavorites a food, clears its tags and hides it from Recent and Yesterday. Past entries stay. Searching, logging or favoriting it again brings it back.
+- Add lists show 20 items at a time with a Show More button.
 - Each user has their own log, goals and settings. Foods are shared.
 - Settings also holds your own Claude key and limit, and Connect SSO when the server offers it. Administrators see an Admin page there for users, sign-in, Claude and USDA keys, and recent activity.
 
@@ -165,7 +165,7 @@ The Compose file publishes port 8000 on `127.0.0.1` only, so a reverse proxy on 
 
 ## Claude label reader (optional)
 
-When a Claude API key is available to the signed-in user, the Not found screen offers "Ask Claude" as an option. The browser re-encodes each photo as a JPEG with at most 1280 px on the long side, and sends one to three photos with an optional barcode and a short hint. The server sends them to the Messages API with a forced tool call, which returns the label values as printed, per serving. The result is shown as an editable draft with warnings, for example when calories do not match the macros by more than 20 percent, when a serving is missing, or when a value looks implausible. Nothing is saved until you confirm. The API key is never sent to the browser and is never logged.
+When a Claude API key is available to the signed-in user, the Not Found screen offers "Ask Claude" as an option. The browser re-encodes each photo as a JPEG with at most 1280 px on the long side, and sends one to three photos with an optional barcode and a short hint. The server sends them to the Messages API with a forced tool call, which returns the label values as printed, per serving. The result is shown as an editable draft with warnings, for example when calories do not match the macros by more than 20 percent, when a serving is missing, or when a value looks implausible. Nothing is saved until you confirm. The API key is never sent to the browser and is never logged.
 
 **Which key is used.** Each user can store a personal Claude API key in Settings. The app uses, in this order: the user's personal key, then the household key (`ANTHROPIC_API_KEY` or the administrator setting) if the administrator allows that user to use it, else Claude is off for that user. A personal key is stored encrypted, is never shown again and is not checked against the API when saved. It has its own monthly request limit, 100 by default, which the user can set from 1 to 10000. Requests with a personal key count only against that user's limit, and requests with the household key count only against the household cap.
 

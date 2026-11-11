@@ -24,7 +24,7 @@ export function renderClaudeSection(ai0, useGlobal) {
       if (!body) { show(status, message('Nothing to change.')); return; }
       await run(() => api.putAiKey(body), body.key ? 'Saved. Your key is stored and never shown again.' : 'Saved.');
     };
-    const remove = h('button', { class: 'btn', type: 'button', onclick: () => run(() => api.deleteAiKey(), 'Your key was removed.') }, 'Remove key');
+    const remove = h('button', { class: 'btn', type: 'button', onclick: () => run(() => api.deleteAiKey(), 'Your key was removed.') }, 'Remove Key');
     box.appendChild(h('div', null,
       lines.map((t) => h('p', { class: 'sub' }, t)),
       h('form', { onsubmit: save }, key, cap,

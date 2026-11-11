@@ -241,15 +241,17 @@ Screens: Login, Today, Add, Picker, Claude fallback, Settings. Bottom nav: Today
 - Today: bars for calories, carbs, protein, fat showing `value / target (percent)`, then entries grouped by meal, each removable and tappable to adjust.
 - Add: search box, a Scan button (camera starts ONLY after tapping it; uses BarcodeDetector when available, otherwise show a typed barcode
   field with clear text), and three tabs Favorites, Yesterday, Meals. Quick items show last used amount and unit; tapping opens the Picker prefilled.
+  Scan screen: Back button top left, no description or Stop button, the Take or Choose a Photo button sits over the bottom center of the camera view (below the message when there is no camera), typed digits below. Leaving the screen always stops every camera track.
+  Copy rules: headings and buttons use Title Case (small words a, an, and, of, to, in, on, or, the stay lowercase); full sentences end with a period, fragments, labels and chips do not.
   Typing a barcode of digits also works. Meals tab opens a checklist with amounts adjustable, one Log button.
 - Picker: NEVER auto-logs. A vertical scroll-snap wheel for the amount using the unit's `step`, a unit dropdown from `units`
   (label's own unit selected first), live macros from /api/preview (debounced, show "estimated" when flagged), favorite star, meal selector,
   one Log button. Tapping the number lets the user type an exact value.
-- Lookup failure: show "Not found" with two buttons, "Ask Claude" (only if can_ask_ai) and "Enter manually". Ask Claude suggests photographing the NUTRITION
+- Lookup failure: show "Not Found" with two buttons, "Ask Claude" (only if can_ask_ai) and "Enter Manually". Ask Claude suggests photographing the NUTRITION
   LABEL (optionally with the barcode in the same photo), resizes images client side (max 1280 px, JPEG 0.8), uploads, shows the draft in an editable form
   with any warnings, and only saves via POST /api/foods after the user confirms.
-- Add: Search, Scan and the Meal selector sit above the Favorites/Yesterday/Recipes tabs and list. Lists show 20 items with a Show more button.
-- Saved (Settings, then Saved): Favorites, Recipes and My foods lists with meal tag chips, rename, delete, recipe item editing, Remove from my lists, and the food form for My foods.
+- Add: Search, Scan and the Meal selector sit above the Favorites/Yesterday/Recipes tabs and list. Lists show 20 items with a Show More button.
+- Saved (Settings, then Saved): Favorites, Recipes and My foods lists with meal tag chips, rename, delete, recipe item editing, Remove From My Lists, and the food form for My foods.
 - Settings: start screen, goals (kcal and split), sign out, Claude status (used/cap), personal Claude key and cap,
   Connect SSO (plain link to /auth/oidc/link, shown when /api/auth/config oidc is true and me.sso_linked is false) and
   Disconnect SSO (POST /api/auth/sso/unlink, shown when linked and has_password). The app opens Settings for `/#settings`.

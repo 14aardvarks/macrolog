@@ -100,7 +100,7 @@ export async function renderPicker(root, params, ctx) {
   const star = h('button', { class: 'star', type: 'button', onclick: toggleFav });
   const estBadge = h('p', { class: 'badge', hidden: '' }, 'Estimated conversion');
   const status = h('div', { 'aria-live': 'polite' });
-  const logBtn = h('button', { class: 'btn primary', type: 'button', onclick: save }, adjust != null ? 'Done' : edit ? 'Save changes' : 'Log');
+  const logBtn = h('button', { class: 'btn primary', type: 'button', onclick: save }, adjust != null ? 'Done' : edit ? 'Save Changes' : 'Log');
 
   const kcal = h('span', { id: 'pv-kcal' }, '-');
   const mbar = h('div', { class: 'pick-bar' }, h('span', { class: 'macro-bar', role: 'img', hidden: '' }));
@@ -119,7 +119,7 @@ export async function renderPicker(root, params, ctx) {
     mbar, estBadge,
     adjust != null ? null : h('label', { class: 'field' }, h('span', null, 'Meal'), mealSel),
     status, logBtn,
-    edit ? h('button', { class: 'btn danger', type: 'button', onclick: remove }, 'Remove entry') : null));
+    edit ? h('button', { class: 'btn danger', type: 'button', onclick: remove }, 'Remove Entry') : null));
 
   const preview = debounce(runPreview, 180);
   paintStar();

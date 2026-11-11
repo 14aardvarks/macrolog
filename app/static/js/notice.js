@@ -21,7 +21,7 @@ export async function confirmClaude(settings, opts) {
     const cancel = h('button', { class: 'btn', type: 'button', onclick: () => done(false) }, info.blocked ? 'Back' : 'Cancel');
     const go = info.blocked ? null : h('button', { class: 'btn primary', type: 'button', onclick: () => done(true) }, 'Continue');
     const box = h('div', { class: 'notice', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'notice-title' },
-      h('h2', { id: 'notice-title' }, info.blocked ? 'No Claude requests left' : 'Ask Claude?'),
+      h('h2', { id: 'notice-title' }, info.blocked ? 'No Claude Requests Left' : 'Ask Claude?'),
       info.lines.map((t) => h('p', null, t)),
       info.warn ? h('p', { class: 'badge' }, info.warn) : null,
       h('div', { class: 'row' }, cancel, go));

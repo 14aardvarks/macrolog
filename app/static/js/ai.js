@@ -18,7 +18,7 @@ export async function toJpeg(file) {
   g.fillRect(0, 0, s.w, s.h);
   g.drawImage(img, 0, 0, s.w, s.h);
   return new Promise((resolve, reject) => {
-    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Could not prepare that photo'))), 'image/jpeg', 0.8);
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Could not prepare that photo.'))), 'image/jpeg', 0.8);
   });
 }
 
@@ -37,7 +37,7 @@ export async function renderAi(root, params, ctx) {
   const hint = field('Note for Claude (optional)', { autocomplete: 'off', placeholder: 'e.g. per 1 cup prepared' });
   const code = field('Barcode (optional)', { inputmode: 'numeric', value: params.barcode || '' });
   const status = h('div', { 'aria-live': 'polite' });
-  const go = h('button', { class: 'btn primary', type: 'button', disabled: true, onclick: send }, 'Read label');
+  const go = h('button', { class: 'btn primary', type: 'button', disabled: true, onclick: send }, 'Read Label');
   let chosen = [];
 
   root.appendChild(h('section', { class: 'screen' },
@@ -45,7 +45,7 @@ export async function renderAi(root, params, ctx) {
     h('h1', null, 'Ask Claude'),
     h('p', { class: 'sub' }, 'Photograph the nutrition label. If you can, get the barcode in the same photo. Up to 3 photos.'),
     h('p', { class: 'sub' }, 'Used ' + st.used_this_month + ' of ' + st.cap + ' this month.'),
-    h('label', { class: 'btn' }, 'Choose or take photos', files), list, hint, code, status,
+    h('label', { class: 'btn' }, 'Choose or Take Photos', files), list, hint, code, status,
     h('div', { class: 'row wrap' }, go, manualBtn)));
 
   function onFiles() {

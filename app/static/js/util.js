@@ -257,13 +257,20 @@ export function toggleMeal(meals, meal) {
 // "lunch" for a meal, '' for All.
 export function mealWord(meal) { return MEALS.includes(meal) ? MEAL_LABELS[meal].toLowerCase() : ''; }
 
+// Ends a sentence with a period when it has no closing mark yet. Short fragments (under 4 words) are left alone.
+// Used for text the server sends.
+export function sentence(text) {
+  const t = String(text == null ? '' : text).trim();
+  return t && t.split(/\s+/).length >= 4 && !/[.?!\u2026]$/.test(t) ? t + '.' : t;
+}
+
 // Text for an empty list. kind is favorites, yesterday or recipes. hasAny says the unfiltered list had items.
 export function emptyText(kind, meal, hasAny) {
   const w = mealWord(meal);
   if (kind === 'yesterday') return w ? 'Nothing for ' + w + ' yesterday.' : 'Nothing from yesterday.';
   const one = kind === 'recipes' ? 'recipe' : 'favorite';
   if (w && hasAny) return 'No ' + kind + ' tagged ' + w + '. Choose All to see every ' + one + '.';
-  if (kind === 'recipes') return 'No saved recipes. On Today, tap "Save as recipe" under a meal.';
+  if (kind === 'recipes') return 'No saved recipes. On Today, tap "Save As Recipe" under a meal.';
   return 'No favorites yet. Tap the star on a food to add one.';
 }
 

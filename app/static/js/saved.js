@@ -27,7 +27,7 @@ function favoriteRow(fav, again) {
   const remove = h('button', { class: 'btn', type: 'button', onclick: async () => {
     if (!window.confirm('Remove "' + fav.food.name + '" from your favorites, tags, Recent and Yesterday? Your past log stays.')) return;
     try { await api.removeFromLists(fav.food.id); await again(); } catch (e) { show(status, message(e.message, 'error')); }
-  } }, 'Remove from my lists');
+  } }, 'Remove From My Lists');
   return h('li', { class: 'saved-item' }, h('span', { class: 'item-title' }, title(fav.food)),
     chips(fav.meals, (m) => api.favoriteTags(fav.food.id, m), status), h('div', { class: 'row wrap' }, remove), status);
 }
@@ -68,7 +68,7 @@ function recipeRow(rec, again) {
       try { await api.patchMeal(rec.id, { items: out }); await again(); } catch (e) { fail(e); }
     };
     show(body, h('div', null, h('ul', { class: 'list' }, rows.map((r) => r.li)),
-      h('div', { class: 'row' }, h('button', { class: 'btn primary', type: 'button', onclick: save }, 'Save items'),
+      h('div', { class: 'row' }, h('button', { class: 'btn primary', type: 'button', onclick: save }, 'Save Items'),
         h('button', { class: 'btn ghost', type: 'button', onclick: () => show(body, null) }, 'Cancel'))));
   };
   const del = async () => {
@@ -79,7 +79,7 @@ function recipeRow(rec, again) {
     h('span', { class: 'item-sub' }, rec.items.length + ' items - ' + fmtNum(rec.kcal, 0) + ' kcal'),
     chips(rec.meals, (m) => api.patchMeal(rec.id, { meals: m }), status),
     h('div', { class: 'row wrap' }, h('button', { class: 'btn', type: 'button', onclick: rename }, 'Rename'),
-      h('button', { class: 'btn', type: 'button', onclick: items }, 'Edit items'), h('button', { class: 'btn', type: 'button', onclick: del }, 'Delete')),
+      h('button', { class: 'btn', type: 'button', onclick: items }, 'Edit Items'), h('button', { class: 'btn', type: 'button', onclick: del }, 'Delete')),
     body, status);
 }
 
@@ -106,5 +106,5 @@ export async function renderSaved(root, ctx) {
     h('p', { class: 'sub' }, 'Meal tags decide where a favorite or recipe shows on Add. Untagged items show under every meal.'),
     section('Favorites', data.favorites.map((f) => favoriteRow(f, again)), 'No favorites yet.'),
     section('Recipes', data.recipes.map((r) => recipeRow(r, again)), 'No recipes yet.'),
-    section('My foods', data.foods.map((f) => foodRowMine(f, ctx, again)), 'Foods you create by hand or with Claude appear here.')));
+    section('My Foods', data.foods.map((f) => foodRowMine(f, ctx, again)), 'Foods you create by hand or with Claude appear here.')));
 }

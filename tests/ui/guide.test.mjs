@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { GUIDE, GUIDE_TITLE } from '../../app/static/js/guide.js';
-import { startPreset } from '../../app/static/js/util.js';
+import { startPreset, sentence } from '../../app/static/js/util.js';
 
 test('guide has a title, headings and no empty or dashed bullets', () => {
-  assert.equal(GUIDE_TITLE, 'How to use Macrolog');
+  assert.equal(GUIDE_TITLE, 'How to Use Macrolog');
   assert.ok(GUIDE.length >= 9);
   for (const g of GUIDE) {
     assert.ok(g.heading.trim());
@@ -26,4 +26,29 @@ test('startPreset: edit keeps its own, use last off ignores carried and last amo
   assert.equal(startPreset(false, {}, food, true), food.last);
   assert.equal(startPreset(false, carried, food, false), null);
   assert.equal(startPreset(false, {}, food, undefined), food.last);
+});
+
+const SMALL = new Set(['a', 'an', 'and', 'of', 'to', 'in', 'on', 'or', 'the']);
+function isTitleCase(t) {
+  return t.split(' ').every((w, i) => {
+    const bare = w.replace(/^[("]+/, '');
+    return i > 0 && SMALL.has(bare) ? true : /^[A-Z0-9]/.test(bare);
+  });
+}
+
+test('guide headings are Title Case and every bullet ends with a period', () => {
+  assert.ok(isTitleCase(GUIDE_TITLE));
+  for (const g of GUIDE) {
+    assert.ok(isTitleCase(g.heading), g.heading);
+    for (const b of g.bullets) assert.match(b, /[.?!]$/, b);
+  }
+});
+
+test('sentence adds a period to real sentences only', () => {
+  assert.equal(sentence('Open Food Facts has no nutrition data for this product'), 'Open Food Facts has no nutrition data for this product.');
+  assert.equal(sentence('Already done.'), 'Already done.');
+  assert.equal(sentence('Is it ok?'), 'Is it ok?');
+  assert.equal(sentence('Searching...'), 'Searching...');
+  assert.equal(sentence('Not found'), 'Not found');
+  assert.equal(sentence(null), '');
 });

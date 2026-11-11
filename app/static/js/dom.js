@@ -1,3 +1,5 @@
+import { sentence } from './util.js';
+
 // Tiny DOM helpers. Text always goes through textContent / text nodes, never innerHTML.
 
 // h('button', {class: 'btn', onclick: fn, 'aria-label': 'x'}, 'Text', childNode)
@@ -39,7 +41,7 @@ export function field(label, attrs) {
 }
 
 export function message(text, kind) {
-  return h('p', { class: 'msg ' + (kind || ''), role: kind === 'error' ? 'alert' : 'status' }, text);
+  return h('p', { class: 'msg ' + (kind || ''), role: kind === 'error' ? 'alert' : 'status' }, sentence(text));
 }
 
 // Replace all children of el with node (or nothing).

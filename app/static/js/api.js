@@ -1,4 +1,4 @@
-import { localDate } from './util.js';
+import { localDate, sentence } from './util.js';
 
 export class ApiError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -8,8 +8,8 @@ let onUnauthorized = () => {};
 export function setUnauthorizedHandler(fn) { onUnauthorized = fn; }
 
 function detailText(d) {
-  if (typeof d === 'string') return d;
-  if (Array.isArray(d)) return d.map((x) => (x && x.msg) || String(x)).join('; ');
+  if (typeof d === 'string') return sentence(d);
+  if (Array.isArray(d)) return sentence(d.map((x) => (x && x.msg) || String(x)).join('; '));
   return 'Something went wrong';
 }
 

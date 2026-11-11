@@ -1,19 +1,19 @@
 // Text of the "How to use Macrolog" guide in Settings. Plain data: edit the words here.
 // Keep each bullet short, plain and free of dashes.
-export const GUIDE_TITLE = 'How to use Macrolog';
+export const GUIDE_TITLE = 'How to Use Macrolog';
 
 export const GUIDE = [
-  { heading: 'Logging a food', bullets: [
+  { heading: 'Logging a Food', bullets: [
     'Tap Add, then pick from Favorites, Yesterday or Recipes.',
     'Or search, or tap Scan Barcode. The camera starts at once.',
-    'No camera? On the scan screen, type the digits under the barcode.',
+    'No camera? Take a photo of the barcode, or type the digits under it.',
     'Set the amount, then tap Log.',
   ] },
-  { heading: 'The Meal selector on Add', bullets: [
+  { heading: 'The Meal Selector on Add', bullets: [
     'It filters the lists by meal.',
     'All shows everything.',
   ] },
-  { heading: 'The picker', bullets: [
+  { heading: 'The Picker', bullets: [
     'Two wheels: amount on the left, unit on the right.',
     'Scroll, use the arrow keys, or tap a row to pick it.',
     'Tap the chosen amount, or Type, to enter it. Try 1/2 or 1,5.',
@@ -22,7 +22,7 @@ export const GUIDE = [
     '% of serving is for partial servings.',
     'Macros update live and always convert back to the label\'s grams and calories.',
   ] },
-  { heading: 'How it remembers', bullets: [
+  { heading: 'How It Remembers', bullets: [
     'A food reopens with the amount and unit from your last entry.',
     'The first time, it uses the label\'s serving.',
     'Turn this off with Start from my last entry.',
@@ -31,12 +31,12 @@ export const GUIDE = [
   { heading: 'Favorites', bullets: [
     'Tap the star on a food to add or remove it.',
   ] },
-  { heading: 'Saved and meal tags', bullets: [
+  { heading: 'Saved and Meal Tags', bullets: [
     'Settings, then Saved, lets you tag, rename, edit and delete.',
     'Untagged items show under every meal. Logging with a meal adds its tag.',
   ] },
   { heading: 'Recipes', bullets: [
-    'On Today, tap Save as recipe under a meal.',
+    'On Today, tap Save As Recipe under a meal.',
     'Log it later from Add, then Recipes.',
     'Untick items to skip them, and change amounts.',
     'Tap an item\'s name to adjust it in the picker, with any unit, then tap Done.',
@@ -48,7 +48,7 @@ export const GUIDE = [
     'Tap an entry to change it.',
     'Tap X to remove it.',
   ] },
-  { heading: 'Not found?', bullets: [
+  { heading: 'Not Found?', bullets: [
     'Ask Claude to read a photo of the nutrition label, if it is set up.',
     'Or choose Enter Manually.',
     'Always check the numbers before saving.',
@@ -59,12 +59,12 @@ export const GUIDE = [
     'Requests are capped each month for the whole household.',
     'You can turn the question off in Settings.',
   ] },
-  { heading: 'Your Claude key', bullets: [
+  { heading: 'Your Claude Key', bullets: [
     'In Settings you can add your own Claude key and monthly limit.',
     'It bills your Anthropic account and is used instead of the shared key.',
     'The key is never shown again after you save it.',
   ] },
-  { heading: 'Single sign-on (SSO)', bullets: [
+  { heading: 'Single Sign-On (SSO)', bullets: [
     'If your server offers it, tap Connect SSO in Settings.',
     'Then you can sign in with the provider button.',
     'Disconnect needs a password on your account.',
@@ -72,12 +72,12 @@ export const GUIDE = [
   { heading: 'Admin', bullets: [
     'Only administrators see Admin in Settings.',
     'Add users, reset passwords, and turn the shared Claude key on or off per person.',
-    'Sign-in has the SSO setup, the redirect URI to copy and Test connection.',
+    'Sign-in has the SSO setup, the redirect URI to copy and Test Connection.',
     'Claude and USDA keys are saved here and never shown again.',
-    'Use default puts a setting back to its environment value.',
+    'Use Default puts a setting back to its environment value.',
     'Activity lists the latest admin changes.',
   ] },
-  { heading: 'Two users', bullets: [
+  { heading: 'Two Users', bullets: [
     'Each person has their own log, goals and settings.',
     'Foods are shared.',
   ] },

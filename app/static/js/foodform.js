@@ -1,6 +1,6 @@
 import { api } from './api.js';
 import { h, field, message, show, select } from './dom.js';
-import { parseDecimal, fmtAmount, MEALS, MEAL_LABELS, guessMeal } from './util.js';
+import { sentence, parseDecimal, fmtAmount, MEALS, MEAL_LABELS, guessMeal } from './util.js';
 
 const NUM = [
   ['serving_amount', 'Serving amount', true, 'e.g. 2'],
@@ -34,12 +34,12 @@ export function renderFoodForm(root, opts, ctx) {
   const mealSel = select(mealOpts, (ctx.settings && ctx.settings.default_meal) || guessMeal(new Date().getHours()), { 'aria-label': 'Meal' });
   const status = h('div', { 'aria-live': 'polite' });
   const confirm = h('input', { type: 'checkbox' });
-  const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, edit ? 'Save changes' : fromAi ? 'Save and continue' : 'Save food');
-  const warns = (opts.warnings || []).map((w) => h('li', null, w));
+  const saveBtn = h('button', { class: 'btn primary', type: 'submit' }, edit ? 'Save Changes' : fromAi ? 'Save and Continue' : 'Save Food');
+  const warns = (opts.warnings || []).map((w) => h('li', null, sentence(w)));
 
   const form = h('form', { class: 'screen', novalidate: '', onsubmit: submit },
     h('div', { class: 'bar' }, h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back')),
-    h('h1', null, edit ? 'Edit food' : fromAi ? 'Check what Claude read' : 'Enter food manually'),
+    h('h1', null, edit ? 'Edit Food' : fromAi ? 'Check What Claude Read' : 'Enter Food Manually'),
     h('p', { class: 'sub' }, locked ? 'This food is in your log or a recipe, so only the name, brand and label text can change.' : fromAi ? 'Fix anything that looks wrong and fill any empty boxes. Values are per label serving.'
       : 'Values are per label serving, as printed.'),
     warns.length ? h('ul', { class: 'warnings', role: 'alert' }, warns) : null,
