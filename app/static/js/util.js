@@ -385,6 +385,16 @@ export function percentParts(shares) {
   return { carbs: out[0], protein: out[1], fat: out[2] };
 }
 
+// Whole percents of calories from carbs, protein and fat (sum 100), or null when all three are zero.
+export function macroBarParts(g) {
+  const shares = macroShares(g);
+  return shares ? percentParts(shares) : null;
+}
+
+export function macroBarLabel(parts) {
+  return 'Carbs ' + parts.carbs + '%, Protein ' + parts.protein + '%, Fat ' + parts.fat + '%';
+}
+
 export function polar(cx, cy, r, angle) {
   return { x: roundTo(cx + r * Math.cos(angle), 3), y: roundTo(cy + r * Math.sin(angle), 3) };
 }

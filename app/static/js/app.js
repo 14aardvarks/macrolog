@@ -8,7 +8,7 @@ import { renderPicker } from './picker.js';
 import { renderScan, barcodeForm } from './scan.js';
 import { renderAi } from './ai.js';
 import { renderFoodForm } from './foodform.js';
-import { splitChart } from './chart.js';
+import { splitChart, macroBar } from './chart.js';
 import { renderGuide } from './guide-view.js';
 import { renderSetup } from './setup.js';
 import { renderAdmin } from './admin.js';
@@ -72,6 +72,7 @@ async function render(entry) {
   box.dispatchEvent(new Event('mounted'));
   window.scrollTo(0, 0);
   main.focus({ preventScroll: true });
+  hideSplash();
 }
 
 nav.addEventListener('click', (e) => {
@@ -114,9 +115,9 @@ function mealSelect(value) {
 const defaultMeal = () => state.settings.default_meal || guessMeal(new Date().getHours());
 const unitText = amountText;
 
-function foodRow(title, sub, onclick, extra) {
+function foodRow(title, sub, onclick, extra, macros) {
   return h('li', { class: 'item' },
-    h('button', { class: 'item-main', type: 'button', onclick }, h('span', { class: 'item-title' }, title), h('span', { class: 'item-sub' }, sub)),
+    h('button', { class: 'item-main', type: 'button', onclick }, h('span', { class: 'item-title' }, title), h('span', { class: 'item-sub' }, sub), macros ? macroBar(macros) : null),
     extra || null);
 }
 
@@ -176,8 +177,8 @@ function entryRow(e, root) {
   const del = h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Remove ' + e.name, onclick: async () => {
     try { await api.deleteEntry(e.id); await go('today', {}, true); } catch (err) { show(root.querySelector('[aria-live]'), message(err.message, 'error')); }
   } }, '×');
-  if (e.food_id == null) return h('li', { class: 'item' }, h('div', { class: 'item-main' }, h('span', { class: 'item-title' }, title), h('span', { class: 'item-sub' }, sub)), del);
-  return foodRow(title, sub, open, del);
+  if (e.food_id == null) return h('li', { class: 'item' }, h('div', { class: 'item-main' }, h('span', { class: 'item-title' }, title), h('span', { class: 'item-sub' }, sub), macroBar(e)), del);
+  return foodRow(title, sub, open, del, e);
 }
 
 // One Save as recipe button per meal group. It opens a checklist of that group's entries, all ticked.
@@ -244,7 +245,7 @@ function addScreen(root, params) {
       const empty = remote ? message('No results.') : message('Press Search to check Open Food Facts and USDA');
       show(listBox, h('div', null, r.length ? h('ul', { class: 'list' }, r.map((f) => foodRow(foodTitle(f),
         (f.label_text || unitText(f.serving_amount, f.serving_unit)) + ' - ' + fmtNum(f.kcal, 0) + ' kcal',
-        () => go('picker', { foodId: f.id })))) : empty, r.length ? null : manual));
+        () => go('picker', { foodId: f.id }), null, f))) : empty, r.length ? null : manual));
     } catch (e) { if (mine === searchSeq) show(listBox, message(e.message, 'error')); }
   }
   const liveSearch = debounce(() => search(false), 400);
@@ -294,7 +295,7 @@ async function quickList(kind, meal) {
   return paged(items, (page) => h('ul', { class: 'list' }, page.map((it) => foodRow(foodTitle(it.food),
     useLast ? unitText(it.amount, it.unit) + ' - ' + fmtNum(it.kcal, 0) + ' kcal, ' + fmtNum(it.protein, 0) + ' g protein'
       : (it.food.label_text || unitText(it.food.serving_amount, it.food.serving_unit)) + ' - ' + fmtNum(it.food.kcal, 0) + ' kcal, ' + fmtNum(it.food.protein, 0) + ' g protein',
-    pickerOf({ food_id: it.food.id, amount: it.amount, unit: it.unit }, chosenMeal())))));
+    pickerOf({ food_id: it.food.id, amount: it.amount, unit: it.unit }, chosenMeal()), null, it.food))));
 }
 
 // With All the items are grouped under meal headings. With one meal chosen it is a plain list.
@@ -302,7 +303,7 @@ async function yesterdayList(meal) {
   const items = filterByMeal((await api.quick('yesterday', localDate())).items, meal);
   if (!items.length) return message(emptyText('yesterday', meal, true));
   const row = (it) => foodRow(foodTitle(it.food), unitText(it.amount, it.unit) + ' - ' + fmtNum(it.kcal, 0) + ' kcal',
-    pickerOf({ food_id: it.food.id, amount: it.amount, unit: it.unit }, meal === 'all' ? it.meal : meal));
+    pickerOf({ food_id: it.food.id, amount: it.amount, unit: it.unit }, meal === 'all' ? it.meal : meal), null, it.food);
   if (meal !== 'all') return paged(items, (page) => h('ul', { class: 'list' }, page.map(row)));
   return paged(items, (page) => h('div', null, groupByMeal(page, 'Other').map((g) => h('div', null,
     h('h2', { class: 'group' }, g.label, h('span', null, fmtNum(g.kcal, 0) + ' kcal')),
@@ -431,14 +432,24 @@ const SCREENS = {
 
 // ---------- boot ----------
 
+// Fade out the launch splash once the first screen is ready (or has failed), then remove it.
+function hideSplash() {
+  const el = document.getElementById('splash');
+  if (!el) return;
+  el.classList.add('done');
+  setTimeout(() => { if (el.parentNode) el.parentNode.removeChild(el); }, 300);
+}
+
 (async function boot() {
   try {
     state.user = await api.me();
   } catch (e) {
     if (e.status !== 401) showLogin();  // 401 already showed the login screen
+    hideSplash();
     return;
   }
   await afterLogin();
+  hideSplash();
 })();
 
 if ('serviceWorker' in navigator) {

@@ -128,3 +128,30 @@ test('last used serving or pct reopens exactly, and conversion between them', ()
   assert.equal(convertAmount(units, 25, 'pct', 'serving'), 0.25);
   assert.equal(convertAmount(units, 0.5, 'serving', 'g'), 17);
 });
+
+import { macroBarParts, macroBarLabel } from '../../app/static/js/util.js';
+
+test('macroBarParts splits calories 4/4/9 and sums to 100', () => {
+  assert.deepEqual(macroBarParts({ carbs: 25, protein: 15, fat: 0 }), { carbs: 63, protein: 37, fat: 0 });
+  const p = macroBarParts({ carbs: 10, protein: 10, fat: 10 });
+  assert.equal(p.carbs + p.protein + p.fat, 100);
+  assert.deepEqual(p, { carbs: 24, protein: 23, fat: 53 });
+});
+
+test('macroBarParts always adds to 100 after rounding', () => {
+  for (const g of [{ carbs: 1, protein: 1, fat: 1 }, { carbs: 33.3, protein: 12.7, fat: 4.1 }, { carbs: 0.1, protein: 0, fat: 99 }]) {
+    const p = macroBarParts(g);
+    assert.equal(p.carbs + p.protein + p.fat, 100);
+  }
+});
+
+test('macroBarParts is null when all macros are zero or missing', () => {
+  assert.equal(macroBarParts({ carbs: 0, protein: 0, fat: 0 }), null);
+  assert.equal(macroBarParts({}), null);
+  assert.equal(macroBarParts(null), null);
+  assert.equal(macroBarParts({ carbs: -5, protein: 'x', fat: null }), null);
+});
+
+test('macroBarLabel reads for screen readers', () => {
+  assert.equal(macroBarLabel({ carbs: 50, protein: 30, fat: 20 }), 'Carbs 50%, Protein 30%, Fat 20%');
+});

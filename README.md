@@ -23,6 +23,8 @@ Dark mode follows the device setting, and the layout also works on desktop.
 - The Today screen shows calorie and macro bars against your targets, with entries grouped by meal.
 - Each user has their own daily goal (calories and the carb, protein and fat split) and start screen.
 - Barcode scanning uses the browser's BarcodeDetector when it exists. Otherwise a vendored ZXing decoder (Apache-2.0, in `app/static/vendor`) loads on demand, then a photo fallback, then typed digits.
+- Each food shows a thin bar with its calorie share from carbs, protein and fat (blue, green, red) on Today, in Add lists and search results, and live in the picker.
+- Installable as an app, with PNG and maskable icons and a short launch splash. iOS apple-touch-startup-image sizes are not provided, so iOS shows its own blank launch screen briefly.
 - Light and dark themes follow the system setting.
 - Optional: Claude reads a nutrition label from one to three photos. You check the draft before anything is saved.
 - Sign in with a local password, with optional single sign-on through OpenID Connect (authentik), set up entirely from the Admin page.

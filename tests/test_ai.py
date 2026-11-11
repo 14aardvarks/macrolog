@@ -498,3 +498,91 @@ def test_missing_usage_in_reply_defaults_to_zero(env):
     env["handler"] = lambda req: httpx.Response(200, json=reply)
     assert post(env).status_code == 200
     assert (usage_rows()[0]["input_tokens"], usage_rows()[0]["output_tokens"]) == (0, 0)
+
+
+# ---------- reservation release on every exit path ----------
+
+@pytest.mark.parametrize("exc", [httpx.ReadTimeout("slow"), httpx.ConnectTimeout("slow"), httpx.ConnectError("no"),
+                                 httpx.RemoteProtocolError("cut"), RuntimeError("bug in transport")])
+def test_failure_after_reservation_releases_it(env, exc):
+    def boom(req):
+        raise exc
+
+    env["handler"] = boom
+    try:
+        post(env)
+    except RuntimeError:
+        pass  # the test client re-raises an unhandled server error
+    assert usage_rows() == [] and ai.get_used() == 0
+
+
+def test_timeout_then_retry_counts_once(env, monkeypatch):
+    monkeypatch.setenv("AI_MONTHLY_REQUEST_CAP", "1")
+    calls = []
+
+    def flaky(req):
+        calls.append(1)
+        if len(calls) == 1:
+            raise httpx.ReadTimeout("slow")
+        return httpx.Response(200, json=api_reply(GOOD))
+
+    env["handler"] = flaky
+    assert post(env).status_code == 502 and ai.get_used() == 0
+    assert post(env).status_code == 200 and ai.get_used() == 1  # the timeout did not eat the cap of 1
+    assert post(env).status_code == 429
+
+
+async def test_cancelled_request_releases_reservation(env, monkeypatch):
+    import asyncio
+
+    started = asyncio.Event()
+
+    async def hang(payload, key=None, source="global"):
+        started.set()
+        await asyncio.sleep(30)
+
+    monkeypatch.setattr(ai, "call_claude", hang)
+    monkeypatch.setattr(ai, "read_images", lambda files: _imgs())
+    task = asyncio.ensure_future(ai.label({"id": 1}, images=[], barcode=None, hint=None))
+    await asyncio.wait_for(started.wait(), 5)
+    assert ai.get_used() == 1  # reserved while the call is in flight
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert usage_rows() == []
+
+
+async def _imgs():
+    return [("image/jpeg", JPEG)]
+
+
+def test_release_once_is_idempotent_and_spares_reused_rowids(env):
+    row = ai.reserve(1, 5)
+    done: list = []
+    ai.release_once(row, done)
+    again = ai.reserve(1, 5)  # sqlite reuses the freed rowid
+    assert again == row
+    ai.release_once(row, done)  # second release for the first request must not delete the new reservation
+    assert len(usage_rows()) == 1
+
+
+def test_release_failure_does_not_mask_error_or_leak_double(env, monkeypatch):
+    calls = []
+
+    def bad_release(row_id):
+        calls.append(row_id)
+        raise RuntimeError("db locked")
+
+    monkeypatch.setattr(ai, "release", bad_release)
+    env["handler"] = lambda req: (_ for _ in ()).throw(httpx.ReadTimeout("slow"))
+    r = post(env)
+    assert r.status_code == 502 and "too long" in r.json()["detail"] and len(calls) == 1
+
+
+def test_record_usage_failure_keeps_count_once(env, monkeypatch):
+    def bad(row_id, usage):
+        raise RuntimeError("db locked")
+
+    monkeypatch.setattr(ai, "record_usage", bad)
+    assert post(env).status_code == 200  # the billed call still returns its draft
+    assert len(usage_rows()) == 1

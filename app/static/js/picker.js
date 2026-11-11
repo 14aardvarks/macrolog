@@ -1,5 +1,6 @@
 import { api } from './api.js';
 import { h, clear, select, message, show } from './dom.js';
+import { fillMacroBar } from './chart.js';
 import {
   MEALS, MEAL_LABELS, parseAmount, fmtNum, fmtAmount, indexFromScroll, debounce, guessMeal,
   initialPick, startPreset, convertAmount, gramsFor, SERVING, PCT, amountText, amountLabel, amountValues, withValue,
@@ -101,6 +102,7 @@ export async function renderPicker(root, params, ctx) {
   const logBtn = h('button', { class: 'btn primary', type: 'button', onclick: save }, edit ? 'Save changes' : 'Log');
 
   const kcal = h('span', { id: 'pv-kcal' }, '-');
+  const mbar = h('div', { class: 'pick-bar' }, h('span', { class: 'macro-bar', role: 'img', hidden: '' }));
   root.appendChild(h('section', { class: 'screen picker' },
     h('div', { class: 'bar' },
       h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back'), h('span', { class: 'spacer' }), star),
@@ -113,7 +115,7 @@ export async function renderPicker(root, params, ctx) {
     h('div', { class: 'kcal-big' }, kcal, ' kcal'),
     h('div', { class: 'macros' }, macroCell('Carbs g', 'pv-carbs'), macroCell('Protein g', 'pv-protein'),
       macroCell('Fat g', 'pv-fat'), macroCell('Fiber g', 'pv-fiber')),
-    estBadge,
+    mbar, estBadge,
     h('label', { class: 'field' }, h('span', null, 'Meal'), mealSel),
     status, logBtn,
     edit ? h('button', { class: 'btn danger', type: 'button', onclick: remove }, 'Remove entry') : null));
@@ -214,6 +216,7 @@ export async function renderPicker(root, params, ctx) {
       root.querySelector('#pv-protein').textContent = fmtNum(p.protein, 1);
       root.querySelector('#pv-fat').textContent = fmtNum(p.fat, 1);
       root.querySelector('#pv-fiber').textContent = p.fiber == null ? '-' : fmtNum(p.fiber, 1);
+      fillMacroBar(mbar.firstChild, p);
       estBadge.hidden = !p.estimated;
       if (status.firstChild) clear(status);
     } catch (e) {

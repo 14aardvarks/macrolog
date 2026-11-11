@@ -193,7 +193,8 @@ as printed, per-serving values). Request caps per calendar month counted in tabl
 key_source 'global'|'user'): global-key requests against setting `ai_monthly_cap` (env `AI_MONTHLY_REQUEST_CAP`, default 100) for the
 household, personal-key requests against user_ai.monthly_cap (default 100) counting only that user's personal usage. Each reservation
 is one BEGIN IMMEDIATE transaction. Return 429 with a clear message when reached. Warnings: kcal differs from 4c+4p+9f by
-more than 20 percent, missing serving, any value implausible. The API key is never sent to the browser or logged.
+more than 20 percent, missing serving, any value implausible. The reservation is released exactly once on every failure after it is made (timeout,
+connection error, upstream error, cancelled request, any exception) via `release_once`; a call that returned keeps its row (tokens recorded, or 0 if recording fails). The API key is never sent to the browser or logged.
 
 ## config.py (live settings store)
 
@@ -256,6 +257,12 @@ Screens: Login, Today, Add, Picker, Claude fallback, Settings. Bottom nav: Today
   /api/auth/setup instead of the login screen.
 - Admin page (only when me.is_admin): Users, Sign-in (OIDC fields, redirect URI with copy button, checklist, Test connection,
   local login toggle), Claude and USDA settings, Log.
+- Macro balance bar (util.js `macroBarParts`, chart.js `macroBar`): thin stacked bar of calorie share from carbs, protein and fat (4/4/9 kcal per g)
+  using --c-carbs, --c-protein, --c-fat; `role="img"` with aria-label "Carbs 50%, Protein 30%, Fat 20%"; percents sum to 100; no bar when all macros are zero.
+  Shown on Today entries, Add list rows and search results, and in the picker (live). The picker also shows the numbers, so color is never the only cue.
+- Install and launch: manifest has 192, 512 and maskable 512 PNG icons plus the SVG, background_color and theme_color match the light background; index.html has
+  apple-touch-icon (180), apple-mobile-web-app-capable, status bar style and light/dark theme-color. A fixed `#splash` overlay (icon on --bg) fades out when the first
+  screen has rendered, with an inline 6 s safety timeout. No iOS apple-touch-startup-image sizes.
 - Light and dark via prefers-color-scheme. Large tap targets, no confirmation dialogs except destructive deletes of meals. Escape all
   text with textContent, never innerHTML with data. Register sw.js to cache only the static shell.
 - Do not ship a mock server. Test pure helpers (picker math, number formatting, day grouping) with node scripts in tests/ui,

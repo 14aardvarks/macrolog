@@ -232,6 +232,19 @@ def release(row_id: int) -> None:
         c.execute("DELETE FROM ai_usage WHERE id=?", (row_id,))
 
 
+def release_once(row_id: int, done: list) -> None:
+    """Release a reservation at most once per request. `done` is the request's own one-item guard list, so a
+    second call (or a rowid reused by a later reservation) can never delete someone else's row. A failing
+    release is logged and swallowed so it never hides the real error."""
+    if done:
+        return
+    done.append(row_id)
+    try:
+        release(row_id)
+    except Exception:  # noqa: BLE001
+        log.exception("Could not release AI usage reservation %s", row_id)
+
+
 def _tokens(usage, key: str) -> int:
     v = usage.get(key) if isinstance(usage, dict) else None
     return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else 0
@@ -541,13 +554,17 @@ async def label(user: CurrentUser,
     row = reserve(user["id"], limit, source)
     if row is None:
         raise HTTPException(429, _cap_message(source, limit))
+    released: list = []
     try:
         body = await call_claude(build_request(photos, " ".join((hint or "").split())[:MAX_HINT]), key, source)
-    except BaseException:
-        release(row)  # nothing usable came back, so do not charge the cap
+    except BaseException:  # timeout, connection error, cancelled request, any bug: nothing usable came back
+        release_once(row, released)
         raise
     usage = body.get("usage")
-    record_usage(row, usage)
+    try:
+        record_usage(row, usage)
+    except Exception:  # noqa: BLE001
+        log.exception("Could not record AI usage for row %s", row)  # the call was made, so the row stays counted
     tin, tout = _tokens(usage, "input_tokens"), _tokens(usage, "output_tokens")
     data = tool_input(body)
     if data is None:

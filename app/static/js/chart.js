@@ -1,5 +1,5 @@
 import { h, svg } from './dom.js';
-import { macroShares, percentParts, donutSegments, arcPath, fmtNum, MACRO_KEYS } from './util.js';
+import { macroBarParts, macroBarLabel, macroShares, percentParts, donutSegments, arcPath, fmtNum, MACRO_KEYS } from './util.js';
 
 const LABELS = { carbs: 'Carbs', protein: 'Protein', fat: 'Fat' };
 
@@ -32,4 +32,21 @@ export function splitChart(d) {
   return h('div', { class: 'split' }, art,
     h('div', { class: 'legend' },
       h('ul', null, rows)));
+}
+
+// Thin stacked bar of the calorie share from carbs, protein and fat. Returns null when there is nothing to show.
+// Update an existing bar in place with fillMacroBar.
+export function macroBar(g) {
+  const bar = h('span', { class: 'macro-bar', role: 'img' });
+  return fillMacroBar(bar, g) ? bar : null;
+}
+
+export function fillMacroBar(bar, g) {
+  const parts = macroBarParts(g);
+  bar.hidden = !parts;
+  while (bar.firstChild) bar.removeChild(bar.firstChild);
+  if (!parts) { bar.removeAttribute('aria-label'); return false; }
+  bar.setAttribute('aria-label', macroBarLabel(parts));
+  MACRO_KEYS.forEach((k) => { if (parts[k] > 0) bar.appendChild(h('span', { class: 'mb mb-' + k, style: 'width:' + parts[k] + '%' })); });
+  return true;
 }

@@ -42,6 +42,7 @@ export const GUIDE = [
   { heading: 'Today', bullets: [
     'The chart splits your calories, with your goal in the middle.',
     'Bars show eaten, goal, percent and what is left.',
+    'A thin bar under each food shows its carbs, protein and fat share.',
     'Tap an entry to change it.',
     'Tap X to remove it.',
   ] },
