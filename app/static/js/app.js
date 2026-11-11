@@ -6,6 +6,8 @@ import {
   DEFAULT_DISPLAY,
 } from './util.js';
 import { microSection, displaySection, microTargets } from './micros.js';
+import { viewToggle, dayTable } from './daytable.js';
+import { loadView, saveView } from './tablemodel.js';
 import { renderPicker } from './picker.js';
 import { renderScan } from './scan.js';
 import { renderAi } from './ai.js';
@@ -213,17 +215,31 @@ async function todayScreen(root) {
       h('div', { class: 'bar-left' }, remainingText(d.remaining[k], unit)));
   });
   const status = h('div', { 'aria-live': 'polite' });
-  const groups = groupByMeal(d.entries).map((g) => h('div', null,
+  const groups = () => groupByMeal(d.entries).map((g) => h('div', null,
     h('h2', { class: 'group' }, g.label, h('span', null, fmtNum(g.kcal, 0) + ' kcal')),
     h('ul', { class: 'list' }, g.entries.map((e) => entryRow(e, root))), saveMealBox(g, status)));
+  const removeEntry = async (e) => {
+    try { await api.deleteEntry(e.id); await go('today', {}, true); } catch (err) { show(status, message(err.message, 'error')); }
+  };
+  const openEntry = (e) => go('picker', { foodId: e.food_id, entryId: e.id, amount: e.amount, unit: e.unit, meal: e.meal });
   const disp = state.display;
   const micros = microSection(d, disp, (open) => { ctx.saveDisplay({ micros_open: open }).catch(() => {}); });
   const nutrients = disp.show_macros !== false || micros ? h('div', { class: 'nutrients' },
     disp.show_macros !== false ? [h('h2', null, 'Macro Nutrients'), h('div', { class: 'bars' }, bars)] : null, micros) : null;
-  root.appendChild(h('section', { class: 'screen wide' }, h('h1', null, 'Today'),
-    h('div', { class: 'two-col today' },
-      h('div', { class: 'col-a' }, disp.show_split !== false ? h('div', { class: 'split-box' }, h('h2', null, 'Calorie Split'), splitChart(d)) : null, nutrients),
-      h('div', { class: 'col-b' }, d.entries.length ? groups : message('Tap Add to log your first food.'), status))));
+  const body = h('div', { class: 'entries-body' });
+  const grid = h('div', { class: 'two-col today' });
+  const paint = (view) => {
+    grid.classList.toggle('table-mode', view === 'table' && d.entries.length > 0);
+    clear(body);
+    if (!d.entries.length) body.appendChild(message('Tap Add to log your first food.'));
+    else if (view === 'table') body.appendChild(dayTable(d.entries, { display: disp, onOpen: openEntry, onDelete: removeEntry }));
+    else groups().forEach((g) => body.appendChild(g));
+  };
+  const view = loadView();
+  paint(view);
+  grid.append(h('div', { class: 'col-a' }, disp.show_split !== false ? h('div', { class: 'split-box' }, h('h2', null, 'Calorie Split'), splitChart(d)) : null, nutrients),
+    h('div', { class: 'col-b' }, d.entries.length ? viewToggle(view, (v) => { saveView(v); paint(v); }) : null, body, status));
+  root.appendChild(h('section', { class: 'screen wide' }, h('h1', null, 'Today'), grid));
 }
 
 function entryRow(e, root) {

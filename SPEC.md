@@ -262,6 +262,9 @@ Screens: Login, Today, Add, Picker, Claude fallback, Settings. Bottom nav: Today
   shown nutrient: `value / target unit`, Goal or Limit, a "N of M foods" note when some entries lack data, limit bars use --over when exceeded.
   Then entries grouped by meal, each removable and tappable to adjust. On very wide screens the micro section sits under the bars in the middle column.
   Each part follows the Display settings.
+  A List and Table toggle sits above the entries (js/daytable.js, model in js/tablemodel.js, choice kept in localStorage `macrolog.todayView`, default List). Table shows the same
+  /api/day entries (they already carry every micronutrient) with columns Food, Amount, Calories, Carbs, Protein, Fat and the micronutrients chosen in Display (null is "-"), a subtotal row per meal, a Total row and a remove button per row.
+  The Food column is pinned (position: sticky) while the table scrolls sideways on phones; on desktop the table takes the full width under the bars.
 - Settings has a Display section (switches saved at once, chips for which micronutrients show) and micronutrient targets under Daily Goals.
 - The food form has a collapsed "More Nutrients" section (details element, open when a draft already has values) for the optional micronutrients.
 - The picker shows the shown micronutrients (fiber stays with the macros) under the macros in the same collapsible section; unknown is "-".

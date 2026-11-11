@@ -332,3 +332,33 @@ input[type=text], input[type=search], input[type=password], input[type=email], s
 .saved-filter { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
 .saved-filter input[type=search] { width: 100%; }
 .saved .list + .btn, .saved .sub + .btn { width: 100%; margin: 8px 0; }
+
+/* today: list or table view */
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+.view-toggle { margin: 0 0 8px; }
+.table-wrap { overflow-x: auto; background: var(--card); border: 1px solid var(--line); border-radius: 12px; margin: 0 0 12px; -webkit-overflow-scrolling: touch; }
+.day-table { border-collapse: separate; border-spacing: 0; width: 100%; font-size: .8125rem; font-variant-numeric: tabular-nums; }
+.day-table th, .day-table td { padding: 6px 8px; border-bottom: 1px solid var(--line); background: var(--card); text-align: left; font-weight: 400; vertical-align: middle; }
+.day-table thead th { font-weight: 600; color: var(--muted); line-height: 1.2; vertical-align: bottom; }
+.day-table thead th.num { white-space: normal; }
+.th-unit { display: block; font-weight: 400; font-size: .75rem; }
+.day-table .num { text-align: right; white-space: nowrap; }
+.day-table .amt-col { white-space: nowrap; color: var(--muted); }
+.day-table .food-col { position: sticky; left: 0; z-index: 1; min-width: 120px; max-width: 160px; font-weight: 600; border-right: 1px solid var(--line); overflow-wrap: anywhere; }
+.day-table thead .food-col { z-index: 2; }
+.day-table .del-col { padding: 0; width: 36px; }
+.day-table .icon-btn { min-width: 36px; min-height: 36px; font-size: 1.25rem; }
+.day-table .food-link { padding: 0; color: var(--text); text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; border: 0; background: transparent; font-weight: 600; text-align: left; cursor: pointer; min-height: 32px; }
+.day-table .meal-row th, .day-table .meal-row td { background: var(--track); font-weight: 600; }
+.day-table .meal-row .amt-col { color: var(--muted); font-weight: 400; }
+.day-table .total-row th, .day-table .total-row td { font-weight: 700; border-top: 2px solid var(--line); border-bottom: 0; }
+.day-table tbody tr:last-child th, .day-table tbody tr:last-child td { border-bottom: 0; }
+@media (min-width: 900px) {
+  .two-col.today.table-mode { grid-template-columns: minmax(0, 1fr); }
+  .today.table-mode > .col-a { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 40px; align-items: start; }
+  .today.table-mode > .col-a > .nutrients:only-child { grid-column: 1 / -1; }
+  .today.table-mode > .col-b { margin-top: 16px; }
+  .day-table .food-col { max-width: 200px; }
+  .day-table th, .day-table td { padding: 6px 5px; }
+  .day-table .num { min-width: 0; }
+}
