@@ -1,6 +1,6 @@
 import { h, field } from './dom.js';
 import { MICROS, shownMicros, microValue, microText, microNote, microOver, barWidth, toggleMicro, parseDecimal, fmtAmount } from './util.js';
-import { VIEWS, VIEW_LABELS, todayView } from './tablemodel.js';
+import { todayView } from './tablemodel.js';
 
 let seq = 0;
 
@@ -73,23 +73,12 @@ export function displaySection(display, save) {
     } }, m.label);
     return chip;
   }));
-  let view = todayView(display);
-  const viewBtns = VIEWS.map((v) => {
-    const btn = h('button', { class: 'chip', type: 'button', 'aria-pressed': v === view ? 'true' : 'false', onclick: async () => {
-      if (v === view) return;
-      const prev = view;
-      view = v;
-      viewBtns.forEach((b, i) => b.setAttribute('aria-pressed', VIEWS[i] === view ? 'true' : 'false'));
-      try { view = todayView(await save({ today_view: v })); } catch (e) { view = prev; }
-      viewBtns.forEach((b, i) => b.setAttribute('aria-pressed', VIEWS[i] === view ? 'true' : 'false'));
-    } }, VIEW_LABELS[v]);
-    return btn;
-  });
   return h('div', { class: 'display-sec' }, h('h2', null, 'Display'),
     h('p', { class: 'sub' }, 'Choose what Today, the lists and the picker show. Changes apply at once.'),
     flags.map(([k, label]) => switchRow('disp-' + k, label, display[k] !== false, (on) => save({ [k]: on }))),
-    h('p', { class: 'field-cap' }, 'Today View'),
-    h('div', { class: 'chips', role: 'group', 'aria-label': 'Today view' }, viewBtns),
+    switchRow('disp-today-table', 'Table View on Today', todayView(display) === 'table', async (on) => {
+      await save({ today_view: on ? 'table' : 'list' });
+    }),
     h('p', { class: 'field-cap' }, 'Micro nutrients to show'), chips);
 }
 
