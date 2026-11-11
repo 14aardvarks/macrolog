@@ -1,7 +1,7 @@
 import { api, setUnauthorizedHandler } from './api.js';
 import { h, clear, select, field, message, show, cameraIcon } from './dom.js';
 import {
-  MEALS, MEAL_LABELS, parseDecimal, parseAmount, amountText, servingText, setAmountFormat, dollarText, unitLabel, fmtNum, fmtAmount, groupByMeal, localDate, progressText, remainingText,
+  MEALS, MEAL_LABELS, parseDecimal, parseAmount, amountText, servingText, setAmountFormat, unitLabel, fmtNum, fmtAmount, groupByMeal, localDate, progressText, remainingText,
   barWidth, debounce, digitsOnly, guessMeal, pctTotal, latestGuard, MEAL_FILTERS, MEAL_FILTER_LABELS, filterByMeal, emptyText,
 } from './util.js';
 import { renderPicker } from './picker.js';
@@ -10,11 +10,14 @@ import { renderAi } from './ai.js';
 import { renderFoodForm } from './foodform.js';
 import { splitChart } from './chart.js';
 import { renderGuide } from './guide-view.js';
+import { renderSetup } from './setup.js';
+import { renderAdmin } from './admin.js';
+import { renderClaudeSection, renderSignIn } from './claudekey.js';
 
 const main = document.getElementById('main');
 const nav = document.getElementById('nav');
 const state = { user: null, settings: { start_screen: 'today', default_meal: null, use_last: true, confirm_ai: true, amount_format: 'fraction' }, cleanup: null, depth: 0, tab: 'favorites', addMeal: 'all' };  // addMeal lives for the session only
-const NAV_OF = { today: 'today', settings: 'settings' };  // every other screen belongs to Add
+const NAV_OF = { today: 'today', settings: 'settings', admin: 'settings' };  // every other screen belongs to Add
 
 const ctx = {
   go,
@@ -94,6 +97,10 @@ function startScreen() {
 async function afterLogin() {
   try { state.settings = await api.settings(); } catch (e) { /* keep defaults */ }
   setAmountFormat(state.settings.amount_format);
+  if (location.hash === '#settings') {  // the SSO link flow returns here
+    history.replaceState(history.state, '', location.pathname + location.search);
+    return go('settings', {}, true);
+  }
   return startScreen();
 }
 
@@ -117,6 +124,10 @@ function foodRow(title, sub, onclick, extra) {
 async function loginScreen(root) {
   nav.hidden = true;
   const cfg = await api.authConfig().catch(() => ({ local: true, oidc: false, oidc_name: '' }));
+  if (cfg.needs_setup) {
+    renderSetup(root, async (me) => { state.user = me; await afterLogin(); });
+    return;
+  }
   const user = field('Username', { autocomplete: 'username', autocapitalize: 'none', required: '' });
   const pass = field('Password', { type: 'password', autocomplete: 'current-password', required: '' });
   const status = h('div', { 'aria-live': 'polite' });
@@ -333,7 +344,8 @@ async function mealScreen(root, params) {
 // ---------- settings ----------
 
 async function settingsScreen(root) {
-  const [s, g, ai] = await Promise.all([api.settings(), api.goals(), api.aiStatus().catch(() => null)]);
+  const [s, g, ai, me, cfg] = await Promise.all([api.settings(), api.goals(), api.aiStatus().catch(() => null), api.me(),
+    api.authConfig().catch(() => null)]);
   const startSel = select([['today', 'Today'], ['scan', 'Scan'], ['search', 'Search'], ['ai', 'Ask Claude']].map((x) => ({ value: x[0], label: x[1] })),
     s.start_screen, { 'aria-label': 'Start screen' });
   const mealSel = select([{ value: 'none', label: 'Guess from the time' }, ...MEALS.map((m) => ({ value: m, label: MEAL_LABELS[m] }))],
@@ -365,9 +377,6 @@ async function settingsScreen(root) {
       show(status, message('Saved.'));
     } catch (err) { show(status, message(err.message, 'error')); }
   }
-  const claude = ai && ai.enabled
-    ? 'Claude is on. Used ' + ai.used_this_month + ' of ' + ai.cap + ' requests this month' + (ai.price_known && ai.cost_this_month != null ? ', about ' + dollarText(ai.cost_this_month) : '') + '.'
-    : 'Claude is not set up on this server.';
   root.appendChild(h('section', { class: 'screen' }, h('h1', null, 'Settings'),
     h('form', { onsubmit: save },
       h('label', { class: 'field' }, h('span', null, 'Start screen'), startSel),
@@ -381,13 +390,16 @@ async function settingsScreen(root) {
         h('p', { class: 'sub', id: 'confirm-ai-help' }, 'On: you see the request count and estimated cost before anything is sent.')),
       h('h2', null, 'Daily goals'), kcal, h('div', { class: 'grid3' }, pcts.map((p) => p[1])), total, status,
       h('button', { class: 'btn primary', type: 'submit' }, 'Save')),
-    h('h2', null, 'Claude'), h('p', { class: 'sub' }, claude),
+    h('h2', null, 'Claude'), ai ? renderClaudeSection(ai, me.use_global_ai) : h('p', { class: 'sub' }, 'Claude status is not available.'),
+    renderSignIn(cfg, me),
+    me.is_admin ? h('div', null, h('h2', null, 'Admin'), h('p', { class: 'sub' }, 'Users, sign-in, Claude and server settings.'),
+      h('button', { class: 'btn', type: 'button', onclick: () => go('admin') }, 'Open Admin')) : null,
     renderGuide(),
     h('button', { class: 'btn', type: 'button', onclick: async () => { try { await api.logout(); } catch (e) { /* ignore */ } showLogin(); } }, 'Sign out')));
 }
 
 const SCREENS = {
-  login: loginScreen, today: todayScreen, add: addScreen, lookup: lookupScreen, meal: mealScreen, settings: settingsScreen,
+  login: loginScreen, admin: (root) => renderAdmin(root, ctx), today: todayScreen, add: addScreen, lookup: lookupScreen, meal: mealScreen, settings: settingsScreen,
   picker: (root, p) => renderPicker(root, p, ctx),
   scan: (root) => renderScan(root, ctx),
   ai: (root, p) => renderAi(root, p, ctx),

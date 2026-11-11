@@ -25,6 +25,16 @@ def conn():
         c.close()
 
 
+# Columns added after the first release, migrated in place on older databases (fixed strings only).
+USER_COLUMNS = (
+    ("session_version", "INTEGER NOT NULL DEFAULT 0"),
+    ("is_admin", "INTEGER NOT NULL DEFAULT 0"),
+    ("disabled", "INTEGER NOT NULL DEFAULT 0"),
+    ("use_global_ai", "INTEGER NOT NULL DEFAULT 1"),
+    ("oidc_iss", "TEXT"),
+)
+
+
 def init_shared(c: sqlite3.Connection) -> None:
     c.executescript(
         """
@@ -33,13 +43,21 @@ def init_shared(c: sqlite3.Connection) -> None:
           username TEXT UNIQUE NOT NULL,
           display_name TEXT,
           password_hash TEXT,
-          oidc_sub TEXT UNIQUE,
+          oidc_sub TEXT,
+          oidc_iss TEXT,
           email TEXT,
           created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-          session_version INTEGER NOT NULL DEFAULT 0
+          session_version INTEGER NOT NULL DEFAULT 0,
+          is_admin INTEGER NOT NULL DEFAULT 0,
+          disabled INTEGER NOT NULL DEFAULT 0,
+          use_global_ai INTEGER NOT NULL DEFAULT 1
         );
         """
     )
     cols = {r[1] for r in c.execute("PRAGMA table_info(users)")}
-    if "session_version" not in cols:
-        c.execute("ALTER TABLE users ADD COLUMN session_version INTEGER NOT NULL DEFAULT 0")
+    for name, ddl in USER_COLUMNS:
+        if name not in cols:
+            c.execute(f"ALTER TABLE users ADD COLUMN {name} {ddl}")
+    # One SSO identity is the pair (issuer, subject). A NULL issuer (not yet stamped) counts as ''.
+    c.execute("CREATE UNIQUE INDEX IF NOT EXISTS users_oidc_identity "
+              "ON users(coalesce(oidc_iss, ''), oidc_sub) WHERE oidc_sub IS NOT NULL")

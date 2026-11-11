@@ -198,3 +198,38 @@ nav button[aria-current=page] { color: var(--accent); box-shadow: inset 0 3px 0 
 .notice .row { margin: 12px 0 0; }
 .notice .row .btn { flex: 1; }
 @media (min-width: 600px) { .overlay { align-items: center; } }
+
+/* admin, setup, claude key */
+input[type=text], input[type=search], input[type=password], input[type=email], select { max-width: 100%; }
+.field .row { margin: 0; }
+.field > label > span { display: block; margin-bottom: 4px; }
+.field .row > input { flex: 1; min-width: 0; }
+.src-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; margin: 2px 0 12px; min-height: 24px; }
+.src { color: var(--muted); font-size: .8125rem; margin: 0; }
+.link-btn { min-height: 44px; padding: 0 4px; border: 0; background: transparent; color: var(--accent); font-size: .875rem; text-decoration: underline; cursor: pointer; }
+.admin-sec { margin: 0 0 28px; padding-top: 4px; border-top: 1px solid var(--line); }
+.admin-sec h3 { font-size: .8125rem; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 16px 0 6px; }
+.admin-sec > h2 { font-size: 1.2rem; margin: 16px 0 4px; }
+.admin .item-main { align-items: flex-start; }
+.user { border-bottom: 1px solid var(--line); }
+.user:last-child { border-bottom: 0; }
+.user-head { width: 100%; }
+.user-panel { padding: 4px 12px 12px; }
+.user-panel form { margin: 0 0 12px; }
+.user-panel form .btn { width: 100%; }
+.user-panel .row.wrap .btn { flex: 1 1 140px; }
+.pills { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.pill { padding: 1px 10px; border-radius: 99px; background: var(--track); font-size: .8125rem; font-weight: 600; }
+.uri { flex: 1 1 100%; padding: 8px 10px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; overflow-wrap: anywhere; font-size: .875rem; }
+.checklist { margin: 0 0 12px; padding-left: 20px; }
+.checklist li { margin: 4px 0; }
+.env { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0 0 12px; }
+.env dt { color: var(--muted); font-size: .875rem; }
+.env dd { margin: 0; overflow-wrap: anywhere; }
+.log-row { display: flex; flex-direction: column; padding: 8px 12px; border-bottom: 1px solid var(--line); font-size: .875rem; }
+.log-row:last-child { border-bottom: 0; }
+.log-meta { color: var(--muted); font-size: .8125rem; }
+.log-text { overflow-wrap: anywhere; }
+.add-user { margin: 12px 0 0; }
+.add-user form { padding-bottom: 12px; }
+.login .btn.primary { width: 100%; }

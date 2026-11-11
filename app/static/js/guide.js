@@ -52,6 +52,24 @@ export const GUIDE = [
     'Requests are capped each month for the whole household.',
     'You can turn the question off in Settings.',
   ] },
+  { heading: 'Your Claude key', bullets: [
+    'In Settings you can add your own Claude key and monthly limit.',
+    'It bills your Anthropic account and is used instead of the shared key.',
+    'The key is never shown again after you save it.',
+  ] },
+  { heading: 'Single sign-on (SSO)', bullets: [
+    'If your server offers it, tap Connect SSO in Settings.',
+    'Then you can sign in with the provider button.',
+    'Disconnect needs a password on your account.',
+  ] },
+  { heading: 'Admin', bullets: [
+    'Only administrators see Admin in Settings.',
+    'Add users, reset passwords, and turn the shared Claude key on or off per person.',
+    'Sign-in has the SSO setup, the redirect URI to copy and Test connection.',
+    'Claude and USDA keys are saved here and never shown again.',
+    'Use default puts a setting back to its environment value.',
+    'Activity lists the latest admin changes.',
+  ] },
   { heading: 'Two users', bullets: [
     'Each person has their own log, goals and settings.',
     'Foods are shared.',

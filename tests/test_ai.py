@@ -77,7 +77,9 @@ def test_status(env, monkeypatch):
         monkeypatch.delenv(k, raising=False)
     r = env["client"].get("/api/ai/status")
     assert r.json() == {"enabled": True, "used_this_month": 0, "cap": 100, "remaining": 100, "model": "claude-haiku-5-5",
-                        "price_known": False, "est_cost_label": None, "cost_this_month": None}
+                        "price_known": False, "est_cost_label": None, "cost_this_month": None,
+                        "key_source": "global", "personal_key_set": False, "personal_key_unreadable": False,
+                        "can_use_global": True, "personal_cap": 100, "personal_used_this_month": 0}
     assert SECRET not in r.text
 
 
@@ -174,7 +176,9 @@ def test_success_shape(env):
     r = post(env)
     assert r.status_code == 200, r.text
     body = r.json()
-    assert set(body) == {"draft", "warnings", "used_this_month", "cap", "input_tokens", "output_tokens", "cost"}
+    assert set(body) == {"draft", "warnings", "used_this_month", "cap", "input_tokens", "output_tokens", "cost",
+                         "key_source"}
+    assert body["key_source"] == "global"
     assert (body["input_tokens"], body["output_tokens"]) == (1500, 120)
     d = body["draft"]
     assert "id" not in d

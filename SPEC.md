@@ -18,6 +18,7 @@ and pytest-asyncio (asyncio_mode=auto). Priority order is works correctly, then 
 | units | app/units.py, tests/test_units.py |
 | lookup | app/lookup.py, tests/test_lookup.py |
 | auth | app/auth.py, app/auth_cli.py, tests/test_auth.py |
+| admin | app/admin.py, app/config.py, tests/test_admin.py, tests/test_config.py, tests/test_ai_keys.py, tests/conftest.py |
 | core | app/core.py, tests/test_core.py |
 | ai | app/ai.py, tests/test_ai.py |
 | frontend | app/static/* (index.html, style.css, js/*.js, sw.js, manifest.webmanifest, icon.svg), tests/ui/* |
@@ -32,15 +33,20 @@ in your final message instead.
 - `app/db.py`: `conn()` context manager (sqlite3, row_factory=Row, foreign_keys on, WAL, commits on exit), `init_shared(c)` creates the
   `users` table. Each module exposes `init(c)` that creates its own tables with CREATE TABLE IF NOT EXISTS. DB path from env `DB_PATH`
   (default `data/macrolog.db`), read at call time so tests can monkeypatch it.
-- `app/deps.py`: `current_user(request) -> dict` FastAPI dependency returning `{"id", "username", "display_name"}`; raises 401.
+- `app/deps.py`: `current_user(request) -> dict` FastAPI dependency returning `{"id", "username", "display_name", "is_admin"}`;
+  raises 401 when signed out, when the session version is stale, or when the user is disabled.
   It reads `request.session["uid"]`. Tests override it with `app.dependency_overrides[deps.current_user]`.
+  `require_admin` depends on `current_user` and raises 403 unless `is_admin`.
 - `app/main.py`: creates the app, adds Starlette SessionMiddleware (secret from env `SECRET_KEY`, cookie `macrolog_session`,
   SameSite=Lax, max_age 90 days, https_only when env `COOKIE_SECURE=1`), calls every module `init(c)` on startup, includes routers
   `auth.router`, `core.router`, `ai.router`, and mounts app/static at `/` (index.html served for unknown non-/api paths).
   Each router already carries its own prefix. Routers must be named `router`.
 
-users table: `id INTEGER PK, username TEXT UNIQUE NOT NULL, display_name TEXT, password_hash TEXT NULL, oidc_sub TEXT UNIQUE NULL,
-email TEXT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP`.
+users table: `id INTEGER PK, username TEXT UNIQUE NOT NULL, display_name TEXT, password_hash TEXT NULL, oidc_sub TEXT NULL, oidc_iss TEXT NULL (UNIQUE index on (coalesce(oidc_iss,''), oidc_sub); an SSO identity is the pair; NULL iss matches the issuer in effect until stamped at the next SSO sign-in),
+email TEXT NULL, created_at TEXT DEFAULT CURRENT_TIMESTAMP, session_version INTEGER NOT NULL DEFAULT 0,
+is_admin INTEGER NOT NULL DEFAULT 0, disabled INTEGER NOT NULL DEFAULT 0, use_global_ai INTEGER NOT NULL DEFAULT 1`.
+Columns added later are migrated in place by `db.init_shared` (PRAGMA table_info, ALTER TABLE ADD COLUMN).
+`session_version` is bumped on password reset, disable and demotion, which ends every existing session of that user.
 
 ## Food object (everywhere)
 
@@ -81,7 +87,7 @@ parse_serving(text, serving_g=None, serving_ml=None) -> {"serving_amount","servi
 async barcode(raw) -> {"food": Food|None, "note": str, "valid": bool}      # Open Food Facts then USDA FDC (branded, match gtinUpc)
 async search(query, limit=8) -> list[Food]                                   # USDA FDC text search
 ```
-Env: `FDC_API_KEY` (default DEMO_KEY), User-Agent "macrolog/0.1". Network errors never raise; return note text such as
+Setting `fdc_api_key` via `config.get` (env `FDC_API_KEY`, default DEMO_KEY, empty also means DEMO_KEY), User-Agent "macrolog/0.1". Network errors never raise; return note text such as
 "Open Food Facts unreachable". Open Food Facts: `https://world.openfoodfacts.org/api/v2/product/{code}.json`. USDA:
 `https://api.nal.usda.gov/fdc/v1/foods/search`. Use the product's own printed serving text (OFF `serving_size`, FDC
 `householdServingFullText` + `servingSize`/`servingSizeUnit`) for label_text and unit, not just 100 g.
@@ -90,20 +96,35 @@ Env: `FDC_API_KEY` (default DEMO_KEY), User-Agent "macrolog/0.1". Network errors
 
 Local username/password plus OpenID Connect (authentik). Prefix `/api/auth` for JSON and `/auth/oidc` for redirects.
 ```
-GET  /api/auth/config  -> {"local": bool, "oidc": bool, "oidc_name": str}
+GET  /api/auth/config  -> {"local": bool, "oidc": bool, "oidc_name": str, "needs_setup": bool, "first_admin_via_sso": bool}   # needs_setup only when users is empty and local login is on (or SSO is not configured); first_admin_via_sso when users is empty, LOCAL_LOGIN is off and OIDC is configured (setup then 409s and the first SSO sign-in creates the admin; with local login on SSO sign-up is refused until setup is done)
 POST /api/auth/login   {"username","password"} -> {"id","username","display_name"}   sets session uid; 401 on failure; basic rate limit
 POST /api/auth/logout
 GET  /api/auth/me      -> user or 401
+POST /api/auth/setup   {"username","password" (8..1024),"display_name"?} -> {"id","username","display_name","is_admin": true}
+                       # first-run: only while users is empty (BEGIN IMMEDIATE + re-check), signs the new admin in,
+                       # 409 once any user exists, 429 after 10 attempts per address per 15 min, same-origin
+POST /api/auth/sso/unlink -> same as /me   # 409 when not linked, when the user has no password, or when local login is off
 GET  /auth/oidc/login  -> 302 to authentik (authorization code + PKCE, state, nonce)
-GET  /auth/oidc/callback -> validates, finds user by oidc_sub, else by verified email, else auto-creates (unless OIDC_ALLOW_SIGNUP=0), sets session, 302 to /
+GET  /auth/oidc/link   -> requires a session; 302 to authentik in link mode (flow stores uid and session version)
+                       # 401/409/403 HTML page when signed out, already linked, or started cross-site (Sec-Fetch-Site)
+GET  /auth/oidc/callback -> login mode: validates, finds user by (oidc_iss, oidc_sub), else by verified email, else auto-creates
+                       # (unless OIDC_ALLOW_SIGNUP=0), sets session, 302 to next. Link mode: same token checks, then requires the
+                       # same still-valid session user, links sub (no email_verified needed), keeps the session, 302 to /#settings;
+                       # 409 page when the sub belongs to another user or the user is already linked
 ```
-Env: `LOCAL_LOGIN` (default 1), `OIDC_ISSUER` (authentik application URL like https://auth.example.com/application/o/macrolog/),
-`OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_NAME` (button label), `OIDC_ALLOW_SIGNUP` (default 1), `PUBLIC_URL` (base for redirect URI
-`PUBLIC_URL/auth/oidc/callback`). Discovery via `{issuer}.well-known/openid-configuration`. Local users are created by CLI
-`python -m app.auth_cli add-user USERNAME [--name NAME]` (prompts for password, no echo) and `set-password`, `list-users`.
-Also honor `ADMIN_USER`/`ADMIN_PASSWORD` env to create a first user at startup if no users exist.
+Settings (read through `config.get` at call time, so the Admin page can change them live; the env names are the fallbacks):
+`LOCAL_LOGIN` (default 1), `OIDC_ISSUER` (authentik application URL like https://auth.example.com/application/o/macrolog/),
+`OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_NAME` (button label), `OIDC_ALLOW_SIGNUP` (default 0). Environment only: `PUBLIC_URL`
+(base for redirect URI `PUBLIC_URL/auth/oidc/callback`), `TRUST_PROXY`.
+`GET /api/auth/me` returns `{"id","username","display_name","is_admin","use_global_ai","personal_key_set","sso_linked","has_password"}`. Disabled users are refused
+by password login (403 after a correct password) and by OIDC (403 page, no email linking). Discovery via `{issuer}.well-known/openid-configuration`. Users are created in the Admin page (or by first-run setup). The CLI
+`python -m app.auth_cli` is an emergency recovery path only: `add-user USERNAME [--name NAME]` (prompts for password, no echo),
+`set-password`, `set-email`, `list-users`, `make-admin`, `remove-admin`, `enable-user`, `disable-user`, `unset-config KEY`
+(refuses to leave no active admin). Optionally honor `ADMIN_USER`/`ADMIN_PASSWORD` env to create a first admin at startup if no users exist. `bootstrap_admin` marks ADMIN_USER
+as admin on every start, and if no admin exists the lowest-id (enabled first) user becomes admin.
 Module API used by main.py: `router`, `init(c)` (creates any auth tables, e.g. login attempts), and `bootstrap_admin()` (no args, opens its own db.conn()).
 App start command is `uvicorn app.main:create_app --factory --host 0.0.0.0 --port 8000` (requires env SECRET_KEY).
+State-changing routes reject a present non-matching Origin and any `Sec-Fetch-Site: cross-site`.
 Must be secure: constant-time compare, scrypt with per-user salt, session fixation safe (clear session on login), validate id_token
 signature/iss/aud/exp/nonce, redirect only to same-origin paths.
 
@@ -133,18 +154,63 @@ GET/PUT /api/settings {"start_screen": "today"|"scan"|"search"|"ai", "default_me
 
 ## ai.py (prefix `/api/ai`, requires current_user)
 
-Optional Claude label reader, off unless `ANTHROPIC_API_KEY` is set.
+Optional Claude label reader. Key resolution per user: personal key (user_secrets name "anthropic") if set, else the global key
+(setting `ai_global_key`, env `ANTHROPIC_API_KEY`) when users.use_global_ai = 1, else disabled.
 ```
-def enabled() -> bool
-GET  /api/ai/status -> {"enabled","used_this_month","cap","model"}
+def enabled(user_id=None) -> bool          # no arg: whether a global key is configured
+def resolve_key(user_id) -> (source, key)  # source "user" | "global" | None
+GET  /api/ai/status -> {"enabled","key_source": "personal"|"global"|null,"used_this_month","cap","remaining","model","price_known",
+                        "est_cost_label","cost_this_month","personal_key_set","personal_key_unreadable","can_use_global",
+                        "personal_cap","personal_used_this_month"}    # cap/used/remaining/cost refer to the active source (global if none)
+PUT  /api/ai/key {"key"?: str, "cap"?: int 1..10000} -> status    # at least one; key 20..512 printable chars, never sent to the API
+DELETE /api/ai/key -> status
 POST /api/ai/label  multipart: images (1 to 3 files, jpeg/png/webp, each <= 5 MB), optional barcode (text), optional hint (text)
      -> {"draft": Food (no id, source "ai", barcode if given), "warnings": [str], "used_this_month","cap"}   # NOT saved; client confirms via POST /api/foods
 ```
 Calls `POST https://api.anthropic.com/v1/messages` via httpx with headers `x-api-key`, `anthropic-version: 2023-06-01`, model from
-`AI_MODEL` (default `claude-haiku-5-5`), forced tool use with an input_schema returning the Food fields exactly as printed (serving
-as printed, per-serving values). Request cap per calendar month from `AI_MONTHLY_REQUEST_CAP` (default 100) counted in table ai_usage
-(user_id, at, input_tokens, output_tokens); return 429 with a clear message when reached. Warnings: kcal differs from 4c+4p+9f by
+setting `ai_model` (env `AI_MODEL`, default `claude-haiku-5-5`), forced tool use with an input_schema returning the Food fields exactly as printed (serving
+as printed, per-serving values). Request caps per calendar month counted in table ai_usage (user_id, at, input_tokens, output_tokens,
+key_source 'global'|'user'): global-key requests against setting `ai_monthly_cap` (env `AI_MONTHLY_REQUEST_CAP`, default 100) for the
+household, personal-key requests against user_ai.monthly_cap (default 100) counting only that user's personal usage. Each reservation
+is one BEGIN IMMEDIATE transaction. Return 429 with a clear message when reached. Warnings: kcal differs from 4c+4p+9f by
 more than 20 percent, missing serving, any value implausible. The API key is never sent to the browser or logged.
+
+## config.py (live settings store)
+
+Table `app_config(key PK, value, secret, updated_at)`. `get(key, default)` resolves DB value, else env var, else default, at call time.
+Managed keys (env fallback): local_login (LOCAL_LOGIN), oidc_issuer, oidc_client_id, oidc_client_secret*, oidc_name, oidc_allow_signup,
+ai_global_key* (ANTHROPIC_API_KEY), ai_model, ai_monthly_cap (AI_MONTHLY_REQUEST_CAP, 0..100000), ai_price_in_per_mtok,
+ai_price_out_per_mtok (0..10000), fdc_api_key*. Starred keys are secrets: Fernet encrypted with a key derived from SECRET_KEY by
+HKDF-SHA256 (info `macrolog/secret-store/v1`); never returned, logged or put in exceptions; APIs report `{"set": bool}`. An undecryptable
+secret counts as unset (env fallback) and is flagged `unreadable`. Empty string stored = explicitly empty; deleting the row = use env.
+Environment only, never stored: SECRET_KEY, DB_PATH, PUBLIC_URL, TRUST_PROXY, COOKIE_SECURE. Also `user_secrets(user_id, name,
+value_enc, updated_at)` for personal keys.
+
+## admin.py (prefix `/api/admin`, every route requires `deps.require_admin` and same origin)
+
+Request bodies are parsed by hand (not pydantic) so validation errors never echo passwords or secrets.
+```
+GET   /users -> {"users": [{id, username, display_name, email, is_admin, disabled, use_global_ai, has_password, sso_linked,
+                            personal_key_set, created_at}]}
+POST  /users {username, password (8..1024), display_name?, email?, is_admin?} -> user   # 409 if the name exists (case-insensitive)
+PATCH /users/{id} {display_name?, email?, is_admin?, disabled?, use_global_ai?, password?, unlink_sso?: true} -> user
+      # 400 disabling yourself, or unlinking your own SSO without a password or while local login is off;
+      # 409 demoting/disabling the last active admin, or demoting/disabling/unlinking the last SSO-linked admin while local
+      # login is off. Password reset, disable, demotion and unlink bump session_version.
+GET   /config -> {"settings": {key: {"value"| "set"+"unreadable", "source": "database"|"environment"|"default", "env", "type"}},
+                  "environment": {"SECRET_KEY": {"set"}, "DB_PATH", "PUBLIC_URL", "TRUST_PROXY", "COOKIE_SECURE", "note"},
+                  "oidc_test": {"issuer","client_id","at","matches_current"}|null, "warnings": [str],
+                  "oidc_redirect_uri": "PUBLIC_URL/auth/oidc/callback"|null, "oidc_redirect_uri_warning": str|null,
+                  "authentik_checklist": [str]}
+                  # secret "set" is false when only the built-in default applies (fdc_api_key DEMO_KEY)
+PUT   /config {key: value|null, ...} -> same as GET   # all or nothing; null removes the override; "" clears a secret
+POST  /oidc/test {issuer?, client_id?} -> {"ok", "message"}   # discovery + JWKS, 5 s, 1 MB, same-host redirects only
+GET   /log -> {"entries": [{id, at, admin_id, admin_username, action, target, detail}]}   # newest 50
+```
+Lockout: local_login may be false only with issuer and client id set, PUBLIC_URL set, a passed test recorded for exactly those values,
+and an active SSO-linked admin. Every write appends to `admin_log` (no secret values); so do first-run setup
+(`setup.first_admin`), self link/unlink from Settings (`self.sso_link`, `self.sso_unlink`) and CLI commands (`cli.*`, admin_id null).
+`admin_log` is created by `config.init`, and `config.audit(c, actor_id, action, target, detail)` appends to it.
 
 ## Frontend (app/static)
 
@@ -161,7 +227,13 @@ Screens: Login, Today, Add, Picker, Claude fallback, Settings. Bottom nav: Today
 - Lookup failure: show "Not found" with two buttons, "Ask Claude" (only if can_ask_ai) and "Enter manually". Ask Claude suggests photographing the NUTRITION
   LABEL (optionally with the barcode in the same photo), resizes images client side (max 1280 px, JPEG 0.8), uploads, shows the draft in an editable form
   with any warnings, and only saves via POST /api/foods after the user confirms.
-- Settings: start screen, goals (kcal and split), sign out, Claude status (used/cap).
+- Settings: start screen, goals (kcal and split), sign out, Claude status (used/cap), personal Claude key and cap,
+  Connect SSO (plain link to /auth/oidc/link, shown when /api/auth/config oidc is true and me.sso_linked is false) and
+  Disconnect SSO (POST /api/auth/sso/unlink, shown when linked and has_password). The app opens Settings for `/#settings`.
+- First run: when /api/auth/config needs_setup is true, show a setup form (username, display name, password) posting to
+  /api/auth/setup instead of the login screen.
+- Admin page (only when me.is_admin): Users, Sign-in (OIDC fields, redirect URI with copy button, checklist, Test connection,
+  local login toggle), Claude and USDA settings, Log.
 - Light and dark via prefers-color-scheme. Large tap targets, no confirmation dialogs except destructive deletes of meals. Escape all
   text with textContent, never innerHTML with data. Register sw.js to cache only the static shell.
 - Do not ship a mock server. Test pure helpers (picker math, number formatting, day grouping) with node scripts in tests/ui,

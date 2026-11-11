@@ -128,7 +128,7 @@ def test_preview_passes_estimated_through_and_rounds(a):
 
 def fake_ai(monkeypatch, enabled):
     mod = types.ModuleType("app.ai")
-    mod.enabled = lambda: enabled
+    mod.enabled = lambda user_id=None: enabled
     monkeypatch.setitem(sys.modules, "app.ai", mod)
     monkeypatch.setattr(app_pkg, "ai", mod, raising=False)
 

@@ -5,12 +5,13 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI
-from fastapi.responses import FileResponse
+from fastapi import Depends, FastAPI, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import ai, auth, core, db
+from . import admin, ai, auth, config, core, db
 
 MIN_SECRET_LEN = 32
 STATIC = Path(__file__).parent / "static"
@@ -20,10 +21,16 @@ STATIC = Path(__file__).parent / "static"
 async def lifespan(app: FastAPI):
     with db.conn() as c:
         db.init_shared(c)
-        for module in (auth, core, ai):
+        for module in (config, auth, core, ai, admin):
             module.init(c)
     auth.bootstrap_admin()
     yield
+
+
+async def validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """422 without the submitted values, so a rejected password or key is never echoed back."""
+    detail = [{"type": e.get("type"), "loc": list(e.get("loc", ())), "msg": e.get("msg")} for e in exc.errors()]
+    return JSONResponse({"detail": detail}, status_code=422)
 
 
 def create_app() -> FastAPI:
@@ -32,6 +39,7 @@ def create_app() -> FastAPI:
         raise RuntimeError(f"SECRET_KEY must be set and at least {MIN_SECRET_LEN} characters long. "
                            'Generate one with: python3 -c "import secrets; print(secrets.token_urlsafe(48))"')
     app = FastAPI(title="Macrolog", lifespan=lifespan, dependencies=[Depends(auth.require_same_origin)])
+    app.add_exception_handler(RequestValidationError, validation_error)
     app.add_middleware(
         SessionMiddleware,
         secret_key=secret,
@@ -43,6 +51,7 @@ def create_app() -> FastAPI:
     app.include_router(auth.router)
     app.include_router(core.router)
     app.include_router(ai.router)
+    app.include_router(admin.router)
 
     @app.get("/", include_in_schema=False)
     def index():

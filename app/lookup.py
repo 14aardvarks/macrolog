@@ -3,12 +3,14 @@
 Every result is a Food dict with nutrients per LABEL serving. Network errors never
 raise, they become notes. Tests replace `_transport` with an httpx.MockTransport.
 """
-import os
+from __future__ import annotations
+
 import re
 from fractions import Fraction
 
 import httpx
 
+from . import config
 from .units import MASS, VOLUME, parse_unit
 
 OFF_URL = "https://world.openfoodfacts.org/api/v2/product/{code}.json"
@@ -223,8 +225,13 @@ def fdc_food(item, barcode=None):
     return _food("fdc", str(item.get("fdcId")), barcode or item.get("gtinUpc") or None, name, brand, sv, vals)
 
 
+def fdc_api_key():
+    """Stored setting fdc_api_key, else FDC_API_KEY, else DEMO_KEY (also when set but empty)."""
+    return str(config.get("fdc_api_key")).strip() or "DEMO_KEY"
+
+
 def _fdc_params(**extra):
-    return {"api_key": os.environ.get("FDC_API_KEY", "DEMO_KEY"), **extra}
+    return {"api_key": fdc_api_key(), **extra}
 
 
 async def _fdc(client, candidates, notes):

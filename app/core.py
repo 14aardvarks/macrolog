@@ -95,7 +95,7 @@ def number(v, name: str, positive: bool = False, optional: bool = False):
         raise bad(f"{name} is required")
     try:
         x = float(v)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         raise bad(f"{name} must be a number")
     if isinstance(v, bool) or not math.isfinite(x):
         raise bad(f"{name} must be a finite number")
@@ -220,10 +220,10 @@ def macros(food: dict, amount: float, unit: str) -> dict:
     return out
 
 
-def can_ask_ai() -> bool:
+def can_ask_ai(user_id: int | None = None) -> bool:
     try:
         from . import ai
-        return bool(ai.enabled())
+        return bool(ai.enabled(user_id))
     except Exception:
         return False
 
@@ -239,7 +239,7 @@ def like_filter(q: str) -> tuple[str, list]:
 @router.get("/foods/barcode/{code}")
 async def barcode(code: str, user: CurrentUser):
     info = lookup.normalize_barcode(code)
-    ask = can_ask_ai()
+    ask = can_ask_ai(user["id"])
     if info["candidates"]:
         marks = ",".join("?" * len(info["candidates"]))
         with db.conn() as c:

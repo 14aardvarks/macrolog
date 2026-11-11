@@ -17,17 +17,18 @@ import secrets
 import sqlite3
 import threading
 import time
+from typing import Any
 from urllib.parse import urlencode, urlsplit
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from joserfc import jwt
 from joserfc.errors import JoseError
 from joserfc.jwk import KeySet
 from pydantic import BaseModel, Field
 
-from . import db, deps
+from . import config, db, deps
 
 log = logging.getLogger("macrolog.auth")
 
@@ -52,7 +53,10 @@ SCRYPT_SLOTS = threading.Semaphore(4)
 OIDC_FLOW_TTL = 10 * 60
 CACHE_TTL = 60 * 60
 ALLOWED_ALGS = ["RS256", "RS384", "RS512", "PS256", "PS384", "PS512", "ES256", "ES384", "ES512", "EdDSA"]
+DISABLED_MESSAGE = "This account is disabled. Ask the administrator."
 USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9._@-]{0,63}$")
+
+PERSONAL_KEY = "anthropic"  # user_secrets name of the personal Claude key (shared with ai.py)
 
 _cache: dict[str, tuple[float, dict]] = {}
 
@@ -64,16 +68,32 @@ def _flag(name: str, default: str) -> bool:
 
 
 def local_enabled() -> bool:
-    return _flag("LOCAL_LOGIN", "1")
+    return config.flag("local_login")
 
 
-def oidc_issuer() -> str:
-    issuer = os.environ.get("OIDC_ISSUER", "").strip()
+def normalize_issuer(issuer: str) -> str:
+    issuer = (issuer or "").strip()
     return issuer if not issuer or issuer.endswith("/") else issuer + "/"
 
 
+def oidc_issuer() -> str:
+    return normalize_issuer(config.get("oidc_issuer"))
+
+
+def current_issuer(c: sqlite3.Connection) -> str:
+    return normalize_issuer(str(config.get("oidc_issuer", c=c)))
+
+
+def oidc_client_id() -> str:
+    return str(config.get("oidc_client_id")).strip()
+
+
+def oidc_name() -> str:
+    return str(config.get("oidc_name")).strip() or "authentik"
+
+
 def oidc_enabled() -> bool:
-    return bool(oidc_issuer() and os.environ.get("OIDC_CLIENT_ID") and public_url())
+    return bool(oidc_issuer() and oidc_client_id() and public_url())
 
 
 def public_url() -> str:
@@ -156,19 +176,28 @@ def public_user(row) -> dict:
 
 
 def create_user(c: sqlite3.Connection, username: str, password: str | None = None,
-                display_name: str | None = None, email: str | None = None) -> int:
-    """Create a local user. Raises ValueError on invalid input or a taken name."""
+                display_name: str | None = None, email: str | None = None,
+                password_hash: str | None = None, is_admin: bool = False) -> int:
+    """Create a local user. Raises ValueError on invalid input or a taken name.
+    Pass password_hash (from hash_password) to hash before taking a write lock."""
     name = validate_username(username)
     if password is not None:
         validate_password(password)
+        password_hash = hash_password(password)
     if find_user(c, name):
         raise ValueError(f"User '{name}' already exists")
+    if not is_admin and not c.execute("SELECT 1 FROM users WHERE is_admin=1 AND disabled=0 LIMIT 1").fetchone():
+        is_admin = True  # a household with no active admin always promotes the next account created
     cur = c.execute(
-        "INSERT INTO users(username, display_name, password_hash, email) VALUES (?,?,?,?)",
-        (name, (display_name or "").strip() or name, hash_password(password) if password else None,
-         (email or "").strip() or None),
+        "INSERT INTO users(username, display_name, password_hash, email, is_admin) VALUES (?,?,?,?,?)",
+        (name, (display_name or "").strip() or name, password_hash, (email or "").strip() or None,
+         1 if is_admin else 0),
     )
     return cur.lastrowid
+
+
+def user_count(c: sqlite3.Connection) -> int:
+    return c.execute("SELECT count(*) FROM users").fetchone()[0]
 
 
 def set_password(c: sqlite3.Connection, username: str, password: str) -> None:
@@ -190,7 +219,7 @@ def set_email(c: sqlite3.Connection, username: str, email: str) -> None:
 def list_users(c: sqlite3.Connection) -> list[dict]:
     rows = c.execute(
         "SELECT id, username, display_name, email, created_at, password_hash IS NOT NULL AS has_password,"
-        " oidc_sub IS NOT NULL AS has_oidc FROM users ORDER BY id"
+        " oidc_sub IS NOT NULL AS has_oidc, is_admin, disabled FROM users ORDER BY id"
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -198,6 +227,7 @@ def list_users(c: sqlite3.Connection) -> list[dict]:
 # ---------------------------------------------------------------- module API
 
 def init(c: sqlite3.Connection) -> None:
+    config.init(c)
     c.executescript(
         """
         CREATE TABLE IF NOT EXISTS login_failures(
@@ -207,24 +237,81 @@ def init(c: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS login_failures_key ON login_failures(key, at);
         """
     )
+    pin_unstamped_identities(c, current_issuer(c))
+
+
+def pin_unstamped_identities(c: sqlite3.Connection, issuer: str) -> None:
+    """Stamp linked users that have no issuer yet with `issuer` (no-op when there is none)."""
+    if issuer:
+        c.execute("UPDATE users SET oidc_iss=? WHERE oidc_sub IS NOT NULL AND oidc_iss IS NULL", (issuer,))
 
 
 def bootstrap_admin() -> None:
-    """Create ADMIN_USER with ADMIN_PASSWORD when the users table is empty."""
+    """Create ADMIN_USER with ADMIN_PASSWORD when the users table is empty, mark ADMIN_USER as an
+    administrator (only when that account has a password), and if no administrator exists at all, promote the lowest-id enabled user."""
     username = os.environ.get("ADMIN_USER", "").strip()
     password = os.environ.get("ADMIN_PASSWORD", "")
-    if not username or not password:
-        return
     with db.conn() as c:
         db.init_shared(c)
-        if c.execute("SELECT 1 FROM users LIMIT 1").fetchone():
-            return
-        try:
-            create_user(c, username, password)
-        except ValueError as exc:
-            log.error("ADMIN_USER not created: %s", exc)
-            return
-    log.info("Created first user '%s' from ADMIN_USER", normalize_username(username))
+        if username and password and not c.execute("SELECT 1 FROM users LIMIT 1").fetchone():
+            try:
+                create_user(c, username, password)
+                log.info("Created first user '%s' from ADMIN_USER", normalize_username(username))
+            except ValueError as exc:
+                log.error("ADMIN_USER not created: %s", exc)
+        if username:
+            c.execute("UPDATE users SET is_admin=1 WHERE lower(username)=? AND password_hash IS NOT NULL",
+                      (normalize_username(username),))  # never promote an SSO-only account by name
+        _ensure_an_admin(c)
+
+
+def _ensure_an_admin(c: sqlite3.Connection) -> None:
+    if c.execute("SELECT 1 FROM users WHERE is_admin=1 LIMIT 1").fetchone():
+        return
+    row = c.execute("SELECT id, username FROM users ORDER BY disabled, id LIMIT 1").fetchone()
+    if row:
+        c.execute("UPDATE users SET is_admin=1 WHERE id=?", (row["id"],))
+        log.info("No administrator existed: made '%s' an administrator", row["username"])
+
+
+def active_admin_count(c: sqlite3.Connection, exclude: int | None = None, sso_only: bool = False,
+                       issuer: str | None = None, null_matches: bool = True) -> int:
+    """Active administrators. With sso_only, only those linked to `issuer` (default: the configured one);
+    an unstamped (NULL) issuer counts when null_matches, i.e. when `issuer` is the one in effect now."""
+    sql = "SELECT count(*) FROM users WHERE is_admin=1 AND disabled=0 AND id IS NOT ?"
+    args: list = [exclude]
+    if sso_only:
+        sql += " AND oidc_sub IS NOT NULL AND (oidc_iss = ?" + (" OR oidc_iss IS NULL)" if null_matches else ")")
+        args.append(normalize_issuer(issuer) if issuer is not None else current_issuer(c))
+    return c.execute(sql, args).fetchone()[0]
+
+
+def set_admin(c: sqlite3.Connection, username: str, admin: bool) -> sqlite3.Row:
+    """Grant or revoke administrator rights. Revoking the last active admin raises ValueError.
+    Revoking also ends that user's sessions."""
+    row = find_user(c, username)
+    if not row:
+        raise ValueError(f"No user '{normalize_username(username)}'")
+    if admin:
+        c.execute("UPDATE users SET is_admin=1 WHERE id=?", (row["id"],))
+    elif row["is_admin"]:
+        if not row["disabled"] and active_admin_count(c, exclude=row["id"]) == 0:
+            raise ValueError("Refusing to remove the last active administrator")
+        c.execute("UPDATE users SET is_admin=0, session_version=session_version+1 WHERE id=?", (row["id"],))
+    return row
+
+
+def set_disabled(c: sqlite3.Connection, username: str, disabled: bool) -> sqlite3.Row:
+    row = find_user(c, username)
+    if not row:
+        raise ValueError(f"No user '{normalize_username(username)}'")
+    if disabled and row["is_admin"] and not row["disabled"] and active_admin_count(c, exclude=row["id"]) == 0:
+        raise ValueError("Refusing to disable the last active administrator")
+    if disabled and not row["disabled"]:
+        c.execute("UPDATE users SET disabled=1, session_version=session_version+1 WHERE id=?", (row["id"],))
+    elif not disabled:
+        c.execute("UPDATE users SET disabled=0 WHERE id=?", (row["id"],))
+    return row
 
 
 # ---------------------------------------------------------------- request helpers
@@ -251,6 +338,8 @@ def require_same_origin(request: Request) -> None:
     Our origin is PUBLIC_URL when set, else the Host header."""
     if request.method in ("GET", "HEAD", "OPTIONS"):
         return
+    if request.headers.get("sec-fetch-site", "").lower() == "cross-site":
+        raise HTTPException(403, "Cross-origin request rejected")
     origin = request.headers.get("origin")
     if origin is None:
         return
@@ -338,9 +427,11 @@ class LoginBody(BaseModel):
 
 
 @router.get("/api/auth/config")
-def config() -> dict:
-    return {"local": local_enabled(), "oidc": oidc_enabled(),
-            "oidc_name": os.environ.get("OIDC_NAME", "").strip() or "authentik"}
+def public_config() -> dict:
+    with db.conn() as c:
+        mode = first_run_mode(c)
+    return {"local": local_enabled(), "oidc": oidc_enabled(), "oidc_name": oidc_name(),
+            "needs_setup": mode == "setup", "first_admin_via_sso": mode == "sso"}
 
 
 @router.post("/api/auth/login", dependencies=[Depends(require_same_origin)])
@@ -356,11 +447,14 @@ def login(body: LoginBody, request: Request):
                             status_code=429, headers={"Retry-After": str(wait)})
     with db.conn() as c:
         row = _check_password(c, name, body.password)
-        if row:
+        if row and not row["disabled"]:
             _forgive(c, keys[0][0], ids)
     if not row:
         log.info("Failed password sign-in from %s", keys[1][0][3:])
         raise HTTPException(401, "Wrong username or password")
+    if row["disabled"]:
+        log.info("Refused password sign-in for disabled user '%s'", row["username"])
+        raise HTTPException(403, DISABLED_MESSAGE)
     _start_session(request, row["id"])
     return public_user(row)
 
@@ -371,9 +465,93 @@ def logout(request: Request) -> dict:
     return {"ok": True}
 
 
+SETUP_MAX_IP = 10
+SETUP_DONE = "Setup is already complete. Sign in instead."
+SETUP_VIA_SSO = "Password sign-in is off. Sign in with SSO to create the first admin"
+SETUP_FIRST = "Finish first-run setup first"
+
+
+def first_run_mode(c: sqlite3.Connection) -> str:
+    """'' when users exist, 'sso' when the first admin must come from SSO (password sign-in off and SSO
+    configured), else 'setup' (the setup screen creates the first admin)."""
+    if user_count(c):
+        return ""
+    return "sso" if not config.flag("local_login", c) and oidc_enabled() else "setup"
+
+
+def _setup_fields(body) -> tuple[str, str, str]:
+    """(username, display_name, password) from a hand-parsed body, so errors never echo the password."""
+    if not isinstance(body, dict) or set(body) - {"username", "display_name", "password"}:
+        raise HTTPException(400, 'Send {"username", "password", "display_name"?}')
+    name, password, display = body.get("username"), body.get("password"), body.get("display_name")
+    if not isinstance(name, str) or not isinstance(password, str):
+        raise HTTPException(400, "username and password are required")
+    if display is not None and (not isinstance(display, str) or len(display.strip()) > 100
+                                or any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in display)):
+        raise HTTPException(400, "display_name must be at most 100 characters without control characters")
+    try:
+        name = validate_username(name)
+        validate_password(password)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from None
+    display = " ".join((display or "").split())
+    return name, display, password
+
+
+@router.post("/api/auth/setup", dependencies=[Depends(require_same_origin)])
+def setup(request: Request, body: Any = Body(None)):
+    """Create the first administrator. Only while the users table is empty; 409 forever after."""
+    with db.conn() as c:
+        mode = first_run_mode(c)
+    if not mode:
+        raise HTTPException(409, SETUP_DONE)
+    if mode == "sso":
+        raise HTTPException(409, SETUP_VIA_SSO)
+    wait, _ = _reserve_attempt([("setup:" + client_ip(request), SETUP_MAX_IP)], time.time())
+    if wait:
+        return JSONResponse({"detail": "Too many setup attempts. Try again later."}, status_code=429,
+                            headers={"Retry-After": str(wait)})
+    name, display, password = _setup_fields(body)
+    with SCRYPT_SLOTS:
+        pw_hash = hash_password(password)  # outside the write lock
+    with db.conn() as c:
+        c.execute("BEGIN IMMEDIATE")
+        if user_count(c):  # re-check under the lock: exactly one caller can win
+            raise HTTPException(409, SETUP_DONE)
+        uid = create_user(c, name, display_name=display, password_hash=pw_hash, is_admin=True)
+        config.audit(c, uid, "setup.first_admin", f"{name} (id {uid})")
+        row = c.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+    log.info("First-run setup created administrator '%s'", name)
+    _start_session(request, uid)
+    return {**public_user(row), "is_admin": True}
+
+
+@router.post("/api/auth/sso/unlink", dependencies=[Depends(require_same_origin)])
+def sso_unlink(user: dict = Depends(deps.current_user)) -> dict:
+    """Remove the current user's SSO link. Only while they can still sign in with a password."""
+    with db.conn() as c:
+        c.execute("BEGIN IMMEDIATE")
+        row = c.execute("SELECT oidc_sub, password_hash FROM users WHERE id=?", (user["id"],)).fetchone()
+        if not row["oidc_sub"]:
+            raise HTTPException(409, "Your account is not linked to single sign-on.")
+        if not row["password_hash"]:
+            raise HTTPException(409, "Your account has no password, so unlinking would lock you out. "
+                                     "Ask the administrator to set a password first.")
+        if not config.flag("local_login", c):
+            raise HTTPException(409, "Password sign-in is off on this server, so unlinking would lock you out.")
+        c.execute("UPDATE users SET oidc_sub=NULL, oidc_iss=NULL WHERE id=?", (user["id"],))
+        config.audit(c, user["id"], "self.sso_unlink", f"{user['username']} (id {user['id']})")
+    log.info("User %s unlinked single sign-on", user["id"])
+    return me(user)
+
+
 @router.get("/api/auth/me")
 def me(user: dict = Depends(deps.current_user)) -> dict:
-    return user
+    with db.conn() as c:
+        row = c.execute("SELECT use_global_ai, oidc_sub, password_hash FROM users WHERE id=?", (user["id"],)).fetchone()
+        key_state = config.user_secret_state(c, user["id"], PERSONAL_KEY)
+    return {**user, "use_global_ai": bool(row and row["use_global_ai"]), "personal_key_set": key_state == "set",
+            "sso_linked": bool(row and row["oidc_sub"]), "has_password": bool(row and row["password_hash"])}
 
 
 # ---------------------------------------------------------------- OIDC helpers
@@ -431,8 +609,8 @@ def _pkce_pair() -> tuple[str, str]:
 
 async def _exchange_code(meta: dict, code: str, verifier: str) -> dict:
     form = {"grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri(),
-            "client_id": os.environ["OIDC_CLIENT_ID"], "code_verifier": verifier}
-    secret = os.environ.get("OIDC_CLIENT_SECRET")
+            "client_id": oidc_client_id(), "code_verifier": verifier}
+    secret = config.get("oidc_client_secret")
     if secret:
         form["client_secret"] = secret
     try:
@@ -469,7 +647,7 @@ async def _decode_id_token(meta: dict, id_token: str) -> dict:
 
 
 def _validate_claims(claims: dict, issuer: str, nonce: str) -> None:
-    client_id = os.environ["OIDC_CLIENT_ID"]
+    client_id = oidc_client_id()
     registry = jwt.JWTClaimsRegistry(
         leeway=60,
         iss={"essential": True, "value": issuer},
@@ -508,43 +686,94 @@ async def _userinfo(meta: dict, tokens: dict, claims: dict) -> dict:
     return merged
 
 
+def _enabled_row(row: sqlite3.Row) -> sqlite3.Row:
+    if row["disabled"]:
+        log.info("Refused SSO sign-in for disabled user '%s'", row["username"])
+        raise OIDCError(DISABLED_MESSAGE, 403)
+    return row
+
+
 def _unique_username(c: sqlite3.Connection, claims: dict) -> str:
     raw = claims.get("preferred_username") or (claims.get("email") or "").split("@")[0] or "user"
     base = re.sub(r"[^a-z0-9._@-]", "", normalize_username(str(raw)).replace(" ", "."))
     base = base.lstrip("._@-")[:56] or "user"
     name, n = base, 1
-    while find_user(c, name):
+    reserved = normalize_username(os.environ.get("ADMIN_USER", ""))  # never hand out the bootstrap admin's name
+    while find_user(c, name) or name == reserved:
         n += 1
         name = f"{base}{n}"
     return name
 
 
-def _resolve_user(c: sqlite3.Connection, claims: dict) -> sqlite3.Row:
-    sub = str(claims["sub"])
-    row = c.execute("SELECT * FROM users WHERE oidc_sub=?", (sub,)).fetchone()
-    if row:
-        return row
-    email = (claims.get("email") or "").strip()
-    if email and claims.get("email_verified") is True:
-        rows = c.execute("SELECT * FROM users WHERE lower(email)=lower(?) AND oidc_sub IS NULL", (email,)).fetchall()
-        if len(rows) == 1:
-            c.execute("UPDATE users SET oidc_sub=? WHERE id=?", (sub, rows[0]["id"]))
-            log.info("Linked SSO login to existing user '%s' by verified email", rows[0]["username"])
-            return rows[0]
-    if not _flag("OIDC_ALLOW_SIGNUP", "0"):
-        raise OIDCError("No Macrolog account is linked to this login. Ask the administrator to create one.", 403)
+def _claims_issuer(c: sqlite3.Connection, claims: dict) -> str:
+    return normalize_issuer(str(claims.get("iss") or current_issuer(c)))
+
+
+def find_identity(c: sqlite3.Connection, iss: str, sub: str) -> sqlite3.Row | None:
+    """The user linked to (iss, sub). A row with no issuer yet matches the issuer in effect."""
+    return c.execute("SELECT * FROM users WHERE oidc_sub=? AND (oidc_iss=? OR oidc_iss IS NULL) "
+                     "ORDER BY oidc_iss IS NULL LIMIT 1", (sub, iss)).fetchone()
+
+
+def _insert_sso_user(c: sqlite3.Connection, claims: dict, iss: str, admin: bool) -> sqlite3.Row:
     name = _unique_username(c, claims)
     display = str(claims.get("name") or "").strip()[:100] or name
-    cur = c.execute("INSERT INTO users(username, display_name, oidc_sub, email) VALUES (?,?,?,?)",
-                    (name, display, sub, email or None))
-    log.info("Created user '%s' from SSO login", name)
+    email = (claims.get("email") or "").strip()
+    try:
+        cur = c.execute("INSERT INTO users(username, display_name, oidc_sub, oidc_iss, email, is_admin) "
+                        "VALUES (?,?,?,?,?,?)", (name, display, str(claims["sub"]), iss, email or None, int(admin)))
+    except sqlite3.IntegrityError:
+        raise OIDCError("This single sign-on login is already linked to another Macrolog user.", 409) from None
+    log.info("Created %s '%s' from SSO login", "administrator" if admin else "user", name)
     return c.execute("SELECT * FROM users WHERE id=?", (cur.lastrowid,)).fetchone()
 
 
-def _error_page(message: str, status: int) -> HTMLResponse:
+def _link_by_email(c: sqlite3.Connection, claims: dict, iss: str) -> sqlite3.Row | None:
+    email = (claims.get("email") or "").strip()
+    if not email or claims.get("email_verified") is not True:
+        return None
+    rows = c.execute("SELECT * FROM users WHERE lower(email)=lower(?) AND oidc_sub IS NULL", (email,)).fetchall()
+    if len(rows) != 1:
+        return None
+    row = _enabled_row(rows[0])
+    c.execute("UPDATE users SET oidc_sub=?, oidc_iss=? WHERE id=?", (str(claims["sub"]), iss, row["id"]))
+    config.audit(c, row["id"], "sso.linked_by_email", f"{row['username']} (id {row['id']})", f"issuer {iss}")
+    log.info("Linked SSO login to existing user '%s' by verified email", row["username"])
+    return row
+
+
+def _first_user_from_sso(c: sqlite3.Connection, claims: dict, iss: str) -> sqlite3.Row:
+    """No users yet. With password sign-in on, the setup screen comes first; with it off, SSO makes the admin."""
+    if config.flag("local_login", c):
+        raise OIDCError(SETUP_FIRST, 403)
+    row = _insert_sso_user(c, claims, iss, admin=True)
+    config.audit(c, row["id"], "setup.first_admin_sso", f"{row['username']} (id {row['id']})", f"issuer {iss}")
+    return row
+
+
+def _resolve_user(c: sqlite3.Connection, claims: dict) -> sqlite3.Row:
+    sub, iss = str(claims["sub"]), _claims_issuer(c, claims)
+    row = find_identity(c, iss, sub)
+    if row:
+        row = _enabled_row(row)
+        if row["oidc_iss"] is None:
+            c.execute("UPDATE users SET oidc_iss=? WHERE id=?", (iss, row["id"]))
+        return row
+    row = _link_by_email(c, claims, iss)
+    if row:
+        return row
+    if user_count(c) == 0:
+        return _first_user_from_sso(c, claims, iss)
+    if not config.flag("oidc_allow_signup"):
+        raise OIDCError("No Macrolog account is linked to this login. Ask the administrator to create one.", 403)
+    return _insert_sso_user(c, claims, iss, admin=False)
+
+
+def _error_page(message: str, status: int, back: str = "/") -> HTMLResponse:
     body = (
         "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
-        f"<title>Sign-in failed</title><p>{html.escape(message)}</p><p><a href='/'>Back to Macrolog</a></p>"
+        f"<title>Sign-in failed</title><p>{html.escape(message)}</p>"
+        f"<p><a href='{html.escape(back, quote=True)}'>Back to Macrolog</a></p>"
     )
     return HTMLResponse(body, status_code=status)
 
@@ -556,19 +785,21 @@ def _require_oidc() -> None:
 
 # ---------------------------------------------------------------- OIDC routes
 
-@router.get("/auth/oidc/login")
-async def oidc_login(request: Request, next: str | None = None):
-    _require_oidc()
+SETTINGS_PATH = "/#settings"  # where link mode returns; the frontend opens Settings for this hash
+
+
+async def _begin(request: Request, flow_extra: dict, back: str = "/"):
+    """Store a fresh flow (state, nonce, PKCE) in the session and redirect to the provider."""
     try:
         meta = await discovery()
     except OIDCError as exc:
-        return _error_page(str(exc), exc.status)
+        return _error_page(str(exc), exc.status, back)
     verifier, challenge = _pkce_pair()
     flow = {"state": secrets.token_urlsafe(32), "nonce": secrets.token_urlsafe(32), "verifier": verifier,
-            "next": safe_next(next), "ts": time.time()}
+            "ts": time.time(), **flow_extra}
     request.session["oidc"] = flow
     params = {
-        "response_type": "code", "client_id": os.environ["OIDC_CLIENT_ID"], "redirect_uri": redirect_uri(),
+        "response_type": "code", "client_id": oidc_client_id(), "redirect_uri": redirect_uri(),
         "scope": "openid email profile", "state": flow["state"], "nonce": flow["nonce"],
         "code_challenge": challenge, "code_challenge_method": "S256",
     }
@@ -576,11 +807,48 @@ async def oidc_login(request: Request, next: str | None = None):
     return RedirectResponse(meta["authorization_endpoint"] + sep + urlencode(params), status_code=302)
 
 
+@router.get("/auth/oidc/login")
+async def oidc_login(request: Request, next: str | None = None):
+    _require_oidc()
+    return await _begin(request, {"next": safe_next(next)})
+
+
+def _session_user(request: Request) -> dict | None:
+    try:
+        return deps.current_user(request)
+    except HTTPException:
+        return None
+
+
+@router.get("/auth/oidc/link")
+async def oidc_link(request: Request):
+    """Start SSO in link mode for the signed-in user (Settings > Connect SSO)."""
+    _require_oidc()
+    if request.headers.get("sec-fetch-site", "").lower() not in ("", "same-origin", "none"):
+        return _error_page("Start linking from the Settings page in Macrolog.", 403, SETTINGS_PATH)
+    user = _session_user(request)
+    if user is None:
+        return _error_page("Sign in first, then use Connect SSO in Settings.", 401)
+    with db.conn() as c:
+        linked = c.execute("SELECT oidc_sub FROM users WHERE id=?", (user["id"],)).fetchone()["oidc_sub"]
+    if linked:
+        return _error_page("Your account is already linked to single sign-on. Unlink it first to "
+                           "connect a different login.", 409, SETTINGS_PATH)
+    extra = {"mode": "link", "uid": user["id"], "sv": request.session.get("sv", 0)}
+    return await _begin(request, extra, SETTINGS_PATH)
+
+
 @router.get("/auth/oidc/callback")
 async def oidc_callback(request: Request, state: str | None = None, code: str | None = None,
                         error: str | None = None):
     _require_oidc()
     flow = request.session.pop("oidc", None)  # consumed exactly once, whatever happens next
+    if isinstance(flow, dict) and flow.get("mode") == "link":
+        try:
+            await _finish_link(request, flow, state, code, error)
+        except OIDCError as exc:
+            return _error_page(str(exc), exc.status, SETTINGS_PATH)
+        return RedirectResponse(SETTINGS_PATH, status_code=302)
     try:
         user_id, target = await _finish_oidc(flow, state, code, error)
     except OIDCError as exc:
@@ -589,7 +857,8 @@ async def oidc_callback(request: Request, state: str | None = None, code: str | 
     return RedirectResponse(target, status_code=302)
 
 
-async def _finish_oidc(flow: dict | None, state: str | None, code: str | None, error: str | None) -> tuple[int, str]:
+async def _verified_claims(flow: dict | None, state: str | None, code: str | None, error: str | None) -> dict:
+    """Check state, exchange the code, verify the id_token (signature, iss, aud, exp, nonce)."""
     if not isinstance(flow, dict) or time.time() - float(flow.get("ts", 0)) > OIDC_FLOW_TTL:
         raise OIDCError("Your sign-in attempt expired. Please start again.")
     if not state or not hmac.compare_digest(str(flow.get("state", "")), state):
@@ -601,7 +870,51 @@ async def _finish_oidc(flow: dict | None, state: str | None, code: str | None, e
     tokens = await _exchange_code(meta, code, flow["verifier"])
     claims = await _decode_id_token(meta, tokens["id_token"])
     _validate_claims(claims, meta["issuer"], flow["nonce"])
-    claims = await _userinfo(meta, tokens, claims)
+    return await _userinfo(meta, tokens, claims)
+
+
+async def _finish_oidc(flow: dict | None, state: str | None, code: str | None, error: str | None) -> tuple[int, str]:
+    claims = await _verified_claims(flow, state, code, error)
     with db.conn() as c:
+        c.execute("BEGIN IMMEDIATE")  # serializes the first-user check and the link/stamp writes
         row = _resolve_user(c, claims)
     return row["id"], safe_next(flow.get("next"))
+
+
+def _check_link_session(request: Request, flow: dict) -> int:
+    """The link flow must finish in the same, still valid session of the user who started it."""
+    user = _session_user(request)
+    if user is None or user["id"] != flow.get("uid") or request.session.get("sv", 0) != flow.get("sv"):
+        raise OIDCError("Your Macrolog session changed while linking. Sign in and start again from Settings.", 403)
+    return user["id"]
+
+
+def _link_sub(c: sqlite3.Connection, uid: int, iss: str, sub: str) -> None:
+    c.execute("BEGIN IMMEDIATE")
+    row = c.execute("SELECT username, oidc_sub, disabled FROM users WHERE id=?", (uid,)).fetchone()
+    if row is None or row["disabled"]:
+        raise OIDCError(DISABLED_MESSAGE, 403)
+    if row["oidc_sub"]:
+        raise OIDCError("Your account is already linked to single sign-on.", 409)
+    if find_identity(c, iss, sub):
+        raise OIDCError("This single sign-on login is already linked to another Macrolog user.", 409)
+    try:
+        c.execute("UPDATE users SET oidc_sub=?, oidc_iss=? WHERE id=?", (sub, iss, uid))
+    except sqlite3.IntegrityError:
+        raise OIDCError("This single sign-on login is already linked to another Macrolog user.", 409) from None
+    config.audit(c, uid, "self.sso_link", f"{row['username']} (id {uid})")
+
+
+async def _finish_link(request: Request, flow: dict, state: str | None, code: str | None,
+                       error: str | None) -> None:
+    uid = _check_link_session(request, flow)
+    claims = await _verified_claims(flow, state, code, error)
+    _check_link_session(request, flow)  # still the same session after the network round trips
+    with db.conn() as c:
+        _link_sub(c, uid, _claims_issuer(c, claims), str(claims["sub"]))
+    log.info("User %s linked single sign-on from Settings", uid)
+
+
+def clear_cache() -> None:
+    """Forget cached discovery documents and keys (after the SSO settings change)."""
+    _cache.clear()

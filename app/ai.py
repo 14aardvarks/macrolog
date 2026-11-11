@@ -1,26 +1,34 @@
-"""Optional Claude label reader. Off unless ANTHROPIC_API_KEY is set.
+"""Optional Claude label reader. Off unless a Claude API key is available to the user.
+
+Key resolution per user: their personal key if set, else the household (global) key when the
+user may use it (users.use_global_ai) and one is configured, else disabled.
 
 The browser uploads 1 to 3 photos of a nutrition label. We ask Claude (Messages API,
 forced tool use) to read the printed per serving values and return a DRAFT Food that
 the client confirms through POST /api/foods. Nothing is saved here except a usage row.
 
-Cost control: a household wide monthly request cap is enforced by reserving a row in
-ai_usage inside one BEGIN IMMEDIATE transaction before the API call, then filling in the
-token counts afterward. Failed calls release the reservation. No retries.
+Cost control: every request reserves a row in ai_usage inside one BEGIN IMMEDIATE transaction
+before the API call, then fills in the token counts afterward. Failed calls release the
+reservation. No retries. Global-key requests count against the household cap (ai_monthly_cap);
+personal-key requests count against that user's own cap (user_ai.monthly_cap). key_source on
+each row ('global' or 'user') keeps the two apart.
 """
 from __future__ import annotations
 
 import base64
+import logging
 import math
-import os
+import re
 import sqlite3
 from datetime import datetime, timezone
-from typing import Annotated, Optional
+from typing import Annotated, Any, Optional
 
 import httpx
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile
 
-from . import db, deps, lookup
+from . import config, db, deps, lookup
+
+log = logging.getLogger("macrolog.ai")
 
 router = APIRouter(prefix="/api/ai", dependencies=[Depends(deps.current_user)])
 CurrentUser = Annotated[dict, Depends(deps.current_user)]
@@ -29,6 +37,11 @@ API_URL = "https://api.anthropic.com/v1/messages"
 API_VERSION = "2023-06-01"
 DEFAULT_MODEL = "claude-haiku-5-5"
 DEFAULT_CAP = 100
+DEFAULT_PERSONAL_CAP = 100
+PERSONAL_CAP_MAX = 10000
+PERSONAL_KEY = "anthropic"  # name in user_secrets
+KEY_MIN, KEY_MAX = 20, 512
+KEY_RE = re.compile(r"^[\x21-\x7e]+$")  # printable ASCII, no spaces
 MAX_IMAGES = 3
 MAX_BYTES = 5 * 1024 * 1024
 MAX_TOKENS = 700
@@ -43,8 +56,11 @@ _transport = None  # tests set an httpx.MockTransport here
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS ai_usage(
   id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), at TEXT NOT NULL,
-  input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0);
+  input_tokens INTEGER NOT NULL DEFAULT 0, output_tokens INTEGER NOT NULL DEFAULT 0,
+  key_source TEXT NOT NULL DEFAULT 'global');
 CREATE INDEX IF NOT EXISTS ai_usage_at ON ai_usage(at);
+CREATE TABLE IF NOT EXISTS user_ai(
+  user_id INTEGER PRIMARY KEY REFERENCES users(id), monthly_cap INTEGER NOT NULL DEFAULT 100);
 """
 
 _STR = {"type": ["string", "null"]}
@@ -91,38 +107,48 @@ IMAGE_TYPES = {"image/jpeg": "jpeg", "image/png": "png", "image/webp": "webp"}
 # ---------- config ----------
 
 def api_key() -> str:
-    return os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    """The household (global) key: stored setting ai_global_key, else ANTHROPIC_API_KEY."""
+    return str(config.get("ai_global_key")).strip()
 
 
-def enabled() -> bool:
-    return bool(api_key())
+def resolve_key(user_id: int) -> tuple[Optional[str], str]:
+    """(source, key) for a user: ('user', personal key), ('global', household key) or (None, '')."""
+    with db.conn() as c:
+        personal = config.get_user_secret(c, user_id, PERSONAL_KEY)
+        row = c.execute("SELECT use_global_ai FROM users WHERE id=?", (user_id,)).fetchone()
+    if personal:
+        return "user", personal
+    if row and row["use_global_ai"] and api_key():
+        return "global", api_key()
+    return None, ""
+
+
+def enabled(user_id: Optional[int] = None) -> bool:
+    """With a user id: whether that user has a usable key. Without: whether a household key is set."""
+    if user_id is None:
+        return bool(api_key())
+    return resolve_key(user_id)[0] is not None
 
 
 def model() -> str:
-    return os.environ.get("AI_MODEL", "").strip() or DEFAULT_MODEL
+    return str(config.get("ai_model")).strip() or DEFAULT_MODEL
 
 
 def cap() -> int:
-    try:
-        n = int(os.environ.get("AI_MONTHLY_REQUEST_CAP", DEFAULT_CAP))
-    except ValueError:
-        return DEFAULT_CAP
-    return n if n >= 0 else DEFAULT_CAP
+    """Household monthly request cap for the global key."""
+    return config.integer("ai_monthly_cap")
 
 
-def _price(name: str) -> Optional[float]:
-    try:
-        v = float(os.environ.get(name, "").strip())
-    except ValueError:
-        return None
-    return v if math.isfinite(v) and v >= 0 else None
+def personal_cap(c: sqlite3.Connection, user_id: int) -> int:
+    row = c.execute("SELECT monthly_cap FROM user_ai WHERE user_id=?", (user_id,)).fetchone()
+    return row["monthly_cap"] if row else DEFAULT_PERSONAL_CAP
 
 
 def prices() -> Optional[tuple[float, float]]:
-    """(input, output) USD per million tokens from AI_PRICE_IN_PER_MTOK and AI_PRICE_OUT_PER_MTOK.
+    """(input, output) USD per million tokens from ai_price_in/out_per_mtok (AI_PRICE_IN/OUT_PER_MTOK).
     None unless both are set to valid numbers: no price is built in because it could not be verified
     against Anthropic's own pricing page, and a wrong price is worse than none."""
-    p_in, p_out = _price("AI_PRICE_IN_PER_MTOK"), _price("AI_PRICE_OUT_PER_MTOK")
+    p_in, p_out = config.price("ai_price_in_per_mtok"), config.price("ai_price_out_per_mtok")
     return (p_in, p_out) if p_in is not None and p_out is not None else None
 
 
@@ -137,7 +163,12 @@ def estimate_label_tokens(images: int) -> tuple[int, int]:
 
 
 def init(c: sqlite3.Connection) -> None:
+    config.init(c)
     c.executescript(SCHEMA)
+    cols = {r[1] for r in c.execute("PRAGMA table_info(ai_usage)")}
+    if "key_source" not in cols:
+        c.execute("ALTER TABLE ai_usage ADD COLUMN key_source TEXT NOT NULL DEFAULT 'global'")
+    c.execute("CREATE INDEX IF NOT EXISTS ai_usage_source ON ai_usage(key_source, user_id, at)")
 
 
 # ---------- usage accounting ----------
@@ -152,31 +183,41 @@ def _month_bounds(now: datetime) -> tuple[str, str]:
     return start.strftime("%Y-%m-%dT%H:%M:%S"), nxt.strftime("%Y-%m-%dT%H:%M:%S")
 
 
-def used_this_month(c: sqlite3.Connection) -> int:
-    lo, hi = _month_bounds(_now())
-    return c.execute("SELECT COUNT(*) FROM ai_usage WHERE at >= ? AND at < ?", (lo, hi)).fetchone()[0]
+def _scope(source: str, user_id: Optional[int]) -> tuple[str, list]:
+    """SQL filter for one key source: global usage is household wide, personal usage is per user."""
+    if source == "user":
+        return "key_source='user' AND user_id=?", [user_id]
+    return "key_source='global'", []
 
 
-def tokens_this_month(c: sqlite3.Connection) -> tuple[int, int]:
+def used_this_month(c: sqlite3.Connection, source: str = "global", user_id: Optional[int] = None) -> int:
     lo, hi = _month_bounds(_now())
+    where, args = _scope(source, user_id)
+    return c.execute(f"SELECT COUNT(*) FROM ai_usage WHERE {where} AND at >= ? AND at < ?", (*args, lo, hi)).fetchone()[0]
+
+
+def tokens_this_month(c: sqlite3.Connection, source: str = "global", user_id: Optional[int] = None) -> tuple[int, int]:
+    lo, hi = _month_bounds(_now())
+    where, args = _scope(source, user_id)
     r = c.execute("SELECT COALESCE(SUM(input_tokens),0), COALESCE(SUM(output_tokens),0) FROM ai_usage "
-                  "WHERE at >= ? AND at < ?", (lo, hi)).fetchone()
+                  f"WHERE {where} AND at >= ? AND at < ?", (*args, lo, hi)).fetchone()
     return r[0], r[1]
 
 
-def get_used() -> int:
+def get_used(source: str = "global", user_id: Optional[int] = None) -> int:
     with db.conn() as c:
-        return used_this_month(c)
+        return used_this_month(c, source, user_id)
 
 
-def reserve(user_id: int, limit: int) -> Optional[int]:
-    """Atomically count this month and insert a placeholder row. None when the cap is reached."""
+def reserve(user_id: int, limit: int, source: str = "global") -> Optional[int]:
+    """Atomically count this month for the key source and insert a placeholder row.
+    None when the cap is reached."""
     with db.conn() as c:
         c.execute("BEGIN IMMEDIATE")  # takes the write lock, so concurrent callers queue here
-        if used_this_month(c) >= limit:
+        if used_this_month(c, source, user_id) >= limit:
             return None
-        cur = c.execute("INSERT INTO ai_usage(user_id, at) VALUES (?, ?)",
-                        (user_id, _now().strftime("%Y-%m-%dT%H:%M:%S")))
+        cur = c.execute("INSERT INTO ai_usage(user_id, at, key_source) VALUES (?, ?, ?)",
+                        (user_id, _now().strftime("%Y-%m-%dT%H:%M:%S"), source))
         return cur.lastrowid
 
 
@@ -252,9 +293,9 @@ def build_request(images: list[tuple[str, bytes]], hint: str) -> dict:
             "messages": [{"role": "user", "content": content}]}
 
 
-async def call_claude(payload: dict) -> dict:
+async def call_claude(payload: dict, key: Optional[str] = None, source: str = "global") -> dict:
     """POST to the Messages API. Errors become 502 with a generic message, never the key or upstream body."""
-    headers = {"x-api-key": api_key(), "anthropic-version": API_VERSION, "content-type": "application/json"}
+    headers = {"x-api-key": key if key is not None else api_key(), "anthropic-version": API_VERSION, "content-type": "application/json"}
     try:
         async with httpx.AsyncClient(timeout=60.0, transport=_transport) as client:
             r = await client.post(API_URL, headers=headers, json=payload)
@@ -263,7 +304,7 @@ async def call_claude(payload: dict) -> dict:
     except httpx.HTTPError:
         raise HTTPException(502, "Could not reach the Claude API. Try again, or enter the food manually.")
     if r.status_code >= 400:
-        raise HTTPException(502, _upstream_message(r.status_code))
+        raise HTTPException(502, _upstream_message(r.status_code, source))
     try:
         body = r.json()
     except ValueError:
@@ -273,9 +314,9 @@ async def call_claude(payload: dict) -> dict:
     return body
 
 
-def _upstream_message(status: int) -> str:
+def _upstream_message(status: int, source: str = "global") -> str:
     if status in (401, 403):
-        why = "the server's Claude API key was rejected"
+        why = "your personal Claude API key was rejected" if source == "user" else "the server's Claude API key was rejected"
     elif status == 429:
         why = "the Claude API is rate limited right now"
     elif status >= 500:
@@ -305,7 +346,7 @@ def _num(v):
         return None
     try:
         x = float(v)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     return x if math.isfinite(x) else None
 
@@ -387,20 +428,102 @@ def _serving_check(d: dict) -> list[str]:
 
 # ---------- routes ----------
 
-def _status(images: int = 1) -> dict:
-    limit = cap()
+SOURCE_NAMES = {"user": "personal", "global": "global"}
+
+
+def _key_state(c: sqlite3.Connection, user_id: int) -> dict:
+    row = c.execute("SELECT use_global_ai FROM users WHERE id=?", (user_id,)).fetchone()
+    state = config.user_secret_state(c, user_id, PERSONAL_KEY)
+    use_global = bool(row and row["use_global_ai"])
+    source = "user" if state == "set" else ("global" if use_global and api_key() else None)
+    return {"state": state, "use_global": use_global, "source": source}
+
+
+def _status(user_id: int, images: int = 1) -> dict:
     with db.conn() as c:
-        used = used_this_month(c)
-        tin, tout = tokens_this_month(c)
+        ks = _key_state(c, user_id)
+        p_cap, p_used = personal_cap(c, user_id), used_this_month(c, "user", user_id)
+        active = ks["source"] or "global"
+        limit = p_cap if active == "user" else cap()
+        used = p_used if active == "user" else used_this_month(c)
+        tin, tout = tokens_this_month(c, active, user_id)
     est_in, est_out = estimate_label_tokens(images)
-    return {"enabled": enabled(), "used_this_month": used, "cap": limit, "remaining": max(0, limit - used),
+    return {"enabled": ks["source"] is not None, "key_source": SOURCE_NAMES.get(ks["source"]),
+            "used_this_month": used, "cap": limit, "remaining": max(0, limit - used),
             "model": model(), "price_known": prices() is not None,
-            "est_cost_label": cost_usd(est_in, est_out), "cost_this_month": cost_usd(tin, tout)}
+            "est_cost_label": cost_usd(est_in, est_out), "cost_this_month": cost_usd(tin, tout),
+            "personal_key_set": ks["state"] == "set", "personal_key_unreadable": ks["state"] == "unreadable",
+            "can_use_global": ks["use_global"] and bool(api_key()),
+            "personal_cap": p_cap, "personal_used_this_month": p_used}
+
+
+def _disabled_message() -> str:
+    if api_key():
+        return ("Claude label reading is not enabled for your account. Add your own Claude API key in "
+                "Settings, or ask the administrator to allow the household key.")
+    return ("Claude label reading is not set up on this server (no ANTHROPIC_API_KEY or household key). "
+            "Add your own Claude API key in Settings.")
+
+
+def _cap_message(source: str, limit: int) -> str:
+    if source == "user":
+        return (f"Monthly Claude limit reached for your personal key ({limit} requests this month). "
+                "Enter the food manually, or raise your limit in Settings.")
+    return (f"Monthly Claude limit reached ({limit} requests this month). "
+            "Enter the food manually, or ask the administrator to raise the monthly cap.")
 
 
 @router.get("/status")
 def status(user: CurrentUser, images: int = Query(1, ge=1, le=MAX_IMAGES)):
-    return _status(images)
+    return _status(user["id"], images)
+
+
+def _clean_key(value) -> str:
+    if not isinstance(value, str):
+        raise HTTPException(400, "key must be a string")
+    value = value.strip()
+    if not (KEY_MIN <= len(value) <= KEY_MAX) or not KEY_RE.match(value):
+        raise HTTPException(400, f"The Claude API key must be {KEY_MIN} to {KEY_MAX} characters with no spaces")
+    return value
+
+
+def _clean_cap(value) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= PERSONAL_CAP_MAX:
+        raise HTTPException(400, f"cap must be a whole number from 1 to {PERSONAL_CAP_MAX}")
+    return value
+
+
+@router.put("/key")
+def put_key(user: CurrentUser, body: Any = Body(None)):
+    """Store (or replace) the user's personal Claude key and/or monthly cap. The key is never
+    returned and never sent anywhere except to the Claude API when reading a label."""
+    if not isinstance(body, dict) or not body or set(body) - {"key", "cap"}:
+        raise HTTPException(400, "Send {\"key\": \"...\", \"cap\": number} (cap optional)")
+    key = _clean_key(body["key"]) if body.get("key") is not None else None
+    limit = _clean_cap(body["cap"]) if body.get("cap") is not None else None
+    if key is None and limit is None:
+        raise HTTPException(400, "Nothing to update: send a key, a cap, or both")
+    try:
+        with db.conn() as c:
+            if key is not None:
+                config.set_user_secret(c, user["id"], PERSONAL_KEY, key)
+            if limit is not None:
+                c.execute("INSERT INTO user_ai(user_id, monthly_cap) VALUES (?, ?) "
+                          "ON CONFLICT(user_id) DO UPDATE SET monthly_cap=excluded.monthly_cap", (user["id"], limit))
+    except config.ConfigError:
+        raise HTTPException(503, "The server cannot store secrets because SECRET_KEY is not set") from None
+    if key is not None:
+        log.info("User %s saved a personal Claude API key", user["id"])
+    return _status(user["id"])
+
+
+@router.delete("/key")
+def delete_key(user: CurrentUser):
+    with db.conn() as c:
+        removed = config.delete_user_secret(c, user["id"], PERSONAL_KEY)
+    if removed:
+        log.info("User %s removed their personal Claude API key", user["id"])
+    return _status(user["id"])
 
 
 @router.post("/label")
@@ -408,17 +531,18 @@ async def label(user: CurrentUser,
                 images: list[UploadFile] = File(default=[]),
                 barcode: Optional[str] = Form(None),
                 hint: Optional[str] = Form(None)):
-    if not enabled():
-        raise HTTPException(503, "Claude label reading is not set up on this server (ANTHROPIC_API_KEY is missing).")
+    source, key = resolve_key(user["id"])
+    if source is None:
+        raise HTTPException(503, _disabled_message())
     photos = await read_images(images)
     code, code_warning = barcode_from(barcode)
-    limit = cap()
-    row = reserve(user["id"], limit)
+    with db.conn() as c:
+        limit = personal_cap(c, user["id"]) if source == "user" else cap()
+    row = reserve(user["id"], limit, source)
     if row is None:
-        raise HTTPException(429, f"Monthly Claude limit reached ({limit} requests this month). "
-                                 "Enter the food manually, or raise AI_MONTHLY_REQUEST_CAP.")
+        raise HTTPException(429, _cap_message(source, limit))
     try:
-        body = await call_claude(build_request(photos, " ".join((hint or "").split())[:MAX_HINT]))
+        body = await call_claude(build_request(photos, " ".join((hint or "").split())[:MAX_HINT]), key, source)
     except BaseException:
         release(row)  # nothing usable came back, so do not charge the cap
         raise
@@ -431,5 +555,6 @@ async def label(user: CurrentUser,
     draft, warnings = build_draft(data, code)
     if code_warning:
         warnings.insert(0, code_warning)
-    return {"draft": draft, "warnings": warnings, "used_this_month": get_used(), "cap": limit,
-            "input_tokens": tin, "output_tokens": tout, "cost": cost_usd(tin, tout)}
+    return {"draft": draft, "warnings": warnings, "used_this_month": get_used(source, user["id"]), "cap": limit,
+            "input_tokens": tin, "output_tokens": tout, "cost": cost_usd(tin, tout),
+            "key_source": SOURCE_NAMES[source]}

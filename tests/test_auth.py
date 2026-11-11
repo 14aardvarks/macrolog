@@ -155,13 +155,15 @@ def test_old_params_still_verify_and_rehash(env, monkeypatch):
 # ---------------------------------------------------------------- local login
 
 def test_config_defaults(client):
-    assert client.get("/api/auth/config").json() == {"local": True, "oidc": False, "oidc_name": "authentik"}
+    assert client.get("/api/auth/config").json() == {"local": True, "oidc": False, "oidc_name": "authentik",
+                                                     "needs_setup": False, "first_admin_via_sso": False}
 
 
 def test_config_with_oidc(oidc, client, monkeypatch):
     monkeypatch.setenv("OIDC_NAME", "Home SSO")
     monkeypatch.setenv("LOCAL_LOGIN", "0")
-    assert client.get("/api/auth/config").json() == {"local": False, "oidc": True, "oidc_name": "Home SSO"}
+    assert client.get("/api/auth/config").json() == {"local": False, "oidc": True, "oidc_name": "Home SSO",
+                                                     "needs_setup": False, "first_admin_via_sso": False}
 
 
 def test_login_me_logout(client):
@@ -567,6 +569,47 @@ def test_oidc_login_clears_old_session(oidc, client):
     login(client)
     assert sso(client, oidc).status_code == 302
     assert client.get("/api/auth/me").json()["username"] == "ann"
+
+
+def test_oidc_disabled_user_refused(oidc, client):
+    assert sso(client, oidc).status_code == 302
+    client.post("/api/auth/logout")
+    with db.conn() as c:
+        c.execute("UPDATE users SET disabled=1 WHERE username='ann'")
+    resp = sso(client, oidc)
+    assert resp.status_code == 403 and "disabled" in resp.text
+    assert client.get("/api/auth/me").status_code == 401
+
+
+def test_oidc_does_not_link_disabled_user_by_email(oidc, client):
+    with db.conn() as c:
+        auth.set_email(c, "alice", "ann@example.com")
+        c.execute("UPDATE users SET disabled=1 WHERE username='alice'")
+    assert sso(client, oidc).status_code == 403
+    assert users()["alice"]["oidc_sub"] is None and "ann" not in users()
+
+
+def test_oidc_settings_from_config_store(oidc, client, monkeypatch):
+    from app import config
+    monkeypatch.delenv("OIDC_CLIENT_ID")
+    monkeypatch.delenv("OIDC_CLIENT_SECRET")
+    assert client.get("/api/auth/config").json()["oidc"] is False
+    with db.conn() as c:
+        config.store(c, "oidc_client_id", "client-1")
+        config.store(c, "oidc_client_secret", "stored-secret")
+        config.store(c, "oidc_name", "Stored SSO")
+    assert client.get("/api/auth/config").json() == {"local": True, "oidc": True, "oidc_name": "Stored SSO",
+                                                     "needs_setup": False, "first_admin_via_sso": False}
+    assert sso(client, oidc).status_code == 302
+    assert oidc.token_requests[0]["client_secret"] == ["stored-secret"]
+
+
+def test_disabled_password_user_refused(client):
+    with db.conn() as c:
+        c.execute("UPDATE users SET disabled=1 WHERE username='alice'")
+    assert login(client).status_code == 403
+    assert login(client, password="wrong password").status_code == 401  # no hint without the password
+    assert client.get("/api/auth/me").status_code == 401
 
 
 def test_secrets_not_logged(oidc, client, caplog):
