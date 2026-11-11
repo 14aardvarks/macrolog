@@ -1,0 +1,9 @@
+# Runtime dependencies. Lower bounds match the versions tested; upper bounds stop at the next major version.
+fastapi>=0.162.4,<1
+starlette>=1.7.0,<2
+uvicorn>=0.54.0,<1
+httpx>=0.28.1,<1
+itsdangerous>=2.2.0,<3
+python-multipart>=0.0.32,<1
+joserfc>=1.8.0,<2
+pydantic>=2.13.5,<3

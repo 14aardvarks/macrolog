@@ -1,0 +1,72 @@
+import { localDate } from './util.js';
+
+export class ApiError extends Error {
+  constructor(status, message) { super(message); this.status = status; }
+}
+
+let onUnauthorized = () => {};
+export function setUnauthorizedHandler(fn) { onUnauthorized = fn; }
+
+function detailText(d) {
+  if (typeof d === 'string') return d;
+  if (Array.isArray(d)) return d.map((x) => (x && x.msg) || String(x)).join('; ');
+  return 'Something went wrong';
+}
+
+function qs(params) {
+  const p = Object.keys(params || {}).filter((k) => params[k] != null && params[k] !== '');
+  return p.length ? '?' + p.map((k) => encodeURIComponent(k) + '=' + encodeURIComponent(params[k])).join('&') : '';
+}
+
+async function request(method, path, opts = {}) {
+  const init = { method, credentials: 'same-origin', headers: { Accept: 'application/json' } };
+  if (opts.json !== undefined) {
+    init.headers['Content-Type'] = 'application/json';
+    init.body = JSON.stringify(opts.json);
+  } else if (opts.form) {
+    init.body = opts.form;
+  }
+  let res;
+  try {
+    res = await fetch(path + qs(opts.query), init);
+  } catch (e) {
+    throw new ApiError(0, 'Cannot reach the server. Check your connection.');
+  }
+  let data = null;
+  try { data = await res.json(); } catch (e) { data = null; }
+  if (res.status === 401 && !opts.keep401) onUnauthorized();
+  if (!res.ok) throw new ApiError(res.status, detailText(data && data.detail));
+  return data;
+}
+
+const day = () => localDate();
+const get = (p, query) => request('GET', p, { query });
+const send = (m, p, json) => request(m, p, { json: json === undefined ? {} : json });
+
+export const api = {
+  authConfig: () => get('/api/auth/config'),
+  login: (username, password) => request('POST', '/api/auth/login', { json: { username, password }, keep401: true }),
+  logout: () => send('POST', '/api/auth/logout'),
+  me: () => get('/api/auth/me'),
+  settings: () => get('/api/settings'),
+  saveSettings: (s) => send('PUT', '/api/settings', s),
+  goals: () => get('/api/goals'),
+  saveGoals: (g) => send('PUT', '/api/goals', g),
+  day: (d) => get('/api/day', { day: d || day() }),
+  quick: (kind, d) => get('/api/quick/' + kind, kind === 'yesterday' ? { day: d || day() } : undefined),
+  search: (q, remote) => get('/api/foods/search', { q, remote: remote ? 1 : 0 }),
+  barcode: (code) => get('/api/foods/barcode/' + encodeURIComponent(code)),
+  food: (id) => get('/api/foods/' + id),
+  createFood: (f) => send('POST', '/api/foods', f),
+  preview: (food_id, amount, unit) => get('/api/preview', { food_id, amount, unit }),
+  logEntry: (e) => send('POST', '/api/entries', { day: day(), ...e }),
+  patchEntry: (id, patch) => send('PATCH', '/api/entries/' + id, patch),
+  deleteEntry: (id) => request('DELETE', '/api/entries/' + id),
+  favorite: (id, on) => request(on ? 'POST' : 'DELETE', '/api/favorites/' + id),
+  meals: () => get('/api/meals'),
+  deleteMeal: (id) => request('DELETE', '/api/meals/' + id),
+  mealFromDay: (name, d) => send('POST', '/api/meals/from-day', { name, day: d || day() }),
+  logMeal: (id, body) => send('POST', '/api/meals/' + id + '/log', { day: day(), ...body }),
+  aiStatus: (images) => get('/api/ai/status', images ? { images } : undefined),
+  aiLabel: (form) => request('POST', '/api/ai/label', { form }),
+};

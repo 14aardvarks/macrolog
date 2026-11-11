@@ -1,0 +1,15 @@
+services:
+  macrolog:
+    build: .
+    env_file: .env
+    ports:
+      # Bound to localhost so only a reverse proxy on this host can reach it.
+      # To expose it on all interfaces (LAN, or a proxy on another host), use "8000:8000"
+      # and firewall it. See the README before doing that.
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - macrolog-data:/data
+    restart: unless-stopped
+
+volumes:
+  macrolog-data:
