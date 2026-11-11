@@ -22,7 +22,7 @@ import { renderClaudeSection, renderSignIn } from './claudekey.js';
 
 const main = document.getElementById('main');
 const nav = document.getElementById('nav');
-const state = { user: null, settings: { start_screen: 'today', default_meal: null, use_last: true, confirm_ai: true, amount_format: 'fraction' }, display: DEFAULT_DISPLAY, cleanup: null, depth: 0, tab: 'favorites', addMeal: 'all', draft: null, recipe: null };  // addMeal lives for the session only
+const state = { user: null, settings: { start_screen: 'today', default_meal: null, use_last: true, confirm_ai: true, amount_format: 'fraction' }, display: DEFAULT_DISPLAY, cleanup: null, depth: 0, tab: 'favorites', addMeal: null, draft: null, recipe: null };  // addMeal lives for the session only
 const NAV_OF = { today: 'today', settings: 'settings', admin: 'settings', saved: 'settings', editfood: 'settings' };  // every other screen belongs to Add
 
 const ctx = {
@@ -288,7 +288,8 @@ function saveMealBox(g, status) {
 
 const pickerOf = (it, meal) => () => go('picker', { foodId: it.food_id, amount: it.amount, unit: it.unit, meal });
 // The meal to preselect in the picker or checklist: the chosen one, or undefined so the usual default applies.
-const chosenMeal = () => (state.addMeal === 'all' ? undefined : state.addMeal);
+const addMeal = () => (state.addMeal == null ? defaultMeal() : state.addMeal);  // until picked, follows the Default Meal setting or the time of day
+const chosenMeal = () => (addMeal() === 'all' ? undefined : addMeal());
 const foodTitle = (f) => (f.brand ? f.name + ' (' + f.brand + ')' : f.name);
 
 // params.ingredient: the finder used by Create Recipe. It shows Favorites and Past Foods only and no meal choice.
@@ -300,7 +301,7 @@ function addScreen(root, params) {
   const tabNames = ing ? [['favorites', 'Favorites'], ['recent', 'Past Foods']] : [['favorites', 'Favorites'], ['yesterday', 'Yesterday'], ['recipes', 'Recipes']];
   const tabBar = h('div', { class: 'tabs', role: 'tablist' }, tabNames.map(([k, label]) => h('button', {
     type: 'button', role: 'tab', 'data-tab': k, onclick: () => { tab = k; if (!ing) state.tab = k; q.value = ''; liveSearch.cancel(); paintTabs(); } }, label)));
-  const mealSel = select(MEAL_FILTERS.map((m) => ({ value: m, label: MEAL_FILTER_LABELS[m] })), state.addMeal, { 'aria-label': 'Meal' });
+  const mealSel = select(MEAL_FILTERS.map((m) => ({ value: m, label: MEAL_FILTER_LABELS[m] })), addMeal(), { 'aria-label': 'Meal' });
   mealSel.addEventListener('change', () => { state.addMeal = mealSel.value; if (!q.value.trim()) paintTabs(); });
   const mealPick = h('label', { class: 'meal-pick' }, h('span', null, 'Meal'), mealSel);
   let searchSeq = 0;
@@ -331,9 +332,9 @@ function addScreen(root, params) {
     show(listBox, message('Loading...'));
     const want = tab;
     try {
-      const meal = ing ? 'all' : state.addMeal;
+      const meal = ing ? 'all' : addMeal();
       const node = want === 'recipes' ? await recipesList(meal) : want === 'yesterday' ? await yesterdayList(meal) : await quickList(want, meal);
-      if (want === tab && meal === (ing ? 'all' : state.addMeal) && !q.value.trim()) show(listBox, node);
+      if (want === tab && meal === (ing ? 'all' : addMeal()) && !q.value.trim()) show(listBox, node);
     } catch (e) { show(listBox, message(e.message, 'error')); }
   }
 
