@@ -1,19 +1,11 @@
 import { groupByMeal, shownMicros, microValue, fmtNum, roundTo } from './util.js';
 
-export const VIEW_KEY = 'macrolog.todayView';
 export const VIEWS = ['list', 'table'];
 export const VIEW_LABELS = { list: 'List', table: 'Table' };
 
-// The saved Today view. Anything unknown, or a storage that throws (private mode), gives the list.
-export function loadView(storage) {
-  try {
-    const v = (storage || globalThis.localStorage).getItem(VIEW_KEY);
-    return VIEWS.includes(v) ? v : 'list';
-  } catch (e) { return 'list'; }
-}
-
-export function saveView(view, storage) {
-  try { (storage || globalThis.localStorage).setItem(VIEW_KEY, view); } catch (e) { /* not saved, the choice still applies this session */ }
+// The Today view comes from the Display setting. Anything unknown gives the list.
+export function todayView(display) {
+  return display && VIEWS.includes(display.today_view) ? display.today_view : 'list';
 }
 
 const MACRO_COLS = [

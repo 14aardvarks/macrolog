@@ -135,7 +135,8 @@ def test_migration_adds_micro_columns_and_display_settings(tmp_path):
     row = c.execute("SELECT * FROM entries").fetchone()
     assert row["fiber"] == 2 and all(row[k] is None for k in core.NEW_MICROS)
     assert set(core.NEW_MICROS) <= {r[1] for r in c.execute("PRAGMA table_info(foods)")}
-    assert core.read_display(c, 1) == {**{k: bool(v) for k, v in core.DISPLAY_FLAGS.items()}, "micros_shown": list(core.MICROS)}
+    assert core.read_display(c, 1) == {**{k: bool(v) for k, v in core.DISPLAY_FLAGS.items()}, "micros_shown": list(core.MICROS),
+                                            "today_view": "list"}
     assert c.execute("SELECT start_screen FROM settings").fetchone()[0] == "scan"
 
 
@@ -144,7 +145,7 @@ def test_migration_adds_micro_columns_and_display_settings(tmp_path):
 def test_display_defaults_keep_screens_as_before(a):
     d = a.get("/api/settings/display").json()
     assert d == {"show_macros": True, "show_micros": True, "show_split": True, "show_macro_bar": True,
-                 "micros_open": False, "micros_shown": list(core.MICROS)}
+                 "micros_open": False, "micros_shown": list(core.MICROS), "today_view": "list"}
 
 
 def test_display_put_partial_per_user_and_other_settings_kept(a, b):
@@ -166,6 +167,35 @@ def test_display_put_partial_per_user_and_other_settings_kept(a, b):
 def test_display_validation(a, body):
     assert a.put("/api/settings/display", json=body).status_code == 400
     assert a.get("/api/settings/display").json()["show_macros"] is True
+
+
+def test_today_view_default_save_isolation_and_kept(a, b):
+    assert a.put("/api/settings/display", json={"today_view": "table"}).json()["today_view"] == "table"
+    assert a.get("/api/settings/display").json()["today_view"] == "table"
+    assert b.get("/api/settings/display").json()["today_view"] == "list"
+    a.put("/api/settings/display", json={"show_split": False})  # other display saves keep it
+    a.put("/api/settings", json={"use_last": False})
+    assert a.get("/api/settings/display").json()["today_view"] == "table"
+    assert a.put("/api/settings/display", json={"today_view": "list"}).json()["today_view"] == "list"
+
+
+@pytest.mark.parametrize("value", ["grid", "", None, 1, ["list"], {"a": 1}, "TABLE"])
+def test_today_view_validation(a, value):
+    assert a.put("/api/settings/display", json={"today_view": value}).status_code == 400
+    assert a.get("/api/settings/display").json()["today_view"] == "list"
+
+
+def test_today_view_migrates_old_settings_table(tmp_path, monkeypatch):
+    import sqlite3
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "old.db"))
+    c = sqlite3.connect(tmp_path / "old.db")
+    c.executescript("CREATE TABLE settings(user_id INTEGER PRIMARY KEY, start_screen TEXT NOT NULL DEFAULT 'today', default_meal TEXT,"
+                    " use_last INTEGER NOT NULL DEFAULT 1); INSERT INTO settings(user_id) VALUES(1);")
+    c.row_factory = sqlite3.Row
+    core.init(c)
+    core.init(c)  # safe to run twice
+    assert c.execute("SELECT today_view FROM settings").fetchone()[0] == "list"
+    assert core.read_display(c, 1)["today_view"] == "list"
 
 
 # ---------- micronutrient targets ----------

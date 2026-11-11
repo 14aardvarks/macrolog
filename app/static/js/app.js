@@ -7,7 +7,7 @@ import {
 } from './util.js';
 import { microSection, displaySection, microTargets } from './micros.js';
 import { viewToggle, dayTable } from './daytable.js';
-import { loadView, saveView } from './tablemodel.js';
+import { todayView } from './tablemodel.js';
 import { renderPicker } from './picker.js';
 import { renderScan } from './scan.js';
 import { renderAi } from './ai.js';
@@ -238,10 +238,10 @@ async function todayScreen(root) {
     else if (view === 'table') body.appendChild(dayTable(d.entries, { display: disp, onOpen: openEntry, onDelete: removeEntry }));
     else groups().forEach((g) => body.appendChild(g));
   };
-  const view = loadView();
+  const view = todayView(disp);
   paint(view);
   grid.append(h('div', { class: 'col-a' }, disp.show_split !== false ? h('div', { class: 'split-box' }, h('h2', null, 'Calorie Split'), splitChart(d)) : null, nutrients),
-    h('div', { class: 'col-b' }, d.entries.length ? viewToggle(view, (v) => { saveView(v); paint(v); }) : null, body, status));
+    h('div', { class: 'col-b' }, d.entries.length ? viewToggle(view, (v) => { paint(v); ctx.saveDisplay({ today_view: v }).catch(() => {}); }) : null, body, status));
   root.appendChild(h('section', { class: 'screen wide' }, h('h1', null, 'Today'), grid));
 }
 

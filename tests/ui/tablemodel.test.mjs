@@ -1,19 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { VIEW_KEY, loadView, saveView, tableColumns, columnHeader, cellText, sumColumn, buildTable } from '../../app/static/js/tablemodel.js';
+import { todayView, tableColumns, columnHeader, cellText, sumColumn, buildTable } from '../../app/static/js/tablemodel.js';
 import { DEFAULT_DISPLAY } from '../../app/static/js/util.js';
 
-const store = (init = {}) => ({ data: { ...init }, getItem(k) { return k in this.data ? this.data[k] : null; }, setItem(k, v) { this.data[k] = String(v); } });
-const throwing = { getItem() { throw new Error('denied'); }, setItem() { throw new Error('denied'); } };
-
-test('view choice defaults to list, round trips, and survives broken storage', () => {
-  assert.equal(loadView(store()), 'list');
-  assert.equal(loadView(store({ [VIEW_KEY]: 'bogus' })), 'list');
-  const s = store();
-  saveView('table', s);
-  assert.equal(loadView(s), 'table');
-  assert.equal(loadView(throwing), 'list');
-  assert.doesNotThrow(() => saveView('table', throwing));
+test('today view comes from the display setting and falls back to list', () => {
+  assert.equal(todayView(DEFAULT_DISPLAY), 'list');
+  assert.equal(todayView({ ...DEFAULT_DISPLAY, today_view: 'table' }), 'table');
+  assert.equal(todayView({ ...DEFAULT_DISPLAY, today_view: 'bogus' }), 'list');
+  assert.equal(todayView({}), 'list');
+  assert.equal(todayView(undefined), 'list');
 });
 
 test('columns are the four macros plus the micronutrients that are shown', () => {

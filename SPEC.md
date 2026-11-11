@@ -187,8 +187,9 @@ POST /api/meals/{id}/log {"day"?,"meal"?,"items"?:[{"food_id","amount","unit"}]}
 GET/PUT /api/goals   {"kcal","carb_pct","protein_pct","fat_pct"}  pcts total 100. Default 3000 and 50/30/20 (carbs/protein/fat).
         targets: carbs g = kcal*pct/4, protein same, fat g = kcal*pct/9. Goals are per user.
 GET/PUT /api/settings {"start_screen": "today"|"scan"|"search"|"ai", "default_meal": ...}   # per user, validated
-GET/PUT /api/settings/display {"show_macros","show_micros","show_split","show_macro_bar","micros_open": bool, "micros_shown": [nutrient...]}
-        # per user, stored in the settings table (micros_hidden comma list). PUT takes any subset, booleans only, 400 otherwise.
+GET/PUT /api/settings/display {"show_macros","show_micros","show_split","show_macro_bar","micros_open": bool, "micros_shown": [nutrient...], "today_view": "list"|"table"}
+        # per user, stored in the settings table (micros_hidden comma list). PUT takes any subset, booleans only (today_view is the string list or table), 400 otherwise.
+        # today_view is the Today tab's view, column settings.today_view TEXT NOT NULL DEFAULT 'list', added in place by core.init.
         # Defaults: everything shown, micros_open false (the new section starts collapsed), so existing users see no change.
 GET/PUT /api/goals/micros  GET -> {"micros": [{"key","label","unit","kind": "goal"|"limit","default","target"}]}
         PUT {"targets": {nutrient: number > 0 and <= 100000}} (any subset). Table micro_targets(user_id, nutrient, target).
@@ -271,10 +272,10 @@ Screens: Login, Today, Add, Picker, Claude fallback, Settings. Bottom nav: Today
   shown nutrient: `value / target unit`, Goal or Limit, a "N of M foods" note when some entries lack data, limit bars use --over when exceeded.
   Then entries grouped by meal, each removable and tappable to adjust. On very wide screens the micro section sits under the bars in the middle column.
   Each part follows the Display settings.
-  A List and Table toggle sits above the entries (js/daytable.js, model in js/tablemodel.js, choice kept in localStorage `macrolog.todayView`, default List). Table shows the same
+  A List and Table toggle sits above the entries (js/daytable.js, model in js/tablemodel.js, the view is the per-user Display setting `today_view`, default List; tapping the toggle changes the view and also saves it to that setting, so the toggle and the setting are one choice and localStorage is no longer used). Table shows the same
   /api/day entries (they already carry every micronutrient) with columns Food, Amount, Calories, Carbs, Protein, Fat and the micronutrients chosen in Display (null is "-"), a subtotal row per meal, a Total row and a remove button per row.
   The Food column is pinned (position: sticky) while the table scrolls sideways on phones; on desktop the table takes the full width under the bars.
-- Settings has a Display section (switches saved at once, chips for which micronutrients show) and micronutrient targets under Daily Goals.
+- Settings has a Display section (switches saved at once, a Today View List or Table choice, chips for which micronutrients show) and micronutrient targets under Daily Goals.
 - The food form has a collapsed "More Nutrients" section (details element, open when a draft already has values) for the optional micronutrients.
 - The picker shows the shown micronutrients (fiber stays with the macros) under the macros in the same collapsible section; unknown is "-".
 - Add: search box, a Scan button (camera starts ONLY after tapping it; uses BarcodeDetector when available, otherwise show a typed barcode
