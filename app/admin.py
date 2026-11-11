@@ -93,11 +93,19 @@ def _password(value: Any) -> str:
 
 # ---------------------------------------------------------------- users
 
+GROUP_MANAGED = "Admin role for SSO users is managed by the authentik group"
+
+
+def _group_managed(c: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    return bool(row["oidc_sub"] is not None and str(config.get("oidc_admin_group", c=c)).strip())
+
+
 def user_dict(c: sqlite3.Connection, row: sqlite3.Row) -> dict:
     return {"id": row["id"], "username": row["username"], "display_name": row["display_name"],
             "email": row["email"], "is_admin": bool(row["is_admin"]), "disabled": bool(row["disabled"]),
             "use_global_ai": bool(row["use_global_ai"]), "has_password": row["password_hash"] is not None,
-            "sso_linked": row["oidc_sub"] is not None, "created_at": row["created_at"],
+            "sso_linked": row["oidc_sub"] is not None, "admin_by_group": _group_managed(c, row),
+            "created_at": row["created_at"],
             "personal_key_set": config.user_secret_state(c, row["id"], auth.PERSONAL_KEY) == "set"}
 
 
@@ -157,6 +165,8 @@ def _patch_values(c: sqlite3.Connection, row: sqlite3.Row, body: dict) -> dict:
 
 
 def _guard_user_change(c: sqlite3.Connection, admin: dict, row: sqlite3.Row, changes: dict) -> None:
+    if "is_admin" in changes and changes["is_admin"] != row["is_admin"] and _group_managed(c, row):
+        raise HTTPException(409, GROUP_MANAGED)
     new_admin = changes.get("is_admin", row["is_admin"])
     new_disabled = changes.get("disabled", row["disabled"])
     if new_disabled and not row["disabled"] and row["id"] == admin["id"]:
@@ -243,6 +253,7 @@ AUTHENTIK_CHECKLIST = (
     "Redirect URIs: Strict, set to exactly the redirect URI shown here.",
     "Signing Key: choose an RS256 certificate (for example the authentik self-signed certificate).",
     "Scopes: openid, email and profile.",
+    "Optional: create a group (for example macrolog-admins) and enter its name below as the admin group.",
     "Turn on 'Include claims in id_token'.",
     "Issuer: copy the provider's OpenID Configuration Issuer, including the trailing slash.",
 )

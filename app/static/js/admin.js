@@ -60,6 +60,7 @@ function configField(spec, item, extra) {
   hint.id = id + '-src';
   paintHint();
   el.appendChild(h('div', { class: 'src-row' }, hint, useDefault, undo));
+  if (spec.hint) el.appendChild(h('p', { class: 'sub' }, spec.hint));
   if (extra) el.appendChild(extra);
   return { el, state: st, control };
 }
@@ -187,10 +188,11 @@ function userRow(u, me, onChange) {
     return h('div', { class: 'user-panel', id: panelId },
       profile, reset,
       h('div', { class: 'row wrap' },
-        act(user.is_admin ? 'Remove admin' : 'Make admin', { is_admin: !user.is_admin }),
+        user.admin_by_group ? null : act(user.is_admin ? 'Remove admin' : 'Make admin', { is_admin: !user.is_admin }),
         isSelf && !user.disabled ? null : act(user.disabled ? 'Enable' : 'Disable', { disabled: !user.disabled }),
         act(user.use_global_ai ? 'Turn shared Claude key off' : 'Turn shared Claude key on', { use_global_ai: !user.use_global_ai }),
         user.sso_linked ? act('Disconnect SSO', { unlink_sso: true }, 'SSO disconnected.') : null),
+      user.admin_by_group ? h('p', { class: 'sub' }, 'Admin role is managed by the authentik group.') : null,
       status);
   }
 

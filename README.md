@@ -73,7 +73,10 @@ All settings can be given as environment variables in `.env`. Anything left empt
 | `OIDC_CLIENT_ID` | empty | Live. Client ID of the authentik provider. |
 | `OIDC_CLIENT_SECRET` | empty | Live, secret. Client secret for a confidential client. Sent only when set. |
 | `OIDC_NAME` | `authentik` | Live. Label on the sign-in button. |
-| `OIDC_ALLOW_SIGNUP` | `0` | Live. `0` refuses SSO logins that do not match an existing account (linked with Connect SSO, or by verified email). `1` lets any successful SSO login create an account. |
+| `OIDC_ALLOW_SIGNUP` | `0` | Live. Shown as "Create accounts on first SSO sign-in". `0` refuses SSO logins that do not match an existing account (linked with Connect SSO, or by verified email). `1` lets anyone who can sign in to the authentik application get an account, so restrict access with application bindings in authentik. |
+| `OIDC_ADMIN_GROUP` | empty | Live. Name of an authentik group, for example `admin`. Members become Macrolog admins at every SSO sign-in and others lose the role. Empty turns this off and admins are managed by hand. |
+| `OIDC_USER_GROUP` | empty | Live. Name of an authentik group, for example `user`. When set, SSO sign-in is refused ("Your account is not in the allowed group") unless the groups claim contains this group or the admin group, including when the claim is missing. Password sign-in is never affected. Empty turns this off. |
+| `OIDC_GROUPS_CLAIM` | `groups` | Live. Name of the ID token (or userinfo) claim that lists group names, as a list of strings or one string. |
 | `PUBLIC_URL` | empty | Public address of the app, for example `https://macrolog.example.com`. Used for the SSO redirect URI and as the expected origin for state-changing requests. |
 | `TRUST_PROXY` | `0` | Set to `1` behind your own reverse proxy. The login rate limit then reads the client address from the last `X-Forwarded-For` entry. |
 | `COOKIE_SECURE` | `0` | Set to `1` when the site is served over HTTPS, so the session cookie is marked Secure. |
@@ -120,9 +123,24 @@ Macrolog accepts ID tokens signed with RS256, RS384, RS512, PS256 to PS512, ES25
 
 1. Find the account already linked to this issuer and subject pair (by Connect SSO, or by an earlier sign-in). A link belongs to the identity provider it was made with, so the same subject from a different issuer is a different login.
 2. If the ID token has an email and `email_verified` is exactly `true`, find the local accounts with that email that are not yet linked to SSO. Link the login only when exactly one account matches. This link is recorded in the audit log as `sso.linked_by_email`.
-3. Otherwise create a new account, using `preferred_username`, or the part of the email before the `@`. If that name is taken, a number is added. This happens only when "Allow sign-up through SSO" is on (`OIDC_ALLOW_SIGNUP=1`). When it is off, which is the default, the login is refused.
+3. Otherwise create a new account, using `preferred_username`, or the part of the email before the `@`. If that name is taken, a number is added. This happens only when "Create accounts on first SSO sign-in" is on (`OIDC_ALLOW_SIGNUP=1`). With it on, anyone who can sign in to the authentik application gets an account, so restrict access with application bindings in authentik. When it is off, which is the default, the login is refused.
 
 Connect SSO in Settings is the simplest way to link existing accounts. Matching by email (step 2) is an alternative for people who never sign in with a password: an administrator creates the account with the same email that authentik has, and the first SSO sign-in links it, but only when the ID token says `email_verified: true`. Authentik's stock email mapping may leave that claim out. To send it, create a Scope Mapping in authentik (Customization > Property Mappings) for scope `email` with the expression `return {"email": request.user.email, "email_verified": True}`, and use it in place of the default email mapping on the provider. Only do that when you control who can have an authentik account and what email they enter, because anyone who can set their authentik email to another person's address could otherwise take over that person's Macrolog account.
+
+## authentik setup
+
+Short version of the steps above, with groups. Example group names are `admin` and `user`.
+
+- In authentik, go to Applications > Providers and create an OAuth2/OpenID Provider.
+  - Client type Confidential, redirect URI (Strict) `https://<host>/auth/oidc/callback`, exactly as Admin > Sign-in shows it.
+  - Scopes `openid`, `email`, `profile`. Signing Key set to an RS256 certificate so RS256 is used.
+- Create an Application bound to that provider. Its slug gives the issuer `https://auth.example.com/application/o/<slug>/`.
+- Create the groups `admin` (add yourself) and `user` under Directory > Groups.
+- Under the application's Policy / Group / User Bindings, bind the groups or users that may open it. This is the access control: with "Create accounts on first SSO sign-in" on, anyone who can sign in to the application gets an account.
+- In Macrolog, open Admin > Sign-in and enter issuer, client ID and client secret, Admin group `admin`, optionally Allowed user group `user`, and turn on "Create accounts on first SSO sign-in". Save.
+- Press Test connection, then Connect SSO from Settings, before turning password sign-in off.
+- Groups: authentik puts `groups` in the profile scope, and Macrolog also asks for a `groups` scope when a group is set (authentik ignores scopes it does not know). Group names are case sensitive. If the claim is missing the admin role is left unchanged, but a set Allowed user group then refuses the sign-in.
+- With an Admin group set, SSO linked users cannot be made or removed as admins in Admin > Users (409). Local accounts without SSO stay manual. The last active admin is never demoted, and changes are logged as `sso.group_promoted`, `sso.group_demoted` and `sso.group_demote_blocked`.
 
 ## Reverse proxy and HTTPS
 

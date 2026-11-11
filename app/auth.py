@@ -666,9 +666,27 @@ def _validate_claims(claims: dict, issuer: str, nonce: str) -> None:
         raise OIDCError("Sign-in failed: the identity token was issued for another application.")
 
 
+def admin_group() -> str:
+    return str(config.get("oidc_admin_group")).strip()
+
+
+def user_group() -> str:
+    return str(config.get("oidc_user_group")).strip()
+
+
+def groups_claim() -> str:
+    return str(config.get("oidc_groups_claim")).strip() or "groups"
+
+
+def oidc_scope() -> str:
+    return "openid email profile" + (" groups" if admin_group() or user_group() else "")
+
+
 async def _userinfo(meta: dict, tokens: dict, claims: dict) -> dict:
-    """Fill in profile claims from the userinfo endpoint if the id_token lacks them."""
-    if "email" in claims and "preferred_username" in claims:
+    """Fill in profile claims (and the groups claim when admin sync is on) from the userinfo endpoint
+    if the id_token lacks them."""
+    need_groups = bool(admin_group() or user_group()) and groups_claim() not in claims
+    if "email" in claims and "preferred_username" in claims and not need_groups:
         return claims
     url, access = meta.get("userinfo_endpoint"), tokens.get("access_token")
     if not url or not access:
@@ -769,6 +787,49 @@ def _resolve_user(c: sqlite3.Connection, claims: dict) -> sqlite3.Row:
     return _insert_sso_user(c, claims, iss, admin=False)
 
 
+def _claim_groups(claims: dict) -> list[str] | None:
+    """The groups from the configured claim: a list of strings or one string. None when missing or malformed."""
+    raw = claims.get(groups_claim())
+    if isinstance(raw, str):
+        return [raw]
+    if isinstance(raw, list):
+        return [g for g in raw if isinstance(g, str)]
+    return None
+
+
+def _require_allowed_group(claims: dict) -> None:
+    """With an allowed user group set, SSO sign-in needs that group or the admin group. A missing claim
+    refuses too. Runs before any user is looked up or created. Local password sign-in never calls this."""
+    allowed = user_group()
+    if not allowed:
+        return
+    groups = _claim_groups(claims) or []
+    if allowed not in groups and not (admin_group() and admin_group() in groups):
+        log.info("Refused SSO sign-in: not in the allowed group")
+        raise OIDCError("Your account is not in the allowed group", 403)
+
+
+def _sync_admin_group(c: sqlite3.Connection, row: sqlite3.Row, claims: dict) -> None:
+    """Make users.is_admin follow membership of the configured group. A missing claim changes nothing,
+    and the last active administrator is never demoted. Nothing but the group name is logged."""
+    group = admin_group()
+    groups = _claim_groups(claims) if group else None
+    if groups is None:
+        return
+    want = group in groups  # case sensitive
+    if want == bool(row["is_admin"]):
+        return
+    who = f"{row['username']} (id {row['id']})"
+    if want:
+        c.execute("UPDATE users SET is_admin=1 WHERE id=?", (row["id"],))
+        config.audit(c, row["id"], "sso.group_promoted", who, f"group {group}")
+    elif active_admin_count(c, exclude=row["id"]) == 0:
+        config.audit(c, row["id"], "sso.group_demote_blocked", who, f"last active administrator, group {group}")
+    else:
+        c.execute("UPDATE users SET is_admin=0, session_version=session_version+1 WHERE id=?", (row["id"],))
+        config.audit(c, row["id"], "sso.group_demoted", who, f"not in group {group}")
+
+
 def _error_page(message: str, status: int, back: str = "/") -> HTMLResponse:
     body = (
         "<!doctype html><meta charset=utf-8><meta name=viewport content='width=device-width'>"
@@ -800,7 +861,7 @@ async def _begin(request: Request, flow_extra: dict, back: str = "/"):
     request.session["oidc"] = flow
     params = {
         "response_type": "code", "client_id": oidc_client_id(), "redirect_uri": redirect_uri(),
-        "scope": "openid email profile", "state": flow["state"], "nonce": flow["nonce"],
+        "scope": oidc_scope(), "state": flow["state"], "nonce": flow["nonce"],
         "code_challenge": challenge, "code_challenge_method": "S256",
     }
     sep = "&" if "?" in meta["authorization_endpoint"] else "?"
@@ -875,9 +936,11 @@ async def _verified_claims(flow: dict | None, state: str | None, code: str | Non
 
 async def _finish_oidc(flow: dict | None, state: str | None, code: str | None, error: str | None) -> tuple[int, str]:
     claims = await _verified_claims(flow, state, code, error)
+    _require_allowed_group(claims)
     with db.conn() as c:
         c.execute("BEGIN IMMEDIATE")  # serializes the first-user check and the link/stamp writes
         row = _resolve_user(c, claims)
+        _sync_admin_group(c, row, claims)
     return row["id"], safe_next(flow.get("next"))
 
 

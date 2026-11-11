@@ -102,3 +102,11 @@ test('test line and log line', () => {
   const l = logLine({ at: 'bad', admin_username: null, action: 'config.update', target: 'ai_model', detail: '' });
   assert.deepEqual(l, { when: 'bad', who: 'system', text: 'config.update - ai_model' });
 });
+
+test('sign-in specs include the admin group settings with hints', () => {
+  const keys = SIGNIN_SPECS.map((s) => s.key);
+  assert.ok(keys.includes('oidc_admin_group') && keys.includes('oidc_groups_claim') && keys.includes('oidc_user_group'));
+  const spec = SIGNIN_SPECS.find((s) => s.key === 'oidc_admin_group');
+  assert.match(spec.hint, /Leave empty to manage admins manually/);
+  assert.match(SIGNIN_SPECS.find((s) => s.key === 'oidc_allow_signup').hint, /application bindings/);
+});

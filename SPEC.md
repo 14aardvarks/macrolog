@@ -114,7 +114,8 @@ GET  /auth/oidc/callback -> login mode: validates, finds user by (oidc_iss, oidc
 ```
 Settings (read through `config.get` at call time, so the Admin page can change them live; the env names are the fallbacks):
 `LOCAL_LOGIN` (default 1), `OIDC_ISSUER` (authentik application URL like https://auth.example.com/application/o/macrolog/),
-`OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_NAME` (button label), `OIDC_ALLOW_SIGNUP` (default 0). Environment only: `PUBLIC_URL`
+`OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_NAME` (button label), `OIDC_ALLOW_SIGNUP` (default 0), `OIDC_ADMIN_GROUP` (default empty = off), `OIDC_USER_GROUP` (default empty = off), `OIDC_GROUPS_CLAIM` (default `groups`, max 200 chars each).
+Group sync: with an admin group set, each SSO sign-in sets `users.is_admin` from membership in the groups claim (ID token, else userinfo; list or string; case sensitive), logged as `sso.group_promoted`/`sso.group_demoted`; the last active admin is never demoted (`sso.group_demote_blocked`); a missing claim changes nothing. Admin PATCH of `is_admin` on SSO linked users answers 409 while the admin group is set. With a user group set, SSO sign-in is refused (403) unless the claim has the user or admin group, a missing claim included, before any user is created; password sign-in is unaffected. Scope is `openid email profile` plus `groups` when either group is set. Environment only: `PUBLIC_URL`
 (base for redirect URI `PUBLIC_URL/auth/oidc/callback`), `TRUST_PROXY`.
 `GET /api/auth/me` returns `{"id","username","display_name","is_admin","use_global_ai","personal_key_set","sso_linked","has_password"}`. Disabled users are refused
 by password login (403 after a correct password) and by OIDC (403 page, no email linking). Discovery via `{issuer}.well-known/openid-configuration`. Users are created in the Admin page (or by first-run setup). The CLI

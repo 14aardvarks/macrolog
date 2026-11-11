@@ -159,7 +159,7 @@ def test_list_users_shape(root, bob):
     link_sso("carol")
     users = {u["username"]: u for u in root.get("/api/admin/users").json()["users"]}
     assert set(users["bob"]) == {"id", "username", "display_name", "email", "is_admin", "disabled", "use_global_ai",
-                                 "has_password", "sso_linked", "personal_key_set", "created_at"}
+                                 "has_password", "sso_linked", "admin_by_group", "personal_key_set", "created_at"}
     assert users["bob"]["personal_key_set"] is True and users["root"]["personal_key_set"] is False
     assert users["carol"]["sso_linked"] is True and users["bob"]["sso_linked"] is False
     assert users["root"]["is_admin"] is True and users["bob"]["has_password"] is True

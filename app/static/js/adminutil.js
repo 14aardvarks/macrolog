@@ -113,11 +113,17 @@ export function buildChanges(specs, items, states) {
 
 export const SIGNIN_SPECS = [
   { key: 'local_login', kind: 'bool', label: 'Password sign-in' },
-  { key: 'oidc_allow_signup', kind: 'bool', label: 'Allow new SSO sign-ups' },
+  { key: 'oidc_allow_signup', kind: 'bool', label: 'Create accounts on first SSO sign-in',
+    hint: 'Anyone who can sign in to the authentik application gets an account. Restrict access with application bindings in authentik.' },
   { key: 'oidc_name', kind: 'text', label: 'Button name' },
   { key: 'oidc_issuer', kind: 'text', label: 'Issuer URL' },
   { key: 'oidc_client_id', kind: 'text', label: 'Client ID' },
   { key: 'oidc_client_secret', kind: 'secret', label: 'Client secret' },
+  { key: 'oidc_admin_group', kind: 'text', label: 'Admin group',
+    hint: 'Members of this authentik group become Macrolog admins, for example admin. Leave empty to manage admins manually.' },
+  { key: 'oidc_user_group', kind: 'text', label: 'Allowed user group',
+    hint: 'Only members of this group (or the admin group) can sign in with SSO, for example user. Leave empty to allow everyone who can sign in to the authentik application.' },
+  { key: 'oidc_groups_claim', kind: 'text', label: 'Groups claim' },
 ];
 export const CLAUDE_SPECS = [
   { key: 'ai_global_key', kind: 'secret', label: 'Shared Claude key' },
