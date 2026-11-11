@@ -161,7 +161,10 @@ DELETE /api/foods/{id}                               # creator only; 409 when in
 Quick favorites items also carry `meals` (tags) and `counts` ({meal: times logged}); recipes carry `meals` and `counts` (from recipe_logs).
 ```
 GET/POST /api/meals    POST {"name","items":[{"food_id","amount","unit"}]}  -> meal
-POST /api/meals/from-day {"name","day","entry_ids"?}      DELETE /api/meals/{id}
+POST /api/meals/from-meal {"name","day","meal": breakfast|lunch|dinner|snack|null,"entry_ids"}   # a meal group of one day (null = unassigned); my entries only,
+        # each of that day and meal; at least one id, else 400; the recipe is tagged with that meal. The Today screen uses only this route (no day level recipe).
+POST /api/meals/from-day {"name","day","entry_ids"?}      # legacy API, not used by the app
+DELETE /api/meals/{id}
 POST /api/meals/{id}/log {"day"?,"meal"?,"items"?:[{"food_id","amount","unit"}]}   # items override amounts, otherwise saved amounts
 GET/PUT /api/goals   {"kcal","carb_pct","protein_pct","fat_pct"}  pcts total 100. Default 3000 and 50/30/20 (carbs/protein/fat).
         targets: carbs g = kcal*pct/4, protein same, fat g = kcal*pct/9. Goals are per user.

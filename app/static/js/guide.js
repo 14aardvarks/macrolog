@@ -35,9 +35,9 @@ export const GUIDE = [
     'Untagged items show under every meal. Logging with a meal adds its tag.',
   ] },
   { heading: 'Recipes', bullets: [
-    'On Today, tap Save today as a recipe.',
+    'On Today, tap Save as recipe under a meal.',
     'Log it later from Add, then Recipes.',
-    'You can change the amounts before you log.',
+    'Untick items to skip them, and change amounts.',
   ] },
   { heading: 'Today', bullets: [
     'The chart splits your calories, with your goal in the middle.',

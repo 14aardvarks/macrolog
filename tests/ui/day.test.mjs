@@ -48,3 +48,22 @@ test('dayLabel', () => {
   assert.equal(dayLabel('2025-05-09', '2025-05-10'), 'Yesterday');
   assert.ok(dayLabel('2025-05-01', '2025-05-10').length > 3);
 });
+
+import { checkedItems, canSaveRecipe } from '../../app/static/js/util.js';
+
+test('checkedItems keeps only ticked rows and validates amounts', () => {
+  const rows = [
+    { checked: true, amount: '2', food_id: 1, unit: 'g', name: 'A' },
+    { checked: false, amount: 'junk', food_id: 2, unit: 'g', name: 'B' },
+    { checked: true, amount: '1/2', food_id: 3, unit: 'cup', name: 'C' },
+  ];
+  assert.deepEqual(checkedItems(rows).items, [{ food_id: 1, amount: 2, unit: 'g' }, { food_id: 3, amount: 0.5, unit: 'cup' }]);
+  assert.match(checkedItems([{ ...rows[0], amount: '0' }]).error, /amount for A/);
+  assert.match(checkedItems(rows.map((r) => ({ ...r, checked: false }))).error, /at least one/);
+});
+
+test('canSaveRecipe needs a ticked row and a name', () => {
+  assert.equal(canSaveRecipe(1, 'Breakfast'), true);
+  assert.equal(canSaveRecipe(0, 'Breakfast'), false);
+  assert.equal(canSaveRecipe(2, '   '), false);
+});

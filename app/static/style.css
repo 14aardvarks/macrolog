@@ -81,7 +81,8 @@ input[type=checkbox] { width: 24px; height: 24px; flex: none; accent-color: var(
 .unit { color: var(--muted); min-width: 36px; }
 .group { display: flex; justify-content: space-between; }
 .group span { color: var(--muted); font-weight: 400; }
-.save-meal { margin-top: 16px; }
+.save-meal { margin: 8px 0 16px; }
+.sheet { border: 1px solid var(--track); border-radius: 12px; padding: 8px 12px; }
 
 /* today bars */
 .bar-row { margin: 0 0 12px; }

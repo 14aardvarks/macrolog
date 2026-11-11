@@ -695,25 +695,37 @@ def create_meal(user: CurrentUser, body: dict = Body(...)):
         return save_meal(c, user["id"], name, parse_items(c, body.get("items")), meal)
 
 
-@router.post("/meals/from-day")
-def meal_from_day(user: CurrentUser, body: dict = Body(...)):
+def recipe_from_entries(uid: int, body: dict, only_meal: bool = False) -> dict:
+    """Copy my entries of one day into a recipe. only_meal: the entries must be of body["meal"] and tag the recipe."""
     name, day = meal_name(body), day_str(body.get("day"))
     wanted = body.get("entry_ids")
     if wanted is not None and not isinstance(wanted, list):
         raise bad("entry_ids must be a list")
+    meal = pick(body.get("meal"), MEALS, "meal", nullable=True) if only_meal else None
     with db.conn() as c:
-        rows = c.execute("SELECT * FROM entries WHERE user_id=? AND day=? AND food_id IS NOT NULL ORDER BY id",
-                         (user["id"], day)).fetchall()
+        sql = "SELECT * FROM entries WHERE user_id=? AND day=? AND food_id IS NOT NULL" + (" AND meal IS ?" if only_meal else "")
+        rows = c.execute(sql + " ORDER BY id", (uid, day, meal) if only_meal else (uid, day)).fetchall()
         if wanted is not None:
             ids = {whole_id(i, "entry_ids") for i in wanted}
             if ids - {r["id"] for r in rows}:
-                raise bad("Some entry_ids are not entries of yours on that day")
+                raise bad("Some entry_ids are not entries of yours on that day" + (" and meal" if only_meal else ""))
             rows = [r for r in rows if r["id"] in ids]
-        if not rows:
-            raise bad("No entries to copy for that day")
+        if not rows or (only_meal and wanted is None):
+            raise bad("Pick at least one entry to save")
         items = [(need_food(c, r["food_id"]), r["amount"], r["unit"]) for r in rows]
-        shared = {r["meal"] for r in rows}  # one meal for the whole recipe only when every entry agrees
-        return save_meal(c, user["id"], name, items, shared.pop() if len(shared) == 1 else None)
+        shared = {r["meal"] for r in rows}  # from-day: one meal for the whole recipe only when every entry agrees
+        return save_meal(c, uid, name, items, meal if only_meal else (shared.pop() if len(shared) == 1 else None))
+
+
+@router.post("/meals/from-day")
+def meal_from_day(user: CurrentUser, body: dict = Body(...)):
+    return recipe_from_entries(user["id"], body)
+
+
+@router.post("/meals/from-meal")
+def meal_from_meal(user: CurrentUser, body: dict = Body(...)):
+    """Save chosen entries of one meal group (meal null = unassigned) as a recipe tagged with that meal."""
+    return recipe_from_entries(user["id"], body, only_meal=True)
 
 
 @router.patch("/meals/{meal_id}")

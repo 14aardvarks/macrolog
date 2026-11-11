@@ -1,7 +1,7 @@
 import { api, setUnauthorizedHandler } from './api.js';
 import { h, clear, select, field, message, show, cameraIcon } from './dom.js';
 import {
-  MEALS, MEAL_LABELS, parseDecimal, parseAmount, amountText, servingText, setAmountFormat, unitLabel, fmtNum, fmtAmount, groupByMeal, localDate, progressText, remainingText,
+  MEALS, MEAL_LABELS, parseDecimal, parseAmount, amountText, servingText, setAmountFormat, unitLabel, fmtNum, fmtAmount, groupByMeal, checkedItems, canSaveRecipe, localDate, progressText, remainingText,
   barWidth, debounce, digitsOnly, guessMeal, pctTotal, latestGuard, MEAL_FILTERS, MEAL_FILTER_LABELS, filterByMeal, filterSaved, pageOf, PAGE_SIZE, emptyText,
 } from './util.js';
 import { renderPicker } from './picker.js';
@@ -159,14 +159,14 @@ async function todayScreen(root) {
       h('div', { class: 'fill' + (d.percent[k] > 100 ? ' over' : ''), style: 'width:' + barWidth(d.percent[k]) + '%' })),
       h('div', { class: 'bar-left' }, remainingText(d.remaining[k], unit)));
   });
+  const status = h('div', { 'aria-live': 'polite' });
   const groups = groupByMeal(d.entries).map((g) => h('div', null,
     h('h2', { class: 'group' }, g.label, h('span', null, fmtNum(g.kcal, 0) + ' kcal')),
-    h('ul', { class: 'list' }, g.entries.map((e) => entryRow(e, root)))));
-  const status = h('div', { 'aria-live': 'polite' });
+    h('ul', { class: 'list' }, g.entries.map((e) => entryRow(e, root))), saveMealBox(g, status)));
   root.appendChild(h('section', { class: 'screen' }, h('h1', null, 'Today'),
     h('h2', null, 'Calorie Split'), splitChart(d), bars,
     d.entries.length ? groups : message('Tap Add to log your first food.'),
-    d.entries.length ? saveMealBox(status) : null, status));
+    status));
 }
 
 function entryRow(e, root) {
@@ -180,21 +180,32 @@ function entryRow(e, root) {
   return foodRow(title, sub, open, del);
 }
 
-function saveMealBox(status) {
+// One Save as recipe button per meal group. It opens a checklist of that group's entries, all ticked.
+function saveMealBox(g, status) {
   const box = h('div', { class: 'save-meal' });
-  const reset = () => show(box, h('button', { class: 'btn', type: 'button', onclick: ask }, 'Save today as a recipe'));
+  const reset = () => show(box, h('button', { class: 'btn', type: 'button', onclick: ask }, 'Save as recipe'));
   function ask() {
-    const name = field('Recipe name', { autocomplete: 'off' });
-    show(box, h('form', { class: 'row', onsubmit: async (ev) => {
+    const rows = g.entries.filter((e) => e.food_id != null).map((e) => ({ e,
+      box: h('input', { type: 'checkbox', checked: true, 'aria-label': 'Include ' + e.name }) }));
+    const name = field('Recipe name', { autocomplete: 'off', value: g.label });
+    const save = h('button', { class: 'btn primary', type: 'submit' }, 'Save');
+    const sync = () => { save.disabled = !canSaveRecipe(rows.filter((r) => r.box.checked).length, name.input.value); };
+    rows.forEach((r) => r.box.addEventListener('change', sync));
+    name.input.addEventListener('input', sync);
+    show(box, h('form', { class: 'sheet', onsubmit: async (ev) => {
       ev.preventDefault();
-      if (!name.input.value.trim()) return;
+      const ids = rows.filter((r) => r.box.checked).map((r) => r.e.id);
+      if (save.disabled) return;
       try {
-        const m = await api.mealFromDay(name.input.value.trim(), localDate());
+        const m = await api.mealFromMeal(name.input.value.trim(), g.meal, ids, localDate());
         show(status, message('Saved recipe "' + m.name + '".'));
         reset();
       } catch (err) { show(status, message(err.message, 'error')); }
-    } }, name, h('button', { class: 'btn primary', type: 'submit' }, 'Save')));
-    name.input.focus();
+    } },
+    h('ul', { class: 'list' }, rows.map((r) => h('li', { class: 'item meal-item' }, r.box,
+      h('span', { class: 'item-title' }, r.e.name), h('span', { class: 'unit' }, unitText(r.e.amount, r.e.unit))))),
+    name, h('div', { class: 'row' }, save, h('button', { class: 'btn ghost', type: 'button', onclick: reset }, 'Cancel'))));
+    sync();
   }
   reset();
   return box;
@@ -337,14 +348,8 @@ async function mealScreen(root, params) {
     return { it, box, amt, el: h('li', { class: 'item meal-item' }, box, h('span', { class: 'item-title' }, it.food.name), amt, h('span', { class: 'unit' }, unitLabel(it.unit))) };
   });
   async function log() {
-    const items = [];
-    for (const r of rows) {
-      if (!r.box.checked) continue;
-      const a = parseAmount(r.amt.value);
-      if (a == null || a <= 0) { show(status, message('Check the amount for ' + r.it.food.name + '.', 'error')); return; }
-      items.push({ food_id: r.it.food_id, amount: a, unit: r.it.unit });
-    }
-    if (!items.length) { show(status, message('Tick at least one item.', 'error')); return; }
+    const { items, error } = checkedItems(rows.map((r) => ({ checked: r.box.checked, amount: r.amt.value, food_id: r.it.food_id, unit: r.it.unit, name: r.it.food.name })));
+    if (error) { show(status, message(error, 'error')); return; }
     try { await api.logMeal(meal.id, { items, meal: mealSel.value === 'none' ? null : mealSel.value }); await go('today', {}, true); } catch (e) {
       show(status, message(e.message, 'error'));
     }

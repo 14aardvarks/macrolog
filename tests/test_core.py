@@ -723,3 +723,24 @@ def test_quick_items_and_meals_keep_pseudo_units(a):
     assert r.status_code == 200, r.text
     d = a.get("/api/day", params={"day": "2025-04-03"}).json()
     assert (d["entries"][-1]["amount"], d["entries"][-1]["unit"]) == (50, "pct")
+
+
+def test_recipe_from_meal_tags_and_validates(a, b):
+    bread, pb = food(a, BREAD), food(a, PB)
+    e1 = log(a, bread, day="2025-03-01", meal="breakfast")
+    e2 = log(a, pb, 1, "tbsp", day="2025-03-01", meal="breakfast")
+    e3 = log(a, bread, day="2025-03-01", meal="dinner")
+    e4 = log(a, pb, 2, "tbsp", day="2025-03-01")
+    url = "/api/meals/from-meal"
+    base = {"name": "Toast", "day": "2025-03-01", "meal": "breakfast"}
+    m = a.post(url, json=base | {"entry_ids": [e2["id"]]}).json()
+    assert [i["food_id"] for i in m["items"]] == [pb["id"]] and m["meal"] == "breakfast" and m["meals"] == ["breakfast"]
+    both = a.post(url, json=base | {"entry_ids": [e1["id"], e2["id"]]}).json()
+    assert len(both["items"]) == 2
+    un = a.post(url, json={"name": "Misc", "day": "2025-03-01", "meal": None, "entry_ids": [e4["id"]]}).json()
+    assert un["meal"] is None and un["meals"] == []
+    for bad_body in (base | {"entry_ids": []}, base, base | {"entry_ids": [e3["id"]]},  # empty, missing, other meal
+                     base | {"entry_ids": [999]}, base | {"entry_ids": [e1["id"]], "day": "2025-03-02"},
+                     base | {"entry_ids": [e1["id"]], "meal": "brunch"}, base | {"entry_ids": [e1["id"]], "name": " "}):
+        assert a.post(url, json=bad_body).status_code == 400
+    assert b.post(url, json=base | {"entry_ids": [e1["id"]]}).status_code == 400  # not their entry

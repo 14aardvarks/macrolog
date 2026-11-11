@@ -36,7 +36,8 @@ The same guide is in Settings under "How to use Macrolog".
 - The Meal selector on Add filters the lists by meal. All shows everything.
 - In the picker, the wheel chooses the unit, and the chips set 1/4 to 2 servings. Macros update live.
 - A food opens with the amount and unit from your last entry. Turn this off in Settings with "Start from my last entry" to open on the label's serving instead.
-- Tap the star to make a favorite. On Today, "Save today as a recipe" makes a recipe you can log later.
+- Tap the star to make a favorite. On Today, each meal has "Save as recipe": untick any entries, name it, and the recipe is tagged with that meal. Days are never saved as recipes.
+- When you log a recipe, untick items to leave them out and adjust amounts. Only ticked items are logged.
 - If a food is not found, ask Claude to read the label photo (if set up) or enter it manually, and check the numbers.
 - Tag favorites and recipes with Breakfast, Lunch, Dinner or Snack. A chosen meal on Add shows items tagged with it plus untagged items, with the ones you log most often as that meal first. Logging a favorite or recipe with a meal adds that tag.
 - Settings, then Saved, lists your favorites, recipes and the foods you created. Edit meal tags, rename or delete recipes, change recipe amounts, and edit or delete your own foods (a food already in a log entry or recipe cannot be deleted, and only its name can change).

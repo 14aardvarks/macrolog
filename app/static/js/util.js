@@ -188,6 +188,22 @@ export function groupByMeal(entries, otherLabel = 'No meal') {
   return [...groups, other].filter((g) => g.entries.length).map((g) => ({ ...g, kcal: roundTo(g.kcal, 1) }));
 }
 
+// Rows of a checklist: {checked, amount (typed text), food_id, unit, name}. Only checked rows count.
+// Returns {items} or {error}.
+export function checkedItems(rows) {
+  const items = [];
+  for (const r of rows) {
+    if (!r.checked) continue;
+    const a = parseAmount(r.amount);
+    if (a == null || a <= 0) return { error: 'Check the amount for ' + r.name + '.' };
+    items.push({ food_id: r.food_id, amount: a, unit: r.unit });
+  }
+  return items.length ? { items } : { error: 'Tick at least one item.' };
+}
+
+// Save as recipe is allowed with at least one ticked row and a non-empty name.
+export const canSaveRecipe = (ticked, name) => ticked > 0 && String(name || '').trim() !== '';
+
 // ---------- meal filter on the Add screen ----------
 
 export const MEAL_FILTERS = ['all', ...MEALS];
@@ -234,7 +250,7 @@ export function emptyText(kind, meal, hasAny) {
   if (kind === 'yesterday') return w ? 'Nothing for ' + w + ' yesterday.' : 'Nothing from yesterday.';
   const one = kind === 'recipes' ? 'recipe' : 'favorite';
   if (w && hasAny) return 'No ' + kind + ' tagged ' + w + '. Choose All to see every ' + one + '.';
-  if (kind === 'recipes') return 'No saved recipes. On Today, tap "Save today as a recipe".';
+  if (kind === 'recipes') return 'No saved recipes. On Today, tap "Save as recipe" under a meal.';
   return 'No favorites yet. Tap the star on a food to add one.';
 }
 
