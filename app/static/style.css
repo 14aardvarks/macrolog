@@ -374,3 +374,5 @@ input[type=text], input[type=search], input[type=password], input[type=email], s
 .src-est { font-size: .75rem; color: var(--muted); }
 h1 .src { font-size: .875rem; vertical-align: middle; }
 .src-line { margin: 0 0 8px; }
+
+.entries-body .item-title { font-weight: 400; }
