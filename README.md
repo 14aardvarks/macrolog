@@ -43,8 +43,9 @@ The same guide is in Settings under "How to Use Macrolog".
 - Tap the star to make a favorite. On Today, each meal has "Save As Recipe": untick any entries, name it, and the recipe is tagged with that meal. Days are never saved as recipes.
 - When you log a recipe, untick items to leave them out and adjust amounts. Only ticked items are logged. Tap an item's name to adjust it in the picker with any of its units, then tap Done. That changes only this log, not the recipe or the food's last used amount.
 - If a food is not found, ask Claude to read the label photo (if set up) or enter it manually, and check the numbers.
+- To build a recipe from scratch, tap Create Recipe on Add. Name it, tap Add Ingredient to search, scan, or pick from Favorites and Past Foods, set the amount and unit, then tap Done. Tap an ingredient to adjust it, or the x to remove it. Pick meal tags and tap Save.
 - Tag favorites and recipes with Breakfast, Lunch, Dinner or Snack. A chosen meal on Add shows items tagged with it plus untagged items, with the ones you log most often as that meal first. Logging a favorite or recipe with a meal adds that tag.
-- Settings, then Saved, lists your favorites, recipes and the foods you created. Edit meal tags, rename or delete recipes, change recipe amounts, and edit or delete your own foods (a food already in a log entry or recipe cannot be deleted, and only its name can change).
+- Settings, then Saved, lists your favorites, recipes and the foods you created. Edit meal tags, rename or delete recipes, change recipe amounts, and edit or delete your own foods (a food already in a log entry or recipe cannot be deleted, and only its name can change). Search the lists by name, filter favorites and recipes by meal tag (or Untagged), and tap Show More after the first 20 items of a section.
 - "Remove From My Lists" unfavorites a food, clears its tags and hides it from Recent and Yesterday. Past entries stay. Searching, logging or favoriting it again brings it back.
 - Add lists show 20 items at a time with a Show More button.
 - Today has a Macro Nutrients section and, below it, a Micro Nutrients section that opens and closes with the small arrow (it remembers your choice). Each nutrient shows eaten and target. Fiber, potassium, calcium, iron and vitamin D are goals to reach; sugars, saturated fat, sodium and cholesterol are limits, and their bar turns orange when you go over. Totals count only the foods that have data, and a note like "2 of 3 foods" says when some foods had none. A dash means unknown, never zero.
@@ -244,7 +245,7 @@ Layout: `app/` holds the FastAPI backend (`auth.py`, `admin.py`, `config.py`, `c
 ## Known gaps
 
 - The author has not tested live Open Food Facts and USDA lookups, or the camera on a real device.
-- Not built yet: an iOS app, trends, and recipes built from ingredients.
+- Not built yet: an iOS app and trends.
 
 ## License
 

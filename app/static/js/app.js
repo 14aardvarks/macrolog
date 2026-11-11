@@ -2,7 +2,7 @@ import { api, setUnauthorizedHandler } from './api.js';
 import { h, clear, select, field, message, show, cameraIcon } from './dom.js';
 import {
   MEALS, MEAL_LABELS, parseDecimal, parseAmount, amountText, servingText, setAmountFormat, unitLabel, fmtNum, fmtAmount, groupByMeal, checkedItems, canSaveRecipe, rowAmountText, applyRowPick, draftFits, localDate, progressText, remainingText,
-  sentence, barWidth, debounce, digitsOnly, guessMeal, pctTotal, latestGuard, MEAL_FILTERS, MEAL_FILTER_LABELS, filterByMeal, filterSaved, pageOf, PAGE_SIZE, emptyText,
+  sentence, newRecipeDraft, recipeAddRow, recipeSetRow, stepsBack, barWidth, debounce, digitsOnly, guessMeal, pctTotal, latestGuard, MEAL_FILTERS, MEAL_FILTER_LABELS, filterByMeal, filterSaved, pageOf, PAGE_SIZE, emptyText,
   DEFAULT_DISPLAY,
 } from './util.js';
 import { microSection, displaySection, microTargets } from './micros.js';
@@ -15,11 +15,12 @@ import { renderGuide } from './guide-view.js';
 import { renderSetup } from './setup.js';
 import { renderAdmin } from './admin.js';
 import { renderSaved } from './saved.js';
+import { renderRecipe } from './recipe.js';
 import { renderClaudeSection, renderSignIn } from './claudekey.js';
 
 const main = document.getElementById('main');
 const nav = document.getElementById('nav');
-const state = { user: null, settings: { start_screen: 'today', default_meal: null, use_last: true, confirm_ai: true, amount_format: 'fraction' }, display: DEFAULT_DISPLAY, cleanup: null, depth: 0, tab: 'favorites', addMeal: 'all', draft: null };  // addMeal lives for the session only
+const state = { user: null, settings: { start_screen: 'today', default_meal: null, use_last: true, confirm_ai: true, amount_format: 'fraction' }, display: DEFAULT_DISPLAY, cleanup: null, depth: 0, tab: 'favorites', addMeal: 'all', draft: null, recipe: null };  // addMeal lives for the session only
 const NAV_OF = { today: 'today', settings: 'settings', admin: 'settings', saved: 'settings', editfood: 'settings' };  // every other screen belongs to Add
 
 const ctx = {
@@ -35,8 +36,27 @@ const ctx = {
     return state.display;
   },
   lookup: (code) => go('lookup', { code }),
+  // Create Recipe screen hooks. The draft is state.recipe.
+  get recipe() { return state.recipe; },
+  refresh: () => go('recipe', {}, true),
+  addIngredient: () => { state.recipe.adding = true; return go('add', { ingredient: true }); },
+  adjustIngredient(i) {
+    const r = state.recipe.rows[i];
+    state.recipe.adding = false;
+    state.recipe.picking = i;
+    return go('picker', { foodId: r.food_id, adjust: { index: i }, amount: r.amount, unit: r.unit });
+  },
+  saved() { state.recipe = null; state.tab = 'recipes'; return ctx.back(); },
   // Recipe row adjust: the picker hands back the chosen amount and unit, then the recipe screen is shown again with its draft.
-  finishAdjust(index, amount, unit) {
+  finishAdjust(index, amount, unit, food) {
+    const r = state.recipe;
+    if (r && r.picking != null) {  // Create Recipe: a new ingredient comes from the finder, so go back past it to the recipe screen
+      r.rows = r.picking >= r.rows.length ? recipeAddRow(r.rows, food, amount, unit) : recipeSetRow(r.rows, r.picking, amount, unit);
+      const n = r.adding ? stepsBack(state.depth, r.depth) : 1;
+      r.adding = false;
+      r.picking = null;
+      return history.go(-n);
+    }
     if (state.draft) state.draft.rows = applyRowPick(state.draft.rows, index, amount, unit);
     return ctx.back();
   },
@@ -60,10 +80,26 @@ window.addEventListener('popstate', (e) => {
 
 const guard = latestGuard();
 
+// While a recipe is being built, the ingredient finder (Add with ingredient), lookup, scan, manual and Claude screens lead to the
+// picker in "ingredient" mode. Any other screen ends that mode, so a normal Add never hands its pick to a recipe.
+function trackRecipeFlow(entry) {
+  const r = state.recipe;
+  if (!r) return;
+  const p = entry.params || (entry.params = {});
+  if (entry.name === 'add') r.adding = !!p.ingredient;
+  else if (entry.name === 'picker') {
+    if (r.adding && !p.adjust && p.entryId == null) { p.adjust = { index: r.rows.length }; r.picking = r.rows.length; }
+  } else {
+    if (!['lookup', 'scan', 'manual', 'ai'].includes(entry.name)) r.adding = false;
+    r.picking = null;
+  }
+}
+
 // Each screen is built in a detached box and swapped in only if no newer render started meanwhile.
 async function render(entry) {
   const ticket = guard.next();
   if (state.cleanup) { state.cleanup(); state.cleanup = null; }
+  trackRecipeFlow(entry);
   const screen = SCREENS[entry.name] || SCREENS.today;
   const key = NAV_OF[entry.name] || 'add';
   nav.hidden = entry.name === 'login';
@@ -239,12 +275,15 @@ const pickerOf = (it, meal) => () => go('picker', { foodId: it.food_id, amount: 
 const chosenMeal = () => (state.addMeal === 'all' ? undefined : state.addMeal);
 const foodTitle = (f) => (f.brand ? f.name + ' (' + f.brand + ')' : f.name);
 
+// params.ingredient: the finder used by Create Recipe. It shows Favorites and Past Foods only and no meal choice.
 function addScreen(root, params) {
+  const ing = !!(params.ingredient && state.recipe);
+  let tab = ing ? 'favorites' : state.tab;
   const listBox = h('div', { 'aria-live': 'polite' });
   const q = h('input', { type: 'search', placeholder: 'Search foods', 'aria-label': 'Search foods', enterkeyhint: 'search', autocomplete: 'off' });
-  const tabNames = [['favorites', 'Favorites'], ['yesterday', 'Yesterday'], ['recipes', 'Recipes']];
+  const tabNames = ing ? [['favorites', 'Favorites'], ['recent', 'Past Foods']] : [['favorites', 'Favorites'], ['yesterday', 'Yesterday'], ['recipes', 'Recipes']];
   const tabBar = h('div', { class: 'tabs', role: 'tablist' }, tabNames.map(([k, label]) => h('button', {
-    type: 'button', role: 'tab', 'data-tab': k, onclick: () => { state.tab = k; q.value = ''; liveSearch.cancel(); paintTabs(); } }, label)));
+    type: 'button', role: 'tab', 'data-tab': k, onclick: () => { tab = k; if (!ing) state.tab = k; q.value = ''; liveSearch.cancel(); paintTabs(); } }, label)));
   const mealSel = select(MEAL_FILTERS.map((m) => ({ value: m, label: MEAL_FILTER_LABELS[m] })), state.addMeal, { 'aria-label': 'Meal' });
   mealSel.addEventListener('change', () => { state.addMeal = mealSel.value; if (!q.value.trim()) paintTabs(); });
   const mealPick = h('label', { class: 'meal-pick' }, h('span', null, 'Meal'), mealSel);
@@ -272,24 +311,27 @@ function addScreen(root, params) {
   q.addEventListener('input', liveSearch);
 
   async function paintTabs() {
-    tabBar.querySelectorAll('button').forEach((b) => b.setAttribute('aria-selected', b.dataset.tab === state.tab ? 'true' : 'false'));
+    tabBar.querySelectorAll('button').forEach((b) => b.setAttribute('aria-selected', b.dataset.tab === tab ? 'true' : 'false'));
     show(listBox, message('Loading...'));
-    const want = state.tab;
+    const want = tab;
     try {
-      const meal = state.addMeal;
+      const meal = ing ? 'all' : state.addMeal;
       const node = want === 'recipes' ? await recipesList(meal) : want === 'yesterday' ? await yesterdayList(meal) : await quickList(want, meal);
-      if (want === state.tab && meal === state.addMeal && !q.value.trim()) show(listBox, node);
+      if (want === tab && meal === (ing ? 'all' : state.addMeal) && !q.value.trim()) show(listBox, node);
     } catch (e) { show(listBox, message(e.message, 'error')); }
   }
 
   // Search, scan and the meal filter sit above the lists so a long list never pushes them off screen.
   root.appendChild(h('section', { class: 'screen wide add' },
+    ing ? h('div', { class: 'bar' }, h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back')) : null,
+    ing ? h('h1', null, 'Add Ingredient') : null,
     h('form', { class: 'row add-search', role: 'search', onsubmit: (e) => { e.preventDefault(); liveSearch.cancel(); search(true); } },
       q, h('button', { class: 'btn', type: 'submit' }, 'Search')),
     h('div', { class: 'row add-scan' },
       h('button', { class: 'btn', type: 'button', onclick: () => go('manual', {}) }, 'Enter Manually'),
       h('button', { class: 'btn primary scan-btn', type: 'button', onclick: () => go('scan', { autostart: true }) }, cameraIcon(), 'Scan Barcode')),
-    mealPick, tabBar, h('div', { class: 'tab-list' }, listBox)));
+    ing ? null : h('div', { class: 'row add-create' }, h('button', { class: 'btn', type: 'button', onclick: () => { state.recipe = newRecipeDraft(); go('recipe', {}); } }, 'Create Recipe')),
+    ing ? null : mealPick, tabBar, h('div', { class: 'tab-list' }, listBox)));
   paintTabs();
   if (params.focus) root.addEventListener('mounted', () => q.focus());
 }
@@ -471,7 +513,8 @@ async function settingsScreen(root) {
 
 const SCREENS = {
   login: loginScreen, admin: (root) => renderAdmin(root, ctx), today: todayScreen, add: addScreen, lookup: lookupScreen, meal: mealScreen, settings: settingsScreen,
-  saved: (root) => renderSaved(root, ctx), editfood: (root, p) => renderFoodForm(root, { edit: p.food }, ctx),
+  saved: (root) => renderSaved(root, ctx),
+  recipe: (root) => { if (!state.recipe) state.recipe = newRecipeDraft(); state.recipe.depth = state.depth; return renderRecipe(root, ctx); }, editfood: (root, p) => renderFoodForm(root, { edit: p.food }, ctx),
   picker: (root, p) => renderPicker(root, p, ctx),
   scan: (root, p) => { const auto = !!p.autostart; p.autostart = false; return renderScan(root, ctx, { autostart: auto }); },
   ai: (root, p) => renderAi(root, p, ctx),

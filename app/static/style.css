@@ -323,3 +323,12 @@ input[type=text], input[type=search], input[type=password], input[type=email], s
   .today .donut { width: 220px; flex-basis: 220px; margin: 0 auto; }
 }
 .micro-targets { align-items: end; }
+
+/* create recipe and saved filter */
+.row.add-create { margin: 0 0 8px; }
+.row.add-create > .btn { flex: 1 1 0; justify-content: center; }
+.screen.recipe > .btn { width: 100%; margin: 8px 0; }
+.screen.recipe .chips { margin-bottom: 12px; }
+.saved-filter { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+.saved-filter input[type=search] { width: 100%; }
+.saved .list + .btn, .saved .sub + .btn { width: 100%; margin: 8px 0; }

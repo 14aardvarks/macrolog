@@ -169,7 +169,7 @@ DELETE /api/foods/{id}                               # creator only; 409 when in
 ```
 Quick favorites items also carry `meals` (tags) and `counts` ({meal: times logged}); recipes carry `meals` and `counts` (from recipe_logs).
 ```
-GET/POST /api/meals    POST {"name","items":[{"food_id","amount","unit"}]}  -> meal
+GET/POST /api/meals    POST {"name","items":[{"food_id","amount","unit"}],"meals"?:[...tags],"meal"?: one tag (older)}  -> meal   # meals wins over meal; used by Create Recipe
 POST /api/meals/from-meal {"name","day","meal": breakfast|lunch|dinner|snack|null,"entry_ids"}   # a meal group of one day (null = unassigned); my entries only,
         # each of that day and meal; at least one id, else 400; the recipe is tagged with that meal. The Today screen uses only this route (no day level recipe).
 POST /api/meals/from-day {"name","day","entry_ids"?}      # legacy API, not used by the app
@@ -278,6 +278,8 @@ Screens: Login, Today, Add, Picker, Claude fallback, Settings. Bottom nav: Today
   with any warnings, and only saves via POST /api/foods after the user confirms.
 - Add: Search, Scan and the Meal selector sit above the Favorites/Yesterday/Recipes tabs and list. Lists show 20 items with a Show More button.
 - Saved (Settings, then Saved): Favorites, Recipes and My foods lists with meal tag chips, rename, delete, recipe item editing, Remove From My Lists, and the food form for My foods.
+  A search box filters all three sections by name (every word must match, case ignored). The Meal filter (All, Breakfast, Lunch, Dinner, Snack, Untagged) uses the tags and applies to Favorites and Recipes only, strictly (an untagged item is not shown under a meal here). Each section shows 20 items with a Show More button. Remove and delete reload in place, so the search and filter stay.
+- Create Recipe (Add tab button, js/recipe.js): name, ingredients, meal tags, Save (POST /api/meals). Add Ingredient opens the Add screen in ingredient mode (search, Scan Barcode, Enter Manually, Favorites and Past Foods tabs, no meal choice); a food opens the picker with a Done button, which returns the amount and unit to the draft (the picker's Serving unit works as usual). Tapping a draft ingredient adjusts it the same way, and the x removes it. The draft lives in app state until Save, and Save returns to Add on the Recipes tab.
 - Settings: start screen, goals (kcal and split), sign out, Claude status (used/cap), personal Claude key and cap,
   Connect SSO (plain link to /auth/oidc/link, shown when /api/auth/config oidc is true and me.sso_linked is false) and
   Disconnect SSO (POST /api/auth/sso/unlink, shown when linked and has_password). The app opens Settings for `/#settings`.

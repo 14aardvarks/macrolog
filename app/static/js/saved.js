@@ -1,12 +1,12 @@
 // Saved screen: favorites, recipes and the foods I made, with meal tags, rename, delete and edit.
 import { api } from './api.js';
-import { h, field, message, show, select } from './dom.js';
-import { MEALS, MEAL_LABELS, toggleMeal, parseAmount, fmtAmount, unitLabel, fmtNum, amountText } from './util.js';
+import { h, clear, field, message, show, select } from './dom.js';
+import { MEALS, MEAL_LABELS, toggleMeal, parseAmount, fmtAmount, unitLabel, fmtNum, amountText, SAVED_FILTERS, SAVED_FILTER_LABELS, filterSavedItems, pageOf, PAGE_SIZE } from './util.js';
 
 const title = (f) => (f.brand ? f.name + ' (' + f.brand + ')' : f.name);
 
 // Toggle chips for the four meals. save(meals) persists the new set, or throws.
-function chips(meals, save, status) {
+export function chips(meals, save, status) {
   let now = meals.slice();
   const box = h('div', { class: 'chips', role: 'group', 'aria-label': 'Meal tags' });
   const paint = () => box.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', now.includes(b.dataset.meal) ? 'true' : 'false'));
@@ -29,7 +29,7 @@ function favoriteRow(fav, again) {
     try { await api.removeFromLists(fav.food.id); await again(); } catch (e) { show(status, message(e.message, 'error')); }
   } }, 'Remove From My Lists');
   return h('li', { class: 'saved-item' }, h('span', { class: 'item-title' }, title(fav.food)),
-    chips(fav.meals, (m) => api.favoriteTags(fav.food.id, m), status), h('div', { class: 'row wrap' }, remove), status);
+    chips(fav.meals, async (m) => { await api.favoriteTags(fav.food.id, m); fav.meals = m; }, status), h('div', { class: 'row wrap' }, remove), status);
 }
 
 function recipeRow(rec, again) {
@@ -77,7 +77,7 @@ function recipeRow(rec, again) {
   };
   return h('li', { class: 'saved-item' }, h('span', { class: 'item-title' }, rec.name),
     h('span', { class: 'item-sub' }, rec.items.length + ' items - ' + fmtNum(rec.kcal, 0) + ' kcal'),
-    chips(rec.meals, (m) => api.patchMeal(rec.id, { meals: m }), status),
+    chips(rec.meals, async (m) => { await api.patchMeal(rec.id, { meals: m }); rec.meals = m; }, status),
     h('div', { class: 'row wrap' }, h('button', { class: 'btn', type: 'button', onclick: rename }, 'Rename'),
       h('button', { class: 'btn', type: 'button', onclick: items }, 'Edit Items'), h('button', { class: 'btn', type: 'button', onclick: del }, 'Delete')),
     body, status);
@@ -96,15 +96,38 @@ function foodRowMine(food, ctx, again) {
 }
 
 export async function renderSaved(root, ctx) {
-  const data = await api.saved();
-  const again = () => ctx.go('saved', {}, true);
-  const section = (name, rows, empty) => h('div', null, h('h2', null, name),
-    rows.length ? h('ul', { class: 'list' }, rows) : h('p', { class: 'sub' }, empty));
+  let data = await api.saved();
+  const view = { query: '', meal: 'all', shown: { favorites: PAGE_SIZE, recipes: PAGE_SIZE, foods: PAGE_SIZE } };
+  // Remove, delete and rename reload the data and repaint in place, so the search text and filter stay.
+  const again = async () => { data = await api.saved(); paint(); };
+  const q = h('input', { type: 'search', placeholder: 'Search saved items', 'aria-label': 'Search saved items', autocomplete: 'off', enterkeyhint: 'search' });
+  const mealSel = select(SAVED_FILTERS.map((m) => ({ value: m, label: SAVED_FILTER_LABELS[m] })), 'all', { 'aria-label': 'Meal' });
+  const lists = h('div');
+  const reset = () => { view.shown = { favorites: PAGE_SIZE, recipes: PAGE_SIZE, foods: PAGE_SIZE }; paint(); };
+  q.addEventListener('input', () => { view.query = q.value; reset(); });
+  mealSel.addEventListener('change', () => { view.meal = mealSel.value; reset(); });
+
+  // key names the section. all is the unfiltered list, rows builds the nodes for the visible page.
+  const section = (key, name, all, text, rows, empty, tagged) => {
+    const items = filterSavedItems(all, view.query, tagged ? view.meal : 'all', text);  // My foods have no tags
+    const page = pageOf(items, view.shown[key]);
+    const filtering = view.query.trim() !== '' || (tagged && view.meal !== 'all');
+    return h('div', null, h('h2', null, name),
+      items.length ? h('ul', { class: 'list' }, rows(page.items)) : h('p', { class: 'sub' }, all.length && filtering ? 'Nothing matches.' : empty),
+      page.more ? h('button', { class: 'btn', type: 'button', onclick: () => { view.shown[key] += PAGE_SIZE; paint(); } }, 'Show More') : null);
+  };
+  function paint() {
+    clear(lists).append(
+      section('favorites', 'Favorites', data.favorites, (f) => title(f.food), (p) => p.map((f) => favoriteRow(f, again)), 'No favorites yet.', true),
+      section('recipes', 'Recipes', data.recipes, (r) => r.name, (p) => p.map((r) => recipeRow(r, again)), 'No recipes yet.', true),
+      section('foods', 'My Foods', data.foods, (f) => title(f), (p) => p.map((f) => foodRowMine(f, ctx, again)), 'Foods you create by hand or with Claude appear here.', false));
+  }
+  paint();
   root.appendChild(h('section', { class: 'screen saved' },
     h('div', { class: 'bar' }, h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back')),
     h('h1', null, 'Saved'),
     h('p', { class: 'sub' }, 'Meal tags decide where a favorite or recipe shows on Add. Untagged items show under every meal.'),
-    section('Favorites', data.favorites.map((f) => favoriteRow(f, again)), 'No favorites yet.'),
-    section('Recipes', data.recipes.map((r) => recipeRow(r, again)), 'No recipes yet.'),
-    section('My Foods', data.foods.map((f) => foodRowMine(f, ctx, again)), 'Foods you create by hand or with Claude appear here.')));
+    h('div', { class: 'saved-filter', role: 'search' }, q, h('label', { class: 'meal-pick' }, h('span', null, 'Meal'), mealSel)),
+    h('p', { class: 'sub' }, 'The meal filter applies to favorites and recipes.'),
+    lists));
 }

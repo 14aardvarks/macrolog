@@ -79,6 +79,7 @@ export const api = {
   deleteEntry: (id) => request('DELETE', '/api/entries/' + id),
   favorite: (id, on) => request(on ? 'POST' : 'DELETE', '/api/favorites/' + id),
   meals: () => get('/api/meals'),
+  createMeal: (body) => send('POST', '/api/meals', body),
   deleteMeal: (id) => request('DELETE', '/api/meals/' + id),
   mealFromMeal: (name, meal, entry_ids, d) => send('POST', '/api/meals/from-meal', { name, meal, entry_ids, day: d || day() }),
   logMeal: (id, body) => send('POST', '/api/meals/' + id + '/log', { day: day(), ...body }),

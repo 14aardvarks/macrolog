@@ -268,6 +268,7 @@ export function sentence(text) {
 export function emptyText(kind, meal, hasAny) {
   const w = mealWord(meal);
   if (kind === 'yesterday') return w ? 'Nothing for ' + w + ' yesterday.' : 'Nothing from yesterday.';
+  if (kind === 'recent') return 'No past foods yet. Foods you log show up here.';
   const one = kind === 'recipes' ? 'recipe' : 'favorite';
   if (w && hasAny) return 'No ' + kind + ' tagged ' + w + '. Choose All to see every ' + one + '.';
   if (kind === 'recipes') return 'No saved recipes. On Today, tap "Save As Recipe" under a meal.';
@@ -540,3 +541,47 @@ export function toggleMicro(shown, key) {
   if (set.has(key)) set.delete(key); else set.add(key);
   return MICROS.map((m) => m.key).filter((k) => set.has(k));
 }
+
+// ---------- Saved screen search and meal filter ----------
+
+export const SAVED_FILTERS = [...MEAL_FILTERS, 'untagged'];
+export const SAVED_FILTER_LABELS = { ...MEAL_FILTER_LABELS, untagged: 'Untagged' };
+
+// True when every word of the query appears in the text, ignoring case. An empty query matches everything.
+export function matchesQuery(text, query) {
+  const hay = String(text == null ? '' : text).toLowerCase();
+  return String(query == null ? '' : query).toLowerCase().split(/\s+/).filter(Boolean).every((w) => hay.includes(w));
+}
+
+// Saved items (favorites or recipes carry meals, the tag list) by name and meal tag. text(item) gives the searchable text.
+// meal: all keeps everything, a meal keeps items tagged with it, untagged keeps items with no tag. Strict: unlike Add,
+// an untagged item does not match a meal here, because this screen is where tags are managed.
+export function filterSavedItems(items, query, meal, text) {
+  return (items || []).filter((it) => {
+    if (!matchesQuery(text(it), query)) return false;
+    const tags = it.meals || [];
+    if (meal === 'untagged') return tags.length === 0;
+    return !MEALS.includes(meal) || tags.includes(meal);
+  });
+}
+
+// ---------- Create Recipe draft ----------
+
+export const newRecipeDraft = (depth) => ({ name: '', meals: [], rows: [], depth, adding: false, picking: null });
+
+// Draft rows are {food_id, name, brand, amount (number), unit}. These return new arrays.
+export const recipeAddRow = (rows, food, amount, unit) => [...rows, { food_id: food.id, name: food.name, brand: food.brand || null, amount, unit }];
+export const recipeSetRow = (rows, i, amount, unit) => rows.map((r, k) => (k === i ? { ...r, amount, unit } : r));
+export const recipeRemoveRow = (rows, i) => rows.filter((_, k) => k !== i);
+
+// The POST /api/meals body for a draft, or {error}.
+export function recipeBody(draft) {
+  const name = String(draft.name || '').trim();
+  if (!name) return { error: 'Enter a recipe name.' };
+  if (!draft.rows.length) return { error: 'Add at least one ingredient.' };
+  return { body: { name, meals: MEALS.filter((m) => (draft.meals || []).includes(m)),
+    items: draft.rows.map((r) => ({ food_id: r.food_id, amount: r.amount, unit: r.unit })) } };
+}
+
+// History steps from the current screen back to the recipe screen, at least one.
+export const stepsBack = (depth, base) => Math.max(1, depth - base);

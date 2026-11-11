@@ -248,7 +248,7 @@ export async function renderPicker(root, params, ctx) {
   async function save() {
     const m = mealSel.value === 'none' ? null : mealSel.value;
     finishTyping(false);
-    if (adjust != null) { ctx.finishAdjust(adjust, st.amount, st.unit); return; }  // hands the pick back, logs nothing
+    if (adjust != null) { ctx.finishAdjust(adjust, st.amount, st.unit, food); return; }  // hands the pick back, logs nothing
     logBtn.disabled = true;
     try {
       if (edit) await api.patchEntry(params.entryId, { amount: st.amount, unit: st.unit, meal: m });

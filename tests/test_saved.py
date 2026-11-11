@@ -81,6 +81,27 @@ def test_recipe_created_with_a_meal_is_tagged(a):
     assert m["meals"] == ["lunch"]
 
 
+def test_recipe_created_with_several_meal_tags(a):
+    f = food(a)
+    item = {"food_id": f["id"], "amount": 2, "unit": "slice"}
+    m = a.post("/api/meals", json={"name": "R", "meals": ["snack", "breakfast", "snack"], "items": [item]}).json()
+    assert m["meals"] == ["breakfast", "snack"] and m["meal"] == "breakfast"
+    assert a.get("/api/saved").json()["recipes"][0]["meals"] == ["breakfast", "snack"]
+    assert a.post("/api/meals", json={"name": "R", "meals": [], "items": [item]}).json()["meals"] == []
+    assert a.post("/api/meals", json={"name": "R", "meals": ["brunch"], "items": [item]}).status_code == 400
+    assert a.post("/api/meals", json={"name": "R", "meals": "lunch", "items": [item]}).status_code == 400
+    assert a.post("/api/meals", json={"name": "R", "meals": ["lunch"], "items": []}).status_code == 400
+
+
+def test_recipe_from_scratch_keeps_micronutrients(a):
+    f = a.post("/api/foods", json={**SALT, "sodium": 600, "potassium": 100}).json()
+    m = a.post("/api/meals", json={"name": "Salty", "meals": ["dinner"], "items": [{"food_id": f["id"], "amount": 200, "unit": "g"}]}).json()
+    item = m["items"][0]
+    assert item["servings"] == 2 and item["sodium"] == 1200 and item["potassium"] == 200
+    entries = a.post(f"/api/meals/{m['id']}/log", json={"meal": "dinner"}).json()["entries"]
+    assert entries[0]["sodium"] == 1200
+
+
 def test_remove_from_my_lists_hides_but_keeps_history(a, b):
     f = food(a)
     fav(a, f)

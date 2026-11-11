@@ -777,10 +777,11 @@ def meal_dict(c, row) -> dict:
             "items": items, "kcal": r1(sum(i["kcal"] for i in items))}
 
 
-def save_meal(c, uid: int, name, items: list, meal: str | None = None) -> dict:
-    cur = c.execute("INSERT INTO meals(user_id, name, meal) VALUES(?,?,?)", (uid, name, meal))
-    if meal:
-        c.execute("INSERT INTO recipe_tags(meal_id, meal) VALUES(?,?)", (cur.lastrowid, meal))
+def save_meal(c, uid: int, name, items: list, meal: str | list | None = None) -> dict:
+    """meal is one meal name, a list of meal names (the recipe tags), or None. meals.meal keeps the first tag."""
+    tags = [meal] if isinstance(meal, str) else clean_tags(meal or [])
+    cur = c.execute("INSERT INTO meals(user_id, name, meal) VALUES(?,?,?)", (uid, name, tags[0] if tags else None))
+    c.executemany("INSERT INTO recipe_tags(meal_id, meal) VALUES(?,?)", [(cur.lastrowid, m) for m in tags])
     c.executemany("INSERT INTO meal_items(meal_id,food_id,amount,unit,position) VALUES(?,?,?,?,?)",
                   [(cur.lastrowid, f["id"], a, u, i) for i, (f, a, u) in enumerate(items)])
     return meal_dict(c, c.execute("SELECT * FROM meals WHERE id=?", (cur.lastrowid,)).fetchone())
@@ -809,9 +810,11 @@ def list_meals(user: CurrentUser):
 
 @router.post("/meals")
 def create_meal(user: CurrentUser, body: dict = Body(...)):
-    name, meal = meal_name(body), pick(body.get("meal"), MEALS, "meal", nullable=True)
+    """Create a recipe from items. Tags come from meals (a list) or the older single meal."""
+    name = meal_name(body)
+    tags = clean_tags(body["meals"]) if "meals" in body else clean_tags([m for m in [pick(body.get("meal"), MEALS, "meal", nullable=True)] if m])
     with db.conn() as c:
-        return save_meal(c, user["id"], name, parse_items(c, body.get("items")), meal)
+        return save_meal(c, user["id"], name, parse_items(c, body.get("items")), tags)
 
 
 def recipe_from_entries(uid: int, body: dict, only_meal: bool = False) -> dict:
