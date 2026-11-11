@@ -30,10 +30,10 @@ export function splitChart(d) {
     h('div', { class: 'lg-main' }, h('span', { class: 'lg-name' }, LABELS[k]),
       h('span', null, eaten ? pe[k] + '% (' + fmtNum(d.totals[k], 0) + ' g)' : '-')),
     h('div', { class: 'lg-goal' }, 'Goal ' + pg[k] + '%')));
-  return h('div', { class: 'split' }, art,
-    h('div', { class: 'legend' },
-      h('p', { class: 'legend-head' }, 'Logged: ' + kcal + ' kcal' + loggedPct),
-      h('ul', null, rows)));
+  return h('div', { class: 'split' },
+    h('div', { class: 'donut-wrap' }, art,
+      h('p', { class: 'logged' }, h('span', null, 'Logged'), h('strong', null, kcal + ' kcal' + loggedPct))),
+    h('div', { class: 'legend' }, h('ul', null, rows)));
 }
 
 // Thin stacked bar of the calorie share from carbs, protein and fat. Returns null when there is nothing to show.

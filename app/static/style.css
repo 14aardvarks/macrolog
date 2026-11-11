@@ -23,6 +23,7 @@ body {
   padding: env(safe-area-inset-top) env(safe-area-inset-right) calc(64px + env(safe-area-inset-bottom)) env(safe-area-inset-left);
 }
 main { max-width: 640px; margin: 0 auto; padding: 8px 16px 24px; outline: none; }
+main:focus-visible { outline: none; }
 h1 { font-size: 1.5rem; margin: 12px 0 8px; }
 h2 { font-size: 1.05rem; margin: 20px 0 8px; }
 .sub { color: var(--muted); margin: 0 0 12px; }
@@ -170,7 +171,10 @@ nav button[aria-current=page] { color: var(--accent); box-shadow: inset 0 3px 0 
 .ring-empty { stroke: var(--track); }
 .ring-goal .seg { stroke-width: 1.5; }
 .legend { flex: 1; min-width: 0; }
-.legend-head { margin: 0 0 6px; color: var(--text); font-size: .95rem; font-weight: 600; }
+.donut-wrap { flex: 0 0 160px; text-align: center; }
+.donut-wrap .donut { display: block; }
+.logged { margin: 4px 0 0; display: flex; flex-direction: column; font-size: .85rem; color: var(--muted); }
+.logged strong { color: var(--text); font-size: .95rem; white-space: nowrap; }
 .legend ul { list-style: none; margin: 0; padding: 0; }
 .legend li { display: grid; grid-template-columns: 14px 1fr; column-gap: 8px; align-items: baseline; padding: 4px 0; }
 .legend .sw { width: 14px; height: 14px; border-radius: 3px; grid-row: 1 / span 2; align-self: center; }
@@ -280,4 +284,19 @@ input[type=text], input[type=search], input[type=password], input[type=email], s
   .tab-list .list > .item:last-child { border-bottom: 1px solid var(--line); }
 
   nav { left: 50%; right: auto; width: 440px; transform: translateX(-50%); border: 1px solid var(--line); border-bottom: 0; border-radius: 14px 14px 0 0; }
+}
+
+/* very wide screens: three columns on Today and a larger base size so the page fills the space */
+@media (min-width: 1300px) {
+  html { font-size: 112.5%; }
+  main { max-width: 1480px; }
+  .two-col.today { grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); }
+  .today > .col-a { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 40px; align-items: start; }
+  .today > .col-a > h2 { grid-column: 1 / -1; }
+  .today > .col-a > .split { grid-column: 1; margin: 0; }
+  .today > .col-a > .bars { grid-column: 2; }
+  .today .split { flex-direction: column; align-items: stretch; }
+  .today .donut-wrap { flex-basis: auto; align-self: center; }
+  .today .donut { width: 220px; flex-basis: 220px; margin: 0 auto; }
+  .tab-list .list { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }

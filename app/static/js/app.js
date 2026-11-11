@@ -165,8 +165,8 @@ async function todayScreen(root) {
     h('h2', { class: 'group' }, g.label, h('span', null, fmtNum(g.kcal, 0) + ' kcal')),
     h('ul', { class: 'list' }, g.entries.map((e) => entryRow(e, root))), saveMealBox(g, status)));
   root.appendChild(h('section', { class: 'screen wide' }, h('h1', null, 'Today'),
-    h('div', { class: 'two-col' },
-      h('div', { class: 'col-a' }, h('h2', null, 'Calorie Split'), splitChart(d), bars),
+    h('div', { class: 'two-col today' },
+      h('div', { class: 'col-a' }, h('h2', null, 'Calorie Split'), splitChart(d), h('div', { class: 'bars' }, bars)),
       h('div', { class: 'col-b' }, d.entries.length ? groups : message('Tap Add to log your first food.'), status))));
 }
 
