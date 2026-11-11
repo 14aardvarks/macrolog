@@ -34,7 +34,7 @@ Dark mode follows the device setting, and the layout also works on desktop.
 
 The same guide is in Settings under "How to Use Macrolog".
 
-- Tap Add, then pick from Favorites, Yesterday or Recipes, or search, or tap Scan Barcode (the camera starts at once, with a Back button and a Take or Choose a Photo button over the view; if it cannot start, take a photo or type the barcode digits on the scan screen). Set the amount and tap Log.
+- Tap Add, then pick from Favorites, Yesterday or Recipes, or search, or tap Scan Barcode (the camera starts at once, with a Back button and an Upload a Photo button over the view; if it cannot start, upload a photo or type the barcode digits on the scan screen). Set the amount and tap Log.
 - The Meal selector on Add filters the lists by meal. All shows everything.
 - In the picker, the wheel chooses the unit, and the chips set 1/4 to 2 servings. Macros update live.
 - A food opens with the amount and unit from your last entry. Turn this off in Settings with "Start from my last entry" to open on the label's serving instead.

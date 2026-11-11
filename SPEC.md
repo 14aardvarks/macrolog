@@ -241,7 +241,7 @@ Screens: Login, Today, Add, Picker, Claude fallback, Settings. Bottom nav: Today
 - Today: bars for calories, carbs, protein, fat showing `value / target (percent)`, then entries grouped by meal, each removable and tappable to adjust.
 - Add: search box, a Scan button (camera starts ONLY after tapping it; uses BarcodeDetector when available, otherwise show a typed barcode
   field with clear text), and three tabs Favorites, Yesterday, Meals. Quick items show last used amount and unit; tapping opens the Picker prefilled.
-  Scan screen: Back button top left, no description or Stop button, the Take or Choose a Photo button sits over the bottom center of the camera view (below the message when there is no camera), typed digits below. Leaving the screen always stops every camera track.
+  Scan screen: Back button top left, no description or Stop button, the Upload a Photo button sits over the bottom center of the camera view (below the message when there is no camera), typed digits below. Leaving the screen always stops every camera track.
   Copy rules: headings and buttons use Title Case (small words a, an, and, of, to, in, on, or, the stay lowercase); full sentences end with a period, fragments, labels and chips do not.
   Typing a barcode of digits also works. Meals tab opens a checklist with amounts adjustable, one Log button.
 - Picker: NEVER auto-logs. A vertical scroll-snap wheel for the amount using the unit's `step`, a unit dropdown from `units`
@@ -279,7 +279,7 @@ Maximize compatibility. Every feature needs a working fallback, and nothing may 
 - Feature detect and degrade: service worker and manifest are optional enhancements; app works without them.
 - Barcode scanning: use `BarcodeDetector` when present. Where it is missing (iOS Safari, Firefox) lazily load a vendored decoder from app/static/vendor/
   (a small minified third party barcode decoder file with its license text, loaded only when needed, no npm). If the camera is blocked or the page is not
-  HTTPS, fall back to a file input with `accept="image/*" capture="environment"` that decodes the still photo, then to typed digits.
+  HTTPS, fall back to a file input with `accept="image/*"` (no `capture`, so phones offer the photo library as well as the camera) that decodes the still photo, then to typed digits.
 - Input: the picker wheel must work with touch, mouse wheel, and keyboard (arrow keys), plus a typed value. Accept both "," and "." as the decimal separator
   (`inputmode="decimal"`). Respect prefers-reduced-motion. Labels and focus states for screen readers and keyboard users.
 - Photos for Claude: always re-encode through a canvas to JPEG before upload so HEIC and large phone photos work everywhere.

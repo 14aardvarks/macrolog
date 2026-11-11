@@ -89,8 +89,8 @@ export function renderScan(root, ctx, opts = {}) {
   video.muted = true;
   const camBox = h('div', { class: 'cam', hidden: '' }, video);
   const startBtn = h('button', { class: 'btn', type: 'button', hidden: '', onclick: start }, 'Try Camera Again');  // only shown after a failed start
-  const fileIn = h('input', { type: 'file', accept: 'image/*', capture: 'environment', class: 'visually-hidden', onchange: onFile });
-  const fileBtn = h('label', { class: 'btn' }, 'Take or Choose a Photo', fileIn);
+  const fileIn = h('input', { type: 'file', accept: 'image/*', class: 'visually-hidden', onchange: onFile });
+  const fileBtn = h('label', { class: 'btn' }, 'Upload a Photo', fileIn);
   const below = h('div', { class: 'row wrap' }, startBtn, fileBtn);
 
   // The photo button sits over the camera view while the camera runs, and below the message otherwise.
