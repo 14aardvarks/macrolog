@@ -164,10 +164,10 @@ async function todayScreen(root) {
   const groups = groupByMeal(d.entries).map((g) => h('div', null,
     h('h2', { class: 'group' }, g.label, h('span', null, fmtNum(g.kcal, 0) + ' kcal')),
     h('ul', { class: 'list' }, g.entries.map((e) => entryRow(e, root))), saveMealBox(g, status)));
-  root.appendChild(h('section', { class: 'screen' }, h('h1', null, 'Today'),
-    h('h2', null, 'Calorie Split'), splitChart(d), bars,
-    d.entries.length ? groups : message('Tap Add to log your first food.'),
-    status));
+  root.appendChild(h('section', { class: 'screen wide' }, h('h1', null, 'Today'),
+    h('div', { class: 'two-col' },
+      h('div', { class: 'col-a' }, h('h2', null, 'Calorie Split'), splitChart(d), bars),
+      h('div', { class: 'col-b' }, d.entries.length ? groups : message('Tap Add to log your first food.'), status))));
 }
 
 function entryRow(e, root) {
@@ -263,10 +263,10 @@ function addScreen(root, params) {
   }
 
   // Search, scan and the meal filter sit above the lists so a long list never pushes them off screen.
-  root.appendChild(h('section', { class: 'screen add' },
-    h('form', { class: 'row', role: 'search', onsubmit: (e) => { e.preventDefault(); liveSearch.cancel(); search(true); } },
+  root.appendChild(h('section', { class: 'screen wide add' },
+    h('form', { class: 'row add-search', role: 'search', onsubmit: (e) => { e.preventDefault(); liveSearch.cancel(); search(true); } },
       q, h('button', { class: 'btn', type: 'submit' }, 'Search')),
-    h('div', { class: 'row' }, h('button', { class: 'btn primary scan-btn', type: 'button', onclick: () => go('scan') }, cameraIcon(), 'Scan barcode'),
+    h('div', { class: 'row add-scan' }, h('button', { class: 'btn primary scan-btn', type: 'button', onclick: () => go('scan') }, cameraIcon(), 'Scan barcode'),
       h('button', { class: 'btn', type: 'button', onclick: () => go('manual', {}) }, 'Enter manually')),
     barcodeForm(ctx.lookup), mealPick, tabBar, h('div', { class: 'tab-list' }, listBox)));
   paintTabs();
@@ -398,8 +398,8 @@ async function settingsScreen(root) {
       show(status, message('Saved.'));
     } catch (err) { show(status, message(err.message, 'error')); }
   }
-  root.appendChild(h('section', { class: 'screen' }, h('h1', null, 'Settings'),
-    h('form', { onsubmit: save },
+  root.appendChild(h('section', { class: 'screen wide' }, h('h1', null, 'Settings'), h('div', { class: 'two-col' },
+    h('form', { class: 'col-a', onsubmit: save },
       h('label', { class: 'field' }, h('span', null, 'Start screen'), startSel),
       h('div', { class: 'switch-row' },
         h('label', { for: 'use-last' }, useLast, h('span', null, 'Start from my last entry')),
@@ -411,6 +411,7 @@ async function settingsScreen(root) {
         h('p', { class: 'sub', id: 'confirm-ai-help' }, 'On: you see the request count and estimated cost before anything is sent.')),
       h('h2', null, 'Daily goals'), kcal, h('div', { class: 'grid3' }, pcts.map((p) => p[1])), total, status,
       h('button', { class: 'btn primary', type: 'submit' }, 'Save')),
+    h('div', { class: 'col-b' },
     h('h2', null, 'Claude'), ai ? renderClaudeSection(ai, me.use_global_ai) : h('p', { class: 'sub' }, 'Claude status is not available.'),
     h('h2', null, 'Saved'), h('p', { class: 'sub' }, 'Favorites, recipes and your own foods, with meal tags.'),
     h('button', { class: 'btn', type: 'button', onclick: () => go('saved') }, 'Open Saved'),
@@ -418,7 +419,7 @@ async function settingsScreen(root) {
     me.is_admin ? h('div', null, h('h2', null, 'Admin'), h('p', { class: 'sub' }, 'Users, sign-in, Claude and server settings.'),
       h('button', { class: 'btn', type: 'button', onclick: () => go('admin') }, 'Open Admin')) : null,
     renderGuide(),
-    h('button', { class: 'btn', type: 'button', onclick: async () => { try { await api.logout(); } catch (e) { /* ignore */ } showLogin(); } }, 'Sign out')));
+    h('button', { class: 'btn', type: 'button', onclick: async () => { try { await api.logout(); } catch (e) { /* ignore */ } showLogin(); } }, 'Sign out')))));
 }
 
 const SCREENS = {

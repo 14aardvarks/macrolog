@@ -257,3 +257,27 @@ input[type=text], input[type=search], input[type=password], input[type=email], s
 #splash.done { opacity: 0; pointer-events: none; }
 #splash img { width: 96px; height: 96px; border-radius: 22px; }
 @media (prefers-reduced-motion: reduce) { #splash { transition: none; } }
+
+/* desktop: wider column, two-column screens, centered tab bar. Phone layout is untouched. */
+@media (min-width: 900px) {
+  main { max-width: 1100px; padding: 8px 24px 32px; }
+  .screen { max-width: 640px; margin-left: auto; margin-right: auto; }
+  .screen.wide { max-width: none; }
+  .two-col { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 40px; align-items: start; }
+  .two-col > .col-a h2:first-child, .two-col > .col-b h2:first-child { margin-top: 0; }
+  .donut { flex-basis: 180px; width: 180px; }
+
+  .add { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 24px; align-items: center; }
+  .add > * { min-width: 0; }
+  .add > .add-search { grid-column: 1; grid-row: 1; }
+  .add > .add-scan { grid-column: 2; grid-row: 1; }
+  .add > .meal-pick { grid-column: 1; grid-row: 2; }
+  .add > .tabs { grid-column: 2; grid-row: 2; margin: 0 0 8px; }
+  .add > .tab-list { grid-column: 1 / -1; grid-row: 4; max-height: none; min-height: 0; overflow: visible; margin-top: 8px; }
+  .add > div:not(.tab-list):not(.add-scan):not(.tabs) { grid-column: 1 / -1; grid-row: 3; }
+  .tab-list .list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; background: transparent; border: 0; }
+  .tab-list .list > .item { background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
+  .tab-list .list > .item:last-child { border-bottom: 1px solid var(--line); }
+
+  nav { left: 50%; right: auto; width: 440px; transform: translateX(-50%); border: 1px solid var(--line); border-bottom: 0; border-radius: 14px 14px 0 0; }
+}
