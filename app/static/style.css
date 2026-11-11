@@ -96,6 +96,27 @@ input[type=checkbox] { width: 24px; height: 24px; flex: none; accent-color: var(
 .fill { height: 100%; background: var(--accent); border-radius: 6px; }
 .fill.over { background: var(--over); }
 .bar-left { color: var(--muted); font-size: .875rem; }
+.track.thin { height: 8px; }
+.micro-row { margin-bottom: 10px; }
+.micro-row .bar-head { font-weight: 600; font-size: .9375rem; }
+.micro-row .bar-left { font-size: .8125rem; }
+
+/* collapsible heading with a small arrow button */
+.fold-head { margin: 20px 0 8px; }
+.fold-btn { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; margin: -10px 0 -10px -6px; padding: 0 8px 0 6px;
+  border: 0; border-radius: 8px; background: transparent; font: inherit; font-weight: inherit; color: inherit; cursor: pointer; }
+.fold-arrow { width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 7px solid var(--muted);
+  transition: transform .15s ease; }
+.fold-btn[aria-expanded=true] .fold-arrow { transform: rotate(90deg); }
+.micro-cells { grid-template-columns: repeat(4, 1fr); }
+.micro-cells .macro-l { overflow-wrap: anywhere; }
+.field-cap { font-size: .875rem; color: var(--muted); margin: 8px 0 6px; }
+.sub-head { font-size: .95rem; margin: 16px 0 4px; }
+.more { margin: 0 0 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--card); }
+.more > summary { min-height: 44px; display: flex; align-items: center; padding: 0 12px; font-weight: 600; cursor: pointer; }
+.more[open] > summary { border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+.more > .sub, .more > .grid2 { padding: 0 12px; }
+.more > .sub { font-size: .875rem; }
 
 /* tabs */
 .tabs { display: flex; gap: 4px; margin: 8px 0; }
@@ -278,6 +299,7 @@ input[type=text], input[type=search], input[type=password], input[type=email], s
   .screen.wide { max-width: none; }
   .two-col { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 40px; align-items: start; }
   .two-col > .col-a h2:first-child, .two-col > .col-b h2:first-child { margin-top: 0; }
+  .two-col > .col-a .nutrients > h2:first-child, .two-col > .col-a .fold > h2.fold-head { margin-top: 20px; }
   .donut { flex-basis: 180px; width: 180px; }
 
   .screen.wide.add { max-width: 720px; }
@@ -291,10 +313,13 @@ input[type=text], input[type=search], input[type=password], input[type=email], s
   main { max-width: 1480px; }
   .two-col.today { grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); }
   .today > .col-a { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 40px; align-items: start; }
-  .today > .col-a > h2 { grid-column: 1 / -1; }
-  .today > .col-a > .split { grid-column: 1; margin: 0; }
-  .today > .col-a > .bars { grid-column: 2; }
+  .today > .col-a > .split-box { grid-column: 1; }
+  .today > .col-a > .nutrients { grid-column: 2; }
+  .today > .col-a > .nutrients:only-child { grid-column: 1 / -1; }
+  .today .split { margin: 0; }
+  .two-col > .col-a > .nutrients > h2:first-child, .two-col > .col-a > .nutrients > .fold:first-child > h2.fold-head { margin-top: 0; }
   .today .split { flex-direction: column; align-items: stretch; }
   .today .donut-wrap { flex-basis: auto; align-self: center; }
   .today .donut { width: 220px; flex-basis: 220px; margin: 0 auto; }
 }
+.micro-targets { align-items: end; }

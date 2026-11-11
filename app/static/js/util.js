@@ -486,3 +486,57 @@ export function noticeLines(st, what) {
 }
 
 export function photosText(n) { return n + (n === 1 ? ' photo' : ' photos') + ' of a label'; }
+
+// ---------- micronutrients and display settings ----------
+
+// Same order and units as the server. kind: 'goal' (aim to reach) or 'limit' (stay under).
+export const MICROS = [
+  { key: 'fiber', label: 'Fiber', unit: 'g', kind: 'goal' },
+  { key: 'sugars', label: 'Sugars', unit: 'g', kind: 'limit' },
+  { key: 'saturated_fat', label: 'Saturated Fat', unit: 'g', kind: 'limit' },
+  { key: 'sodium', label: 'Sodium', unit: 'mg', kind: 'limit' },
+  { key: 'cholesterol', label: 'Cholesterol', unit: 'mg', kind: 'limit' },
+  { key: 'potassium', label: 'Potassium', unit: 'mg', kind: 'goal' },
+  { key: 'calcium', label: 'Calcium', unit: 'mg', kind: 'goal' },
+  { key: 'iron', label: 'Iron', unit: 'mg', kind: 'goal' },
+  { key: 'vitamin_d', label: 'Vitamin D', unit: 'mcg', kind: 'goal' },
+];
+
+// What the screens show before /api/settings/display answers. Matches the server defaults.
+export const DEFAULT_DISPLAY = { show_macros: true, show_micros: true, show_split: true, show_macro_bar: true,
+  micros_open: false, micros_shown: MICROS.map((m) => m.key) };
+
+// The nutrients to list, in order. Empty when the section is switched off.
+export function shownMicros(display) {
+  const d = display || DEFAULT_DISPLAY;
+  if (d.show_micros === false) return [];
+  const keep = Array.isArray(d.micros_shown) ? d.micros_shown : DEFAULT_DISPLAY.micros_shown;
+  return MICROS.filter((m) => keep.includes(m.key));
+}
+
+// A nutrient amount: mg as whole numbers, g and mcg with one decimal. Unknown (null) is a dash, never 0.
+export function microValue(v, unit) {
+  if (v == null || !Number.isFinite(Number(v))) return '-';
+  return fmtNum(Number(v), unit === 'mg' ? 0 : 1);
+}
+
+// "12.5 / 28 g" on Today. A day with entries but no data for this nutrient reads "- / 28 g".
+export function microText(m, unit) {
+  const total = m.total == null && !m.count ? 0 : m.total;
+  return microValue(total, unit) + ' / ' + fmtNum(Number(m.target), unit === 'mg' ? 0 : 1) + ' ' + unit;
+}
+
+// "2 of 3 foods" when some logged foods have no data for the nutrient, else ''.
+export function microNote(m) {
+  return m.count > 0 && m.known < m.count ? m.known + ' of ' + m.count + (m.count === 1 ? ' food' : ' foods') : '';
+}
+
+// A limit that is passed gets the warning color. Reaching a goal never does.
+export function microOver(m) { return m.kind === 'limit' && m.total != null && Number(m.total) > Number(m.target); }
+
+// Toggle one nutrient in the shown list, keeping the fixed order.
+export function toggleMicro(shown, key) {
+  const set = new Set(shown || []);
+  if (set.has(key)) set.delete(key); else set.add(key);
+  return MICROS.map((m) => m.key).filter((k) => set.has(k));
+}

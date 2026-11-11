@@ -21,6 +21,8 @@ Dark mode follows the device setting, and the layout also works on desktop.
 - Nutrients are stored per label serving. The amount picker offers the units the label allows, with grams, ounces, cups and tablespoons converted where the label makes that possible. Conversions that rely on an estimate are marked as estimated.
 - Custom foods can be created by hand.
 - The Today screen shows calorie and macro bars against your targets, with entries grouped by meal.
+- Micronutrients (fiber, sugars, saturated fat, sodium, cholesterol, potassium, calcium, iron and vitamin D) come from Open Food Facts, USDA, Claude or your own entry, with per user daily targets.
+- A Display section in Settings shows or hides each part of Today and the food bars, per user.
 - Each user has their own daily goal (calories and the carb, protein and fat split) and start screen.
 - Barcode scanning uses the browser's BarcodeDetector when it exists. Otherwise a vendored ZXing decoder (Apache-2.0, in `app/static/vendor`) loads on demand, then a photo fallback, then typed digits on the scan screen.
 - Each food shows a thin bar with its calorie share from carbs, protein and fat (blue, green, red) on Today, in Add lists and search results, and live in the picker.
@@ -45,6 +47,10 @@ The same guide is in Settings under "How to Use Macrolog".
 - Settings, then Saved, lists your favorites, recipes and the foods you created. Edit meal tags, rename or delete recipes, change recipe amounts, and edit or delete your own foods (a food already in a log entry or recipe cannot be deleted, and only its name can change).
 - "Remove From My Lists" unfavorites a food, clears its tags and hides it from Recent and Yesterday. Past entries stay. Searching, logging or favoriting it again brings it back.
 - Add lists show 20 items at a time with a Show More button.
+- Today has a Macro Nutrients section and, below it, a Micro Nutrients section that opens and closes with the small arrow (it remembers your choice). Each nutrient shows eaten and target. Fiber, potassium, calcium, iron and vitamin D are goals to reach; sugars, saturated fat, sodium and cholesterol are limits, and their bar turns orange when you go over. Totals count only the foods that have data, and a note like "2 of 3 foods" says when some foods had none. A dash means unknown, never zero.
+- Set micronutrient targets in Settings under Daily Goals (defaults: fiber 28 g, potassium 4700 mg, calcium 1300 mg, iron 18 mg, vitamin D 20 mcg, sugars 50 g, saturated fat 20 g, sodium 2300 mg, cholesterol 300 mg).
+- Settings, Display turns the Macro Nutrients bars, the Micro Nutrients section, the Calorie Split chart and the macro balance bar on foods on or off, and picks which micronutrients are shown. Changes are saved and applied at once. The picker shows the chosen micronutrients under the macros in the same collapsible section.
+- When entering a food by hand or checking what Claude read, the optional micronutrients are in the collapsed "More Nutrients" section. Leave a box empty when the label does not show it. Barcode lookups fill them from Open Food Facts (sodium is worked out from salt when only salt is given) or USDA.
 - Each user has their own log, goals and settings. Foods are shared.
 - Settings also holds your own Claude key and limit, and Connect SSO when the server offers it. Administrators see an Admin page there for users, sign-in, Claude and USDA keys, and recent activity.
 

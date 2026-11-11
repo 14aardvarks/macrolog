@@ -133,7 +133,8 @@ export const CLAUDE_SPECS = [
   { key: 'ai_price_out_per_mtok', kind: 'price', label: 'Output price per million tokens' },
 ];
 export const FOOD_SPECS = [
-  { key: 'fdc_api_key', kind: 'secret', label: 'USDA API key' },
+  { key: 'fdc_api_key', kind: 'secret', label: 'USDA API key',
+    hint: 'Without your own key, the shared demo key allows only 30 lookups per hour and 50 per day, for everyone on this server together. A free personal key allows 1,000 per hour. Get one at fdc.nal.usda.gov/api-key-signup.html, enter your email, and the key arrives by email within minutes. Foods already saved here never use a lookup again.' },
 ];
 
 // Server info rows. SECRET_KEY is only ever set or not set.

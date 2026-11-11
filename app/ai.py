@@ -63,6 +63,9 @@ CREATE TABLE IF NOT EXISTS user_ai(
   user_id INTEGER PRIMARY KEY REFERENCES users(id), monthly_cap INTEGER NOT NULL DEFAULT 100);
 """
 
+MICRO_FIELDS = {"sugars": "Total sugars in grams", "saturated_fat": "Saturated fat in grams", "sodium": "Sodium in mg",
+                "cholesterol": "Cholesterol in mg", "potassium": "Potassium in mg", "calcium": "Calcium in mg",
+                "iron": "Iron in mg", "vitamin_d": "Vitamin D in mcg"}
 _STR = {"type": ["string", "null"]}
 _NUM = {"type": ["number", "null"]}
 TOOL = {
@@ -86,6 +89,8 @@ TOOL = {
             "fat": {**_NUM, "description": "Total fat in grams per serving"},
             "fiber": {**_NUM, "description": "Dietary fiber in grams per serving"},
             "confidence": {"type": "string", "description": "One short sentence on legibility, and say so if the values are per 100 g"},
+            # Optional plain numbers, not nullable: strict schemas allow at most 16 union typed parameters in total.
+            **{k: {"type": "number", "description": f"{d} per serving if printed, otherwise leave out"} for k, d in MICRO_FIELDS.items()},
         },
         "required": ["name", "brand", "serving_text", "serving_amount", "serving_unit", "serving_g", "serving_ml",
                      "kcal", "carbs", "protein", "fat", "fiber", "confidence"],
@@ -98,7 +103,8 @@ INSTRUCTION = (
     "that is all the label prints, and then say so in the confidence note. "
     "Copy the serving size exactly as printed (for example \"2 tbsp (30 g)\") and prefer the printed serving unit "
     "(cup, tbsp, slice and so on) over grams for serving_unit. "
-    "Never guess: if a value is not visible or not legible, use null. Do not do arithmetic or convert units."
+    "Never guess: if a value is not visible or not legible, use null, and leave the optional fields "
+    "(sugars, saturated fat, sodium, cholesterol, potassium, calcium, iron, vitamin D) out. Do not do arithmetic or convert units."
 )
 
 IMAGE_TYPES = {"image/jpeg": "jpeg", "image/png": "png", "image/webp": "webp"}
@@ -350,7 +356,9 @@ def tool_input(body: dict) -> Optional[dict]:
 # ---------- draft and warnings ----------
 
 NUTRIENTS = ("kcal", "carbs", "protein", "fat", "fiber")
-LIMITS = {"kcal": 2500, "carbs": 250, "protein": 150, "fat": 150, "fiber": 100}
+LIMITS = {"kcal": 2500, "carbs": 250, "protein": 150, "fat": 150, "fiber": 100,
+          "sugars": 250, "saturated_fat": 150, "sodium": 10000, "cholesterol": 3000, "potassium": 10000,
+          "calcium": 10000, "iron": 200, "vitamin_d": 1000}
 
 
 def _num(v):
@@ -389,7 +397,7 @@ def build_draft(data: dict, barcode: Optional[str]) -> tuple[dict, list[str]]:
         warnings.append("Serving size is missing. Check the label and set it before saving.")
     serving = lookup.parse_serving(text, g if g and g > 0 else None, ml if ml and ml > 0 else None)
     draft = {"source": "ai", "barcode": barcode, "name": _text(data.get("name")), "brand": _text(data.get("brand")) or None,
-             **serving, **{k: _num(data.get(k)) for k in NUTRIENTS}}
+             **serving, **{k: _num(data.get(k)) for k in (*NUTRIENTS, *MICRO_FIELDS)}}
     if not draft["name"]:
         warnings.append("Product name was not visible. Type a name before saving.")
     warnings += check_values(draft)
@@ -404,8 +412,8 @@ def check_values(d: dict) -> list[str]:
     missing = [k for k in NUTRIENTS if d[k] is None]
     if missing:
         out.append("Not visible on the label, left blank: " + ", ".join(missing) + ".")
-    for k in NUTRIENTS:
-        v = d[k]
+    for k in (*NUTRIENTS, *MICRO_FIELDS):  # optional micronutrients are checked only when present
+        v = d.get(k)
         if v is not None and v < 0:
             out.append(f"{k} is negative ({v:g}), which cannot be right.")
         elif v is not None and v > LIMITS[k]:

@@ -18,6 +18,17 @@ OFF_FIELDS = "code,product_name,generic_name,brands,serving_size,serving_quantit
 FDC_URL = "https://api.nal.usda.gov/fdc/v1/foods/search"
 USER_AGENT = "macrolog/0.1"
 FDC_NUTRIENTS = {"208": "kcal", "205": "carbs", "203": "protein", "204": "fat", "291": "fiber"}
+# Micronutrients: our key -> (unit we store, OFF nutriment name, FDC nutrient id, FDC nutrient number, FDC labelNutrients name).
+# OFF keeps *_100g and *_serving in grams, so mg and mcg values are converted. Missing data stays None, never 0.
+MICROS = {
+    "fiber": ("g", "fiber", 1079, "291", "fiber"), "sugars": ("g", "sugars", 2000, "269", "sugars"),
+    "saturated_fat": ("g", "saturated-fat", 1258, "606", "saturatedFat"), "sodium": ("mg", "sodium", 1093, "307", "sodium"),
+    "cholesterol": ("mg", "cholesterol", 1253, "601", "cholesterol"), "potassium": ("mg", "potassium", 1092, "306", "potassium"),
+    "calcium": ("mg", "calcium", 1087, "301", "calcium"), "iron": ("mg", "iron", 1089, "303", "iron"),
+    "vitamin_d": ("mcg", "vitamin-d", 1114, "328", None)}
+FDC_IDS = {1008: "kcal", 1005: "carbs", 1003: "protein", 1004: "fat", **{v[2]: k for k, v in MICROS.items()}}
+FDC_NUMBERS = {**FDC_NUTRIENTS, **{v[3]: k for k, v in MICROS.items()}}
+TO_G = {"g": 1.0, "mg": 0.001, "mcg": 1e-6, "ug": 1e-6, "µg": 1e-6, "μg": 1e-6}
 _transport = None  # tests set an httpx.MockTransport here
 
 
@@ -138,7 +149,13 @@ def parse_serving(text, serving_g=None, serving_ml=None):
 def _food(source, source_id, barcode, name, brand, sv, vals):
     return {"source": source, "source_id": source_id, "barcode": barcode, "name": name, "brand": brand,
             **sv, "kcal": vals["kcal"], "carbs": vals.get("carbs") or 0.0, "protein": vals.get("protein") or 0.0,
-            "fat": vals.get("fat") or 0.0, "fiber": vals.get("fiber")}
+            "fat": vals.get("fat") or 0.0, **{k: vals.get(k) for k in MICROS}}
+
+
+def convert(value, unit_from, unit_to):
+    """Mass unit conversion between g, mg and mcg. None for unknown units (IU is not a mass)."""
+    a, b = TO_G.get(str(unit_from or "").lower()), TO_G.get(unit_to)
+    return None if value is None or a is None or b is None else value * a / b
 
 
 def _round(vals):
@@ -155,7 +172,11 @@ def _off_values(n, basis, use_serving=True):
             v100 = _f(n.get(f"{key}_100g"))
             v = v100 * basis / 100 if v100 is not None and basis else None
         return v
-    vals = {"carbs": per("carbohydrates"), "protein": per("proteins"), "fat": per("fat"), "fiber": per("fiber")}
+    vals = {"carbs": per("carbohydrates"), "protein": per("proteins"), "fat": per("fat")}
+    for key, (unit, name, *_) in MICROS.items():  # OFF stores these in grams
+        vals[key] = convert(per(name), "g", unit)
+    if vals["sodium"] is None and per("salt") is not None:  # salt only: sodium = salt / 2.5
+        vals["sodium"] = convert(per("salt") / 2.5, "g", "mg")
     vals["kcal"] = per("energy-kcal")
     if vals["kcal"] is None and per("energy") is not None:  # kJ only
         vals["kcal"] = per("energy") / 4.184
@@ -202,7 +223,10 @@ def fdc_food(item, barcode=None):
     """Build a Food from an FDC search hit (values are per 100 g), or None without energy."""
     per100 = {}
     for fn in item.get("foodNutrients") or []:
-        key, v = FDC_NUTRIENTS.get(str(fn.get("nutrientNumber") or "")), _f(fn.get("value"))
+        key = FDC_NUMBERS.get(str(fn.get("nutrientNumber") or "")) or FDC_IDS.get(_int(fn.get("nutrientId")))
+        v = _f(fn.get("value"))
+        if key in MICROS and fn.get("unitName"):
+            v = convert(v, fn["unitName"], MICROS[key][0])
         if key and v is not None:
             per100.setdefault(key, v)
     if "kcal" not in per100:
@@ -219,10 +243,32 @@ def fdc_food(item, barcode=None):
     else:
         factor, sv = 1.0, parse_serving("100 g")
     vals = _round({k: v * factor for k, v in per100.items()})
+    if size and metric:  # labelNutrients are per label serving as printed; they win for the micronutrients
+        vals.update(_fdc_label_micros(item.get("labelNutrients")))
     desc = (item.get("description") or "Unknown").strip()
     name = desc.title() if desc.isupper() else desc
     brand = item.get("brandName") or item.get("brandOwner") or None
     return _food("fdc", str(item.get("fdcId")), barcode or item.get("gtinUpc") or None, name, brand, sv, vals)
+
+
+def _int(v):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _fdc_label_micros(label):
+    """Micronutrients from FDC labelNutrients ({"sodium": {"value": 140}}), in label units (g, or mg for minerals)."""
+    out = {}
+    if not isinstance(label, dict):
+        return out
+    for key, spec in MICROS.items():
+        name = spec[4]
+        v = _f(label[name].get("value")) if name and isinstance(label.get(name), dict) else None
+        if v is not None:
+            out[key] = round(v, 2)
+    return out
 
 
 def fdc_api_key():

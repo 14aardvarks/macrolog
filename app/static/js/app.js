@@ -3,7 +3,9 @@ import { h, clear, select, field, message, show, cameraIcon } from './dom.js';
 import {
   MEALS, MEAL_LABELS, parseDecimal, parseAmount, amountText, servingText, setAmountFormat, unitLabel, fmtNum, fmtAmount, groupByMeal, checkedItems, canSaveRecipe, rowAmountText, applyRowPick, draftFits, localDate, progressText, remainingText,
   sentence, barWidth, debounce, digitsOnly, guessMeal, pctTotal, latestGuard, MEAL_FILTERS, MEAL_FILTER_LABELS, filterByMeal, filterSaved, pageOf, PAGE_SIZE, emptyText,
+  DEFAULT_DISPLAY,
 } from './util.js';
+import { microSection, displaySection, microTargets } from './micros.js';
 import { renderPicker } from './picker.js';
 import { renderScan } from './scan.js';
 import { renderAi } from './ai.js';
@@ -17,13 +19,21 @@ import { renderClaudeSection, renderSignIn } from './claudekey.js';
 
 const main = document.getElementById('main');
 const nav = document.getElementById('nav');
-const state = { user: null, settings: { start_screen: 'today', default_meal: null, use_last: true, confirm_ai: true, amount_format: 'fraction' }, cleanup: null, depth: 0, tab: 'favorites', addMeal: 'all', draft: null };  // addMeal lives for the session only
+const state = { user: null, settings: { start_screen: 'today', default_meal: null, use_last: true, confirm_ai: true, amount_format: 'fraction' }, display: DEFAULT_DISPLAY, cleanup: null, depth: 0, tab: 'favorites', addMeal: 'all', draft: null };  // addMeal lives for the session only
 const NAV_OF = { today: 'today', settings: 'settings', admin: 'settings', saved: 'settings', editfood: 'settings' };  // every other screen belongs to Add
 
 const ctx = {
   go,
   back: () => (state.depth > 0 ? history.back() : go('today', {}, true)),
   get settings() { return state.settings; },
+  get display() { return state.display; },
+  // Saves display switches (micros_open included) and keeps the new values for every screen.
+  async saveDisplay(patch) {
+    const before = state.display;
+    state.display = { ...before, ...patch };
+    try { state.display = await api.saveDisplay(patch); } catch (e) { state.display = before; throw e; }
+    return state.display;
+  },
   lookup: (code) => go('lookup', { code }),
   // Recipe row adjust: the picker hands back the chosen amount and unit, then the recipe screen is shown again with its draft.
   finishAdjust(index, amount, unit) {
@@ -103,6 +113,7 @@ function startScreen() {
 
 async function afterLogin() {
   try { state.settings = await api.settings(); } catch (e) { /* keep defaults */ }
+  try { state.display = await api.display(); } catch (e) { /* keep defaults */ }
   setAmountFormat(state.settings.amount_format);
   if (location.hash === '#settings') {  // the SSO link flow returns here
     history.replaceState(history.state, '', location.pathname + location.search);
@@ -122,7 +133,7 @@ const unitText = amountText;
 
 function foodRow(title, sub, onclick, extra, macros) {
   return h('li', { class: 'item' },
-    h('button', { class: 'item-main', type: 'button', onclick }, h('span', { class: 'item-title' }, title), h('span', { class: 'item-sub' }, sub), macros ? macroBar(macros) : null),
+    h('button', { class: 'item-main', type: 'button', onclick }, h('span', { class: 'item-title' }, title), h('span', { class: 'item-sub' }, sub), macros && state.display.show_macro_bar !== false ? macroBar(macros) : null),
     extra || null);
 }
 
@@ -169,9 +180,13 @@ async function todayScreen(root) {
   const groups = groupByMeal(d.entries).map((g) => h('div', null,
     h('h2', { class: 'group' }, g.label, h('span', null, fmtNum(g.kcal, 0) + ' kcal')),
     h('ul', { class: 'list' }, g.entries.map((e) => entryRow(e, root))), saveMealBox(g, status)));
+  const disp = state.display;
+  const micros = microSection(d, disp, (open) => { ctx.saveDisplay({ micros_open: open }).catch(() => {}); });
+  const nutrients = disp.show_macros !== false || micros ? h('div', { class: 'nutrients' },
+    disp.show_macros !== false ? [h('h2', null, 'Macro Nutrients'), h('div', { class: 'bars' }, bars)] : null, micros) : null;
   root.appendChild(h('section', { class: 'screen wide' }, h('h1', null, 'Today'),
     h('div', { class: 'two-col today' },
-      h('div', { class: 'col-a' }, h('h2', null, 'Calorie Split'), splitChart(d), h('div', { class: 'bars' }, bars)),
+      h('div', { class: 'col-a' }, disp.show_split !== false ? h('div', { class: 'split-box' }, h('h2', null, 'Calorie Split'), splitChart(d)) : null, nutrients),
       h('div', { class: 'col-b' }, d.entries.length ? groups : message('Tap Add to log your first food.'), status))));
 }
 
@@ -182,7 +197,7 @@ function entryRow(e, root) {
   const del = h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Remove ' + e.name, onclick: async () => {
     try { await api.deleteEntry(e.id); await go('today', {}, true); } catch (err) { show(root.querySelector('[aria-live]'), message(err.message, 'error')); }
   } }, '×');
-  if (e.food_id == null) return h('li', { class: 'item' }, h('div', { class: 'item-main' }, h('span', { class: 'item-title' }, title), h('span', { class: 'item-sub' }, sub), macroBar(e)), del);
+  if (e.food_id == null) return h('li', { class: 'item' }, h('div', { class: 'item-main' }, h('span', { class: 'item-title' }, title), h('span', { class: 'item-sub' }, sub), state.display.show_macro_bar !== false ? macroBar(e) : null), del);
   return foodRow(title, sub, open, del, e);
 }
 
@@ -388,8 +403,10 @@ async function mealScreen(root, params) {
 // ---------- settings ----------
 
 async function settingsScreen(root) {
-  const [s, g, ai, me, cfg] = await Promise.all([api.settings(), api.goals(), api.aiStatus().catch(() => null), api.me(),
-    api.authConfig().catch(() => null)]);
+  const [s, g, ai, me, cfg, mg, disp] = await Promise.all([api.settings(), api.goals(), api.aiStatus().catch(() => null), api.me(),
+    api.authConfig().catch(() => null), api.microGoals(), api.display()]);
+  state.display = disp;
+  const micro = microTargets(mg.micros);
   const startSel = select([['today', 'Today'], ['scan', 'Scan'], ['search', 'Search'], ['ai', 'Ask Claude']].map((x) => ({ value: x[0], label: x[1] })),
     s.start_screen, { 'aria-label': 'Start screen' });
   const mealSel = select([{ value: 'none', label: 'Guess from the time' }, ...MEALS.map((m) => ({ value: m, label: MEAL_LABELS[m] }))],
@@ -403,6 +420,7 @@ async function settingsScreen(root) {
   const pcts = [['carb_pct', 'Carbs %'], ['protein_pct', 'Protein %'], ['fat_pct', 'Fat %']].map(([k, label]) => [k, field(label, { inputmode: 'decimal', value: fmtAmount(g[k]) })]);
   const total = h('p', { class: 'sub' });
   const status = h('div', { 'aria-live': 'polite' });
+  const dispStatus = h('div', { 'aria-live': 'polite' });
   const vals = () => pcts.map((p) => parseDecimal(p[1].input.value) || 0);
   const paintTotal = () => { total.textContent = 'Split totals ' + fmtNum(pctTotal(...vals()), 2) + '%. It must be 100.'; };
   pcts.forEach((p) => p[1].input.addEventListener('input', paintTotal));
@@ -414,10 +432,13 @@ async function settingsScreen(root) {
     const v = vals();
     if (!k || k <= 0) { show(status, message('Enter calories above zero.', 'error')); return; }
     if (Math.abs(pctTotal(...v) - 100) > 0.01) { show(status, message('Carbs, protein and fat must total 100%.', 'error')); return; }
+    const mt = micro.read();
+    if (mt.error) { show(status, message(mt.error, 'error')); return; }
     try {
       state.settings = await api.saveSettings({ start_screen: startSel.value, default_meal: mealSel.value === 'none' ? null : mealSel.value, use_last: useLast.checked, confirm_ai: confirmAi.checked, amount_format: fmtSel.value });
       setAmountFormat(state.settings.amount_format);
       await api.saveGoals({ kcal: k, carb_pct: v[0], protein_pct: v[1], fat_pct: v[2] });
+      await api.saveMicroGoals(mt.targets);
       show(status, message('Saved.'));
     } catch (err) { show(status, message(err.message, 'error')); }
   }
@@ -432,9 +453,12 @@ async function settingsScreen(root) {
       h('div', { class: 'switch-row' },
         h('label', { for: 'confirm-ai' }, confirmAi, h('span', null, 'Confirm before using Claude')),
         h('p', { class: 'sub', id: 'confirm-ai-help' }, 'On: you see the request count and estimated cost before anything is sent.')),
-      h('h2', null, 'Daily Goals'), kcal, h('div', { class: 'grid3' }, pcts.map((p) => p[1])), total, status,
+      h('h2', null, 'Daily Goals'), kcal, h('div', { class: 'grid3' }, pcts.map((p) => p[1])), total, micro.node, status,
       h('button', { class: 'btn primary', type: 'submit' }, 'Save')),
     h('div', { class: 'col-b' },
+    displaySection(disp, async (patch) => {
+      try { const d = await ctx.saveDisplay(patch); clear(dispStatus); return d; } catch (err) { show(dispStatus, message(err.message, 'error')); throw err; }
+    }), dispStatus,
     h('h2', null, 'Claude'), ai ? renderClaudeSection(ai, me.use_global_ai) : h('p', { class: 'sub' }, 'Claude status is not available.'),
     h('h2', null, 'Saved'), h('p', { class: 'sub' }, 'Favorites, recipes and your own foods, with meal tags.'),
     h('button', { class: 'btn', type: 'button', onclick: () => go('saved') }, 'Open Saved'),

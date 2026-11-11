@@ -23,10 +23,19 @@ MEALS = ("breakfast", "lunch", "dinner", "snack")
 SCREENS = ("today", "scan", "search", "ai")
 SOURCES = ("off", "fdc", "custom", "ai")
 MACROS = ("kcal", "carbs", "protein", "fat")
+# Micronutrients per label serving: (label, unit, default daily target, kind). A goal is a minimum to reach, a limit a
+# maximum to stay under. Null means unknown, never zero. fiber was there from the start, the rest were added later.
+MICRO_INFO = {
+    "fiber": ("Fiber", "g", 28, "goal"), "sugars": ("Sugars", "g", 50, "limit"),
+    "saturated_fat": ("Saturated Fat", "g", 20, "limit"), "sodium": ("Sodium", "mg", 2300, "limit"),
+    "cholesterol": ("Cholesterol", "mg", 300, "limit"), "potassium": ("Potassium", "mg", 4700, "goal"),
+    "calcium": ("Calcium", "mg", 1300, "goal"), "iron": ("Iron", "mg", 18, "goal"), "vitamin_d": ("Vitamin D", "mcg", 20, "goal")}
+MICROS = tuple(MICRO_INFO)
+NEW_MICROS = MICROS[1:]
 FOOD_COLS = ("id", "source", "source_id", "barcode", "name", "brand", "serving_amount", "serving_unit",
-             "serving_g", "serving_ml", "label_text", "kcal", "carbs", "protein", "fat", "fiber")
+             "serving_g", "serving_ml", "label_text", "kcal", "carbs", "protein", "fat", *MICROS)
 ENTRY_COLS = ("id", "day", "meal", "food_id", "name", "brand", "amount", "unit", "servings",
-              "kcal", "carbs", "protein", "fat", "fiber")
+              "kcal", "carbs", "protein", "fat", *MICROS)
 DEFAULT_GOALS = {"kcal": 3000, "carb_pct": 50, "protein_pct": 30, "fat_pct": 20}
 GOAL_KEYS = {"carbs": ("carb_pct", 4), "protein": ("protein_pct", 4), "fat": ("fat_pct", 9)}  # pct key, kcal per g
 
@@ -73,7 +82,12 @@ CREATE TABLE IF NOT EXISTS settings(
   user_id INTEGER PRIMARY KEY REFERENCES users(id), start_screen TEXT NOT NULL DEFAULT 'today',
   default_meal TEXT, use_last INTEGER NOT NULL DEFAULT 1,
   confirm_ai INTEGER NOT NULL DEFAULT 1, amount_format TEXT NOT NULL DEFAULT 'fraction');
+CREATE TABLE IF NOT EXISTS micro_targets(
+  user_id INTEGER NOT NULL REFERENCES users(id), nutrient TEXT NOT NULL, target REAL NOT NULL, PRIMARY KEY(user_id, nutrient));
 """
+# Display switches in the settings table. Every default keeps the screens as they were before the switches existed;
+# the new Micro Nutrients section starts collapsed. micros_hidden is a comma list of hidden nutrients.
+DISPLAY_FLAGS = {"show_macros": 1, "show_micros": 1, "show_split": 1, "show_macro_bar": 1, "micros_open": 0}
 
 
 def init(c: sqlite3.Connection) -> None:
@@ -89,6 +103,16 @@ def init(c: sqlite3.Connection) -> None:
         c.execute("ALTER TABLE settings ADD COLUMN confirm_ai INTEGER NOT NULL DEFAULT 1")
     if "amount_format" not in cols:  # databases made before fractions or decimals
         c.execute("ALTER TABLE settings ADD COLUMN amount_format TEXT NOT NULL DEFAULT 'fraction'")
+    for key, default in DISPLAY_FLAGS.items():  # databases made before the Display settings
+        if key not in cols:
+            c.execute(f"ALTER TABLE settings ADD COLUMN {key} INTEGER NOT NULL DEFAULT {default}")
+    if "micros_hidden" not in cols:
+        c.execute("ALTER TABLE settings ADD COLUMN micros_hidden TEXT NOT NULL DEFAULT ''")
+    for table in ("foods", "entries"):  # databases made before micronutrients: old rows stay null (unknown)
+        have = {r[1] for r in c.execute(f"PRAGMA table_info({table})")}
+        for key in NEW_MICROS:
+            if key not in have:
+                c.execute(f"ALTER TABLE {table} ADD COLUMN {key} REAL")
 
 
 # ---------- validation helpers ----------
@@ -183,8 +207,9 @@ def normalize_food(raw: dict, sources: tuple = SOURCES) -> dict:
             "serving_amount": amount, "serving_unit": unit,
             "serving_g": number(raw.get("serving_g"), "serving_g", optional=True) or None,
             "serving_ml": number(raw.get("serving_ml"), "serving_ml", optional=True) or None,
-            "label_text": " ".join(str(raw.get("label_text") or "").split()) or f"{amount:g} {unit}",
-            "fiber": number(raw.get("fiber"), "fiber", optional=True)}
+            "label_text": " ".join(str(raw.get("label_text") or "").split()) or f"{amount:g} {unit}"}
+    for key in MICROS:
+        food[key] = number(raw.get(key), key, optional=True)
     for key in MACROS:
         food[key] = number(raw.get(key), key)
     code = re.sub(r"\D", "", str(raw.get("barcode") or ""))
@@ -225,8 +250,11 @@ def macros(food: dict, amount: float, unit: str) -> dict:
     """units.scale with stored rounding: servings 4 places, nutrients 2 places."""
     s = units.scale(food, amount, unit)
     out = {"servings": round(s["servings"], 4), "estimated": bool(s.get("estimated"))}
-    for key in (*MACROS, "fiber"):
-        out[key] = None if s[key] is None else r2(s[key])
+    for key in MACROS:
+        out[key] = r2(s[key])
+    for key in MICROS:  # scaled like the macros; unknown stays None
+        v = food.get(key)
+        out[key] = None if v is None else r2(float(v) * s["servings"])
     return out
 
 
@@ -344,11 +372,11 @@ def own_entry(c, uid: int, entry_id: int):
 def log_entry(c, uid: int, food: dict, amount: float, unit: str, day: str, meal) -> dict:
     """Insert a snapshot entry and update last_used. Inputs must already be validated."""
     m = macros(food, amount, unit)
+    nutrients = (*MACROS, *MICROS)
     cur = c.execute(
-        "INSERT INTO entries(user_id,day,meal,food_id,name,brand,amount,unit,servings,kcal,carbs,protein,fat,fiber) "
-        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (uid, day, meal, food["id"], food["name"], food["brand"], amount, unit, m["servings"],
-         m["kcal"], m["carbs"], m["protein"], m["fat"], m["fiber"]))
+        f"INSERT INTO entries(user_id,day,meal,food_id,name,brand,amount,unit,servings,{','.join(nutrients)}) "
+        f"VALUES({','.join('?' * (9 + len(nutrients)))})",
+        (uid, day, meal, food["id"], food["name"], food["brand"], amount, unit, m["servings"], *[m[k] for k in nutrients]))
     c.execute("INSERT INTO last_used(user_id,food_id,amount,unit,used_at) VALUES(?,?,?,?,?) "
               "ON CONFLICT(user_id,food_id) DO UPDATE SET amount=excluded.amount, unit=excluded.unit, "
               "used_at=excluded.used_at", (uid, food["id"], amount, unit, now()))
@@ -474,12 +502,102 @@ def put_settings(user: CurrentUser, body: dict = Body(...)):
         return s
 
 
+# ---------- display settings and micronutrient targets ----------
+
+def read_display(c, uid: int) -> dict:
+    row = c.execute(f"SELECT {', '.join(DISPLAY_FLAGS)}, micros_hidden FROM settings WHERE user_id=?", (uid,)).fetchone()
+    out = {k: bool(row[k]) if row else bool(v) for k, v in DISPLAY_FLAGS.items()}
+    hidden = set((row["micros_hidden"] if row else "").split(","))
+    out["micros_shown"] = [k for k in MICROS if k not in hidden]
+    return out
+
+
+@router.get("/settings/display")
+def get_display(user: CurrentUser):
+    with db.conn() as c:
+        return read_display(c, user["id"])
+
+
+@router.put("/settings/display")
+def put_display(user: CurrentUser, body: dict = Body(...)):
+    """Per user show/hide switches. Send any subset; micros_shown is the list of nutrients to show."""
+    if not (set(DISPLAY_FLAGS) | {"micros_shown"}) & body.keys():
+        raise bad("Nothing to update: send " + ", ".join(DISPLAY_FLAGS) + " or micros_shown")
+    with db.conn() as c:
+        d = read_display(c, user["id"])
+        for key in DISPLAY_FLAGS:
+            if key in body:
+                if not isinstance(body[key], bool):
+                    raise bad(f"{key} must be true or false")
+                d[key] = body[key]
+        if "micros_shown" in body:
+            shown = body["micros_shown"]
+            if not isinstance(shown, list) or any(k not in MICROS for k in shown):
+                raise bad("micros_shown must be a list of " + ", ".join(MICROS))
+            d["micros_shown"] = [k for k in MICROS if k in shown]
+        cols = [*DISPLAY_FLAGS, "micros_hidden"]
+        vals = [int(d[k]) for k in DISPLAY_FLAGS] + [",".join(k for k in MICROS if k not in d["micros_shown"])]
+        c.execute("INSERT OR IGNORE INTO settings(user_id) VALUES(?)", (user["id"],))
+        c.execute(f"UPDATE settings SET {', '.join(k + '=?' for k in cols)} WHERE user_id=?", [*vals, user["id"]])
+        return read_display(c, user["id"])
+
+
+def micro_targets(c, uid: int) -> dict:
+    saved = {r["nutrient"]: r["target"] for r in c.execute("SELECT nutrient, target FROM micro_targets WHERE user_id=?", (uid,))}
+    return {k: saved.get(k, MICRO_INFO[k][2]) for k in MICROS}
+
+
+def micro_list(c, uid: int) -> dict:
+    t = micro_targets(c, uid)
+    return {"micros": [tidy({"key": k, "label": lbl, "unit": unit, "kind": kind, "default": d, "target": t[k]})
+                       for k, (lbl, unit, d, kind) in MICRO_INFO.items()]}
+
+
+@router.get("/goals/micros")
+def get_micro_goals(user: CurrentUser):
+    with db.conn() as c:
+        return micro_list(c, user["id"])
+
+
+@router.put("/goals/micros")
+def put_micro_goals(user: CurrentUser, body: dict = Body(...)):
+    """{"targets": {nutrient: daily amount}} for any subset of the nutrients. Kinds are fixed."""
+    targets = body.get("targets")
+    if not isinstance(targets, dict) or not targets:
+        raise bad("targets must be an object of nutrient: daily amount")
+    clean = {}
+    for k, v in targets.items():
+        if k not in MICRO_INFO:
+            raise bad(f"Unknown nutrient {k}. Use one of {', '.join(MICROS)}")
+        clean[k] = number(v, k, positive=True)
+        if clean[k] > 100000:
+            raise bad(f"{k} must be at most 100000")
+    with db.conn() as c:
+        c.executemany("INSERT INTO micro_targets(user_id, nutrient, target) VALUES(?,?,?) "
+                      "ON CONFLICT(user_id, nutrient) DO UPDATE SET target=excluded.target",
+                      [(user["id"], k, v) for k, v in clean.items()])
+        return micro_list(c, user["id"])
+
+
+def day_micros(rows, targets: dict) -> dict:
+    """Per nutrient: total of the entries that have data, how many entries had data out of all, target and kind."""
+    out = {}
+    for k in MICROS:
+        known = [r[k] for r in rows if r[k] is not None]
+        total, target = sum(known), targets[k]
+        out[k] = {"total": r1(total) if known else None, "known": len(known), "count": len(rows),
+                  "target": int(target) if float(target).is_integer() else target, "kind": MICRO_INFO[k][3], "unit": MICRO_INFO[k][1],
+                  "percent": math.floor(100 * total / target + 0.5) if known and target else 0}
+    return out
+
+
 @router.get("/day")
 def get_day(user: CurrentUser, day: str | None = None):
     day = day_str(day)
     with db.conn() as c:
         rows = c.execute("SELECT * FROM entries WHERE user_id=? AND day=? ORDER BY id", (user["id"], day)).fetchall()
         goals = read_goals(c, user["id"])
+        mtargets = micro_targets(c, user["id"])
     sums = {k: sum(r[k] or 0 for r in rows) for k in (*MACROS, "fiber")}
     targets = {"kcal": float(goals["kcal"])}
     for key, (pct, kcal_g) in GOAL_KEYS.items():
@@ -488,7 +606,8 @@ def get_day(user: CurrentUser, day: str | None = None):
             "totals": {k: r1(v) for k, v in sums.items()},
             "targets": {k: r1(v) for k, v in targets.items()},
             "percent": {k: math.floor(100 * sums[k] / targets[k] + 0.5) if targets[k] else 0 for k in MACROS},
-            "remaining": {k: r1(targets[k] - sums[k]) for k in MACROS}}
+            "remaining": {k: r1(targets[k] - sums[k]) for k in MACROS},
+            "micros": day_micros(rows, mtargets)}
 
 
 # ---------- quick lists and favorites ----------
@@ -779,7 +898,7 @@ def log_meal(meal_id: int, user: CurrentUser, body: dict | None = Body(None)):
 
 # ---------- saved screen: favorites, recipes and my foods ----------
 
-NUTRITION = ("serving_amount", "serving_unit", "serving_g", "serving_ml", "kcal", "carbs", "protein", "fat", "fiber")
+NUTRITION = ("serving_amount", "serving_unit", "serving_g", "serving_ml", "kcal", "carbs", "protein", "fat", *MICROS)
 FOOD_EDITABLE = ("name", "brand", "barcode", "label_text", *NUTRITION)
 IN_USE = "(EXISTS(SELECT 1 FROM entries WHERE food_id=f.id) OR EXISTS(SELECT 1 FROM meal_items WHERE food_id=f.id))"
 

@@ -58,8 +58,13 @@ Nutrients are PER LABEL SERVING.
   serving_g: float|null,          # grams per label serving if known
   serving_ml: float|null,         # millilitres per label serving if known
   label_text: str,                # as printed, e.g. "2 tbsp (30 g)"
-  kcal, carbs, protein, fat, fiber: float (fiber may be null) }
+  kcal, carbs, protein, fat: float,
+  fiber, sugars, saturated_fat: float|null (g), sodium, cholesterol, potassium, calcium, iron: float|null (mg),
+  vitamin_d: float|null (mcg) }      # micronutrients: null means unknown, never zero
 ```
+Micronutrients are per label serving like the macros, so unit scaling and estimated flags work the same; core scales them by
+`servings` from units.scale (units.scale itself still returns only the macros and fiber). Entries snapshot all of them; entries made
+before they existed stay null. Columns are added in place by `core.init` (PRAGMA table_info, ALTER TABLE ADD COLUMN, safe to run twice).
 Canonical units: mass `g kg oz lb`; volume `ml l floz cup tbsp tsp`; anything else is a count word (lowercase singular).
 
 ## units.py (pure functions, no I/O)
@@ -89,7 +94,11 @@ async search(query, limit=8) -> list[Food]                                   # U
 ```
 Setting `fdc_api_key` via `config.get` (env `FDC_API_KEY`, default DEMO_KEY, empty also means DEMO_KEY), User-Agent "macrolog/0.1". Network errors never raise; return note text such as
 "Open Food Facts unreachable". Open Food Facts: `https://world.openfoodfacts.org/api/v2/product/{code}.json`. USDA:
-`https://api.nal.usda.gov/fdc/v1/foods/search`. Use the product's own printed serving text (OFF `serving_size`, FDC
+`https://api.nal.usda.gov/fdc/v1/foods/search`. Micronutrients: OFF nutriments `fiber`, `sugars`, `saturated-fat`, `sodium` (else `salt` / 2.5), `cholesterol`, `potassium`, `calcium`,
+`iron`, `vitamin-d` (`*_serving`, else `*_100g` scaled; OFF stores grams, converted to mg or mcg). FDC foodNutrients by nutrientId
+(fiber 1079, sugars 2000, saturated fat 1258, sodium 1093, cholesterol 1253, potassium 1092, calcium 1087, iron 1089, vitamin D 1114 mcg)
+or nutrientNumber, converted by unitName, scaled from 100 g; FDC `labelNutrients` (per label serving) win when present. Missing stays null.
+Use the product's own printed serving text (OFF `serving_size`, FDC
 `householdServingFullText` + `servingSize`/`servingSizeUnit`) for label_text and unit, not just 100 g.
 
 ## auth.py
@@ -169,7 +178,16 @@ POST /api/meals/{id}/log {"day"?,"meal"?,"items"?:[{"food_id","amount","unit"}]}
 GET/PUT /api/goals   {"kcal","carb_pct","protein_pct","fat_pct"}  pcts total 100. Default 3000 and 50/30/20 (carbs/protein/fat).
         targets: carbs g = kcal*pct/4, protein same, fat g = kcal*pct/9. Goals are per user.
 GET/PUT /api/settings {"start_screen": "today"|"scan"|"search"|"ai", "default_meal": ...}   # per user, validated
+GET/PUT /api/settings/display {"show_macros","show_micros","show_split","show_macro_bar","micros_open": bool, "micros_shown": [nutrient...]}
+        # per user, stored in the settings table (micros_hidden comma list). PUT takes any subset, booleans only, 400 otherwise.
+        # Defaults: everything shown, micros_open false (the new section starts collapsed), so existing users see no change.
+GET/PUT /api/goals/micros  GET -> {"micros": [{"key","label","unit","kind": "goal"|"limit","default","target"}]}
+        PUT {"targets": {nutrient: number > 0 and <= 100000}} (any subset). Table micro_targets(user_id, nutrient, target).
+        Defaults and kinds (fixed): fiber 28 g, potassium 4700 mg, calcium 1300 mg, iron 18 mg, vitamin D 20 mcg are goals;
+        sugars 50 g, saturated fat 20 g, sodium 2300 mg, cholesterol 300 mg are limits.
 ```
+/api/day also returns `"micros": {nutrient: {"total" (sum of entries with data, null when none), "known" (entries with data),
+"count" (all entries), "target", "kind", "unit", "percent"}}`. /api/preview and entries carry every micronutrient (null when unknown).
 `can_ask_ai` is true when `ai.enabled()` (import lazily: `from . import ai`).
 
 ## ai.py (prefix `/api/ai`, requires current_user)
@@ -189,7 +207,8 @@ POST /api/ai/label  multipart: images (1 to 3 files, jpeg/png/webp, each <= 5 MB
 ```
 Calls `POST https://api.anthropic.com/v1/messages` via httpx with headers `x-api-key`, `anthropic-version: 2023-06-01`, model from
 setting `ai_model` (env `AI_MODEL`, default `claude-haiku-5-5`), forced tool use with an input_schema returning the Food fields exactly as printed (serving
-as printed, per-serving values). Request caps per calendar month counted in table ai_usage (user_id, at, input_tokens, output_tokens,
+as printed, per-serving values). The micronutrients other than fiber are optional plain numbers (left out when not printed), because
+strict tool schemas allow at most 16 union typed and 24 optional parameters. They are range checked only when present. Request caps per calendar month counted in table ai_usage (user_id, at, input_tokens, output_tokens,
 key_source 'global'|'user'): global-key requests against setting `ai_monthly_cap` (env `AI_MONTHLY_REQUEST_CAP`, default 100) for the
 household, personal-key requests against user_ai.monthly_cap (default 100) counting only that user's personal usage. Each reservation
 is one BEGIN IMMEDIATE transaction. Return 429 with a clear message when reached. Warnings: kcal differs from 4c+4p+9f by
@@ -238,7 +257,14 @@ and an active SSO-linked admin. Every write appends to `admin_log` (no secret va
 Mobile first, one-hand use, also fine on desktop. Plain ES modules, under about 1000 lines of JS total, no libraries.
 Screens: Login, Today, Add, Picker, Claude fallback, Settings. Bottom nav: Today, Add, Settings.
 - Start screen is a per-user setting (`today`, `scan`, `search`, `ai`) fetched from /api/settings after login. Today = running macros.
-- Today: bars for calories, carbs, protein, fat showing `value / target (percent)`, then entries grouped by meal, each removable and tappable to adjust.
+- Today: Calorie Split chart, then the Macro Nutrients heading with bars for calories, carbs, protein, fat showing `value / target (percent)`,
+  then a Micro Nutrients section (heading with a small arrow button, aria-expanded, open state saved as micros_open) with one thin bar row per
+  shown nutrient: `value / target unit`, Goal or Limit, a "N of M foods" note when some entries lack data, limit bars use --over when exceeded.
+  Then entries grouped by meal, each removable and tappable to adjust. On very wide screens the micro section sits under the bars in the middle column.
+  Each part follows the Display settings.
+- Settings has a Display section (switches saved at once, chips for which micronutrients show) and micronutrient targets under Daily Goals.
+- The food form has a collapsed "More Nutrients" section (details element, open when a draft already has values) for the optional micronutrients.
+- The picker shows the shown micronutrients (fiber stays with the macros) under the macros in the same collapsible section; unknown is "-".
 - Add: search box, a Scan button (camera starts ONLY after tapping it; uses BarcodeDetector when available, otherwise show a typed barcode
   field with clear text), and three tabs Favorites, Yesterday, Meals. Quick items show last used amount and unit; tapping opens the Picker prefilled.
   Scan screen: Back button top left, no description or Stop button, the Upload a Photo button sits over the bottom center of the camera view (below the message when there is no camera), typed digits below. Leaving the screen always stops every camera track.
@@ -261,7 +287,7 @@ Screens: Login, Today, Add, Picker, Claude fallback, Settings. Bottom nav: Today
   local login toggle), Claude and USDA settings, Log.
 - Macro balance bar (util.js `macroBarParts`, chart.js `macroBar`): thin stacked bar of calorie share from carbs, protein and fat (4/4/9 kcal per g)
   using --c-carbs, --c-protein, --c-fat; `role="img"` with aria-label "Carbs 50%, Protein 30%, Fat 20%"; percents sum to 100; no bar when all macros are zero.
-  Shown on Today entries, Add list rows and search results, and in the picker (live). The picker also shows the numbers, so color is never the only cue.
+  Shown on Today entries, Add list rows and search results, and in the picker (live), unless Display turns it off. The picker also shows the numbers, so color is never the only cue.
 - Install and launch: manifest has 192, 512 and maskable 512 PNG icons plus the SVG, background_color and theme_color match the light background; index.html has
   apple-touch-icon (180), apple-mobile-web-app-capable, status bar style and light/dark theme-color. A fixed `#splash` overlay (icon on --bg) fades out when the first
   screen has rendered, with an inline 6 s safety timeout. No iOS apple-touch-startup-image sizes.

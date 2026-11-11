@@ -1,6 +1,6 @@
 import { api } from './api.js';
 import { h, field, message, show, select } from './dom.js';
-import { sentence, parseDecimal, fmtAmount, MEALS, MEAL_LABELS, guessMeal } from './util.js';
+import { sentence, parseDecimal, fmtAmount, MEALS, MEAL_LABELS, guessMeal, MICROS } from './util.js';
 
 const NUM = [
   ['serving_amount', 'Serving amount', true, 'e.g. 2'],
@@ -11,7 +11,10 @@ const NUM = [
   ['fiber', 'Fiber g (optional)', false, ''],
   ['serving_g', 'Serving weight in g (optional)', false, ''],
   ['serving_ml', 'Serving volume in ml (optional)', false, ''],
+  // Optional micronutrients in the collapsed More Nutrients section. Empty means unknown, never 0.
+  ...MICROS.filter((m) => m.key !== 'fiber').map((m) => [m.key, m.label + ' ' + m.unit, false, '']),
 ];
+const MORE = MICROS.filter((m) => m.key !== 'fiber').map((m) => m.key);
 
 // Editable food form for manual entry and for Claude drafts.
 // opts: { draft?, warnings?, barcode? }  ctx: { go, back }
@@ -50,6 +53,10 @@ export function renderFoodForm(root, opts, ctx) {
     h('div', { class: 'grid3' }, f.carbs, f.protein, f.fat),
     f.fiber,
     h('div', { class: 'grid2' }, f.serving_g, f.serving_ml),
+    h('details', { class: 'more', open: MORE.some((k) => draft[k] != null) },
+      h('summary', null, 'More Nutrients'),
+      h('p', { class: 'sub' }, 'Optional. Leave a box empty when the label does not show it.'),
+      h('div', { class: 'grid2' }, MORE.map((k) => f[k]))),
     f.barcode,
     edit ? null : h('label', { class: 'field' }, h('span', null, 'Meal when you log it'), mealSel),
     fromAi ? h('label', { class: 'check' }, confirm, ' I checked these values against the label') : null,

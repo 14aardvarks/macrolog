@@ -43,10 +43,24 @@ export const GUIDE = [
   ] },
   { heading: 'Today', bullets: [
     'The chart splits your calories, with your goal in the middle.',
-    'Bars show eaten, goal, percent and what is left.',
+    'Macro Nutrients bars show eaten, goal, percent and what is left.',
     'A thin bar under each food shows its carbs, protein and fat share.',
     'Tap an entry to change it.',
     'Tap X to remove it.',
+  ] },
+  { heading: 'Micro Nutrients', bullets: [
+    'Fiber, sugars, sodium, vitamins and minerals sit under the macro bars.',
+    'Tap the arrow to open or close the section. It stays as you left it.',
+    'Goals are amounts to reach. Limits turn orange once you pass them.',
+    'Totals count only foods with data. A note shows how many had it.',
+    'A dash means unknown, not zero.',
+    'Set your targets in Settings under Daily Goals.',
+    'When entering a food, open More Nutrients for the optional values.',
+  ] },
+  { heading: 'Display', bullets: [
+    'Settings, then Display, shows or hides parts of the screens.',
+    'Turn off the bars, the micro section, the Calorie Split or the food bars.',
+    'Pick which micro nutrients to show. Changes apply at once.',
   ] },
   { heading: 'Not Found?', bullets: [
     'Ask Claude to read a photo of the nutrition label, if it is set up.',

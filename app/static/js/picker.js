@@ -1,6 +1,7 @@
 import { api } from './api.js';
 import { h, clear, select, message, show } from './dom.js';
 import { fillMacroBar } from './chart.js';
+import { microGrid } from './micros.js';
 import {
   MEALS, MEAL_LABELS, parseAmount, fmtNum, fmtAmount, indexFromScroll, debounce, guessMeal,
   initialPick, startPreset, convertAmount, gramsFor, SERVING, PCT, amountText, amountLabel, amountValues, withValue,
@@ -103,7 +104,10 @@ export async function renderPicker(root, params, ctx) {
   const logBtn = h('button', { class: 'btn primary', type: 'button', onclick: save }, adjust != null ? 'Done' : edit ? 'Save Changes' : 'Log');
 
   const kcal = h('span', { id: 'pv-kcal' }, '-');
+  const display = ctx.display || {};
+  const showBar = display.show_macro_bar !== false;
   const mbar = h('div', { class: 'pick-bar' }, h('span', { class: 'macro-bar', role: 'img', hidden: '' }));
+  const micros = microGrid(display, (open) => { if (ctx.saveDisplay) ctx.saveDisplay({ micros_open: open }).catch(() => {}); });
   root.appendChild(h('section', { class: 'screen picker' },
     h('div', { class: 'bar' },
       h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back'), h('span', { class: 'spacer' }), adjust != null ? null : star),
@@ -116,7 +120,7 @@ export async function renderPicker(root, params, ctx) {
     h('div', { class: 'kcal-big' }, kcal, ' kcal'),
     h('div', { class: 'macros' }, macroCell('Carbs g', 'pv-carbs'), macroCell('Protein g', 'pv-protein'),
       macroCell('Fat g', 'pv-fat'), macroCell('Fiber g', 'pv-fiber')),
-    mbar, estBadge,
+    showBar ? mbar : null, micros.el, estBadge,
     adjust != null ? null : h('label', { class: 'field' }, h('span', null, 'Meal'), mealSel),
     status, logBtn,
     edit ? h('button', { class: 'btn danger', type: 'button', onclick: remove }, 'Remove Entry') : null));
@@ -218,6 +222,7 @@ export async function renderPicker(root, params, ctx) {
       root.querySelector('#pv-fat').textContent = fmtNum(p.fat, 1);
       root.querySelector('#pv-fiber').textContent = p.fiber == null ? '-' : fmtNum(p.fiber, 1);
       fillMacroBar(mbar.firstChild, p);
+      micros.update(p);
       estBadge.hidden = !p.estimated;
       if (status.firstChild) clear(status);
     } catch (e) {
