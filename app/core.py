@@ -6,6 +6,8 @@ macros at log time, so later food changes never rewrite history.
 """
 from __future__ import annotations
 
+import asyncio
+
 import math
 import re
 import sqlite3
@@ -299,13 +301,21 @@ async def barcode(code: str, user: CurrentUser):
     return {"food": food, "note": note, "valid": bool(res.get("valid")), "can_ask_ai": ask}
 
 
+SEARCH_SOURCES = ("all", "off", "fdc")
+
+
 @router.get("/foods/search")
-async def search_foods(user: CurrentUser, q: str = "", remote: int = 1):
-    """Local and favorite foods, plus USDA results unless remote=0 (used while typing)."""
+async def search_foods(user: CurrentUser, q: str = "", remote: int = 1, source: str = "all"):
+    """Local and favorite foods, plus remote results unless remote=0 (used while typing).
+    source: all (local foods of any source, then USDA and Open Food Facts), off or fdc (that source only, local and remote)."""
+    if source not in SEARCH_SOURCES:
+        raise HTTPException(400, "source must be all, off or fdc")
     q = q.strip()
     if not q:
         return {"results": []}
     where, params = like_filter(q)
+    if source != "all":
+        where, params = f"{where} AND f.source=?", [*params, source]
     with db.conn() as c:
         favs = c.execute(f"SELECT f.* FROM favorites v JOIN foods f ON f.id=v.food_id "
                          f"WHERE v.user_id=? AND {where} ORDER BY f.name", [user["id"], *params]).fetchall()
@@ -317,7 +327,11 @@ async def search_foods(user: CurrentUser, q: str = "", remote: int = 1):
     if not remote:
         return {"results": results}
     seen = {f["id"] for f in results}
-    found = await lookup.search(q)
+    if source == "all":  # both at once, USDA first as before; each returns [] on trouble
+        usda, off = await asyncio.gather(lookup.search(q), lookup.search_off(q))
+        found = [*usda, *off]
+    else:
+        found = await (lookup.search(q) if source == "fdc" else lookup.search_off(q))
     with db.conn() as c:
         for raw in found:
             try:

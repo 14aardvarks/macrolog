@@ -237,3 +237,25 @@ async def test_search_ml_serving_and_network_error(monkeypatch):
     install(monkeypatch, fdc_error=True)
     assert await lookup.search("milk") == []
     assert await lookup.search("   ") == []
+
+
+async def test_search_off_builds_foods_and_never_raises(monkeypatch):
+    seen = []
+    product = {"code": "5000159407236", "product_name": "Rice Pudding", "brands": "Ambrosia, Other",
+               "serving_size": "1 pot (125 g)", "serving_quantity": 125,
+               "nutriments": {"energy-kcal_100g": 100, "carbohydrates_100g": 16, "proteins_100g": 3, "fat_100g": 2.5}}
+
+    def handler(request):
+        seen.append(request)
+        return httpx.Response(200, json={"products": [product, {"code": "1", "product_name": "No data"}, {"product_name": "No code"}]})
+
+    monkeypatch.setattr(lookup, "_transport", httpx.MockTransport(handler))
+    res = await lookup.search_off("rice pudding", limit=5)
+    assert [(f["source"], f["source_id"], f["name"], f["brand"]) for f in res] == [("off", "5000159407236", "Rice Pudding", "Ambrosia")]
+    assert res[0]["kcal"] == 125 and res[0]["barcode"] == "5000159407236"
+    q = seen[0].url.params
+    assert seen[0].url.host == "world.openfoodfacts.org" and seen[0].url.path == "/cgi/search.pl"
+    assert q["search_terms"] == "rice pudding" and q["json"] == "1" and q["page_size"] == "5"
+    install(monkeypatch, off_error=True)
+    assert await lookup.search_off("rice") == []
+    assert await lookup.search_off("  ") == []

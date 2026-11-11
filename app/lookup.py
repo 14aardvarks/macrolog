@@ -14,6 +14,7 @@ from . import config
 from .units import MASS, VOLUME, parse_unit
 
 OFF_URL = "https://world.openfoodfacts.org/api/v2/product/{code}.json"
+OFF_SEARCH_URL = "https://world.openfoodfacts.org/cgi/search.pl"
 OFF_FIELDS = "code,product_name,generic_name,brands,serving_size,serving_quantity,serving_quantity_unit,nutriments"
 FDC_URL = "https://api.nal.usda.gov/fdc/v1/foods/search"
 FDC_DETAIL_URL = "https://api.nal.usda.gov/fdc/v1/food/{id}"
@@ -324,6 +325,32 @@ async def search(query, limit=8):
     except (httpx.HTTPError, ValueError):
         return []
     return [f for f in foods if f][:limit]
+
+
+async def search_off(query, limit=8):
+    """Open Food Facts text search (products with usable nutrition only). Returns [] on empty query or network trouble."""
+    if not str(query or "").strip():
+        return []
+    params = {"search_terms": query.strip(), "search_simple": 1, "action": "process", "json": 1,
+              "page_size": limit, "fields": OFF_FIELDS}
+    try:
+        async with _client() as client:
+            r = await client.get(OFF_SEARCH_URL, params=params)
+            r.raise_for_status()
+            products = r.json().get("products") or []
+    except (httpx.HTTPError, ValueError, AttributeError):
+        return []
+    out = []
+    for p in products:
+        if not isinstance(p, dict):
+            continue
+        code = str(p.get("code") or "").strip()
+        if not code:
+            continue
+        food = off_food(code if code.isdigit() else None, p)
+        if food:
+            out.append(food)
+    return out[:limit]
 
 
 # ---------- refresh from the original source ----------

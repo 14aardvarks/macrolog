@@ -9,6 +9,13 @@ export const GUIDE = [
     'No camera? Take a photo of the barcode, or type the digits under it.',
     'Set the amount, then tap Log.',
   ] },
+  { heading: 'Search Sources', bullets: [
+    'Source above the search box picks where to look. It stays for this visit.',
+    'All Sources checks Open Food Facts and USDA. Or pick just one.',
+    'Claude gives one estimate from a description, like bowl of oatmeal with a banana.',
+    'Claude is asked only when you tap Search, never while you type.',
+    'Tap the estimate to check the values, then save it.',
+  ] },
   { heading: 'The Meal Selector on Add', bullets: [
     'It filters the lists by meal.',
     'All shows everything.',

@@ -24,6 +24,7 @@ export function renderFoodForm(root, opts, ctx) {
   const draft = edit || opts.draft || {};
   const locked = !!(edit && edit.in_use);  // used in a log or recipe: only the name and brand may change
   const fromAi = !edit && draft.source === 'ai';
+  const described = fromAi && !!opts.described;  // a Claude estimate from a text description, not a label photo
   const f = {};
   const val = (k) => (draft[k] == null ? '' : typeof draft[k] === 'number' ? fmtAmount(draft[k]) : String(draft[k]));
   f.name = field('Name', { value: val('name'), autocomplete: 'off' });
@@ -43,9 +44,10 @@ export function renderFoodForm(root, opts, ctx) {
 
   const form = h('form', { class: 'screen', novalidate: '', onsubmit: submit },
     h('div', { class: 'bar' }, h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back')),
-    h('h1', null, edit ? 'Edit Food' : fromAi ? 'Check What Claude Read' : 'Enter Food Manually'),
+    h('h1', null, edit ? 'Edit Food' : described ? 'Check What Claude Estimated' : fromAi ? 'Check What Claude Read' : 'Enter Food Manually'),
     edit || fromAi ? sourceLine(draft.source) : null,
-    h('p', { class: 'sub' }, locked ? 'This food is in your log or a recipe, so only the name, brand and label text can change.' : fromAi ? 'Fix anything that looks wrong and fill any empty boxes. Values are per label serving.'
+    h('p', { class: 'sub' }, locked ? 'This food is in your log or a recipe, so only the name, brand and label text can change.' : described ? 'Fix anything that looks wrong and fill any empty boxes. Values are for one serving as described.'
+      : fromAi ? 'Fix anything that looks wrong and fill any empty boxes. Values are per label serving.'
       : 'Values are per label serving, as printed.'),
     warns.length ? h('ul', { class: 'warnings', role: 'alert' }, warns) : null,
     f.name, f.brand,
@@ -63,7 +65,7 @@ export function renderFoodForm(root, opts, ctx) {
     edit ? (canLookUp(edit) ? refreshControl(edit, fillBlanks).el
       : h('p', { class: 'sub' }, 'Nothing to look up. Add a barcode to fill blank nutrients from Open Food Facts or USDA.')) : null,
     edit ? null : h('label', { class: 'field' }, h('span', null, 'Meal when you log it'), mealSel),
-    fromAi ? h('label', { class: 'check' }, confirm, ' I checked these values against the label') : null,
+    fromAi ? h('label', { class: 'check' }, confirm, described ? ' I checked these values' : ' I checked these values against the label') : null,
     status, saveBtn);
   root.appendChild(form);
   markEmpty();
@@ -98,7 +100,7 @@ export function renderFoodForm(root, opts, ctx) {
     }
     if (out.serving_amount != null && out.serving_amount <= 0) bad.push('Serving amount');
     if (bad.length) { show(status, message('Check: ' + bad.join(', ') + '.', 'error')); return; }
-    if (fromAi && !confirm.checked) { show(status, message('Tick the box to confirm the values match the label.', 'error')); return; }
+    if (fromAi && !confirm.checked) { show(status, message(described ? 'Tick the box to confirm you checked the values.' : 'Tick the box to confirm the values match the label.', 'error')); return; }
     saveBtn.disabled = true;
     try {
       if (edit) {

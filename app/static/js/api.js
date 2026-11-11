@@ -69,7 +69,7 @@ export const api = {
   saveGoals: (g) => send('PUT', '/api/goals', g),
   day: (d) => get('/api/day', { day: d || day() }),
   quick: (kind, d) => get('/api/quick/' + kind, kind === 'yesterday' ? { day: d || day() } : undefined),
-  search: (q, remote) => get('/api/foods/search', { q, remote: remote ? 1 : 0 }),
+  search: (q, remote, source) => get('/api/foods/search', { q, remote: remote ? 1 : 0, source: source && source !== 'all' ? source : null }),
   barcode: (code) => get('/api/foods/barcode/' + encodeURIComponent(code)),
   food: (id) => get('/api/foods/' + id),
   createFood: (f) => send('POST', '/api/foods', f),
@@ -91,6 +91,7 @@ export const api = {
   refreshNutrients: (id) => send('POST', '/api/foods/' + id + '/refresh-nutrients'),
   missingNutrients: (d) => get('/api/foods/missing-nutrients', d ? { date: d } : undefined),
   deleteFood: (id) => request('DELETE', '/api/foods/' + id),
-  aiStatus: (images) => get('/api/ai/status', images ? { images } : undefined),
+  aiStatus: (images, chars) => get('/api/ai/status', images || chars != null ? { images, chars } : undefined),
   aiLabel: (form) => request('POST', '/api/ai/label', { form }),
+  aiLookup: (text, note) => send('POST', '/api/ai/lookup', note ? { text, note } : { text }),
 };

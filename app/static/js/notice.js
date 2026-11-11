@@ -3,12 +3,12 @@ import { h } from './dom.js';
 import { noticeLines } from './util.js';
 
 // Ask before anything goes to Claude. Resolves true to go ahead, false to cancel.
-// opts: { what: "1 photo of a label", images: 1 }. With "Confirm before using Claude" off it resolves true at once.
+// opts: { what: "1 photo of a label", images: 1 } for a label read, or { what, chars: text length } for a text lookup. With "Confirm before using Claude" off it resolves true at once.
 // Built in the page (no window.confirm). Reuse it for any other Claude action.
 export async function confirmClaude(settings, opts) {
   if (settings && settings.confirm_ai === false) return true;
   let st = null;
-  try { st = await api.aiStatus(opts.images || 1); } catch (e) { st = null; }
+  try { st = await api.aiStatus(opts.chars != null ? null : opts.images || 1, opts.chars); } catch (e) { st = null; }
   const info = st ? noticeLines(st, opts.what) : { blocked: false, lines: ['Sends ' + opts.what + ' to Claude.', 'Cost not available.'], warn: '' };
   return new Promise((resolve) => {
     const previous = document.activeElement;

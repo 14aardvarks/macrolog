@@ -91,6 +91,7 @@ normalize_barcode(raw) -> {"candidates": [12/13/14-digit strings], "valid": bool
 parse_serving(text, serving_g=None, serving_ml=None) -> {"serving_amount","serving_unit","serving_g","serving_ml","label_text"}
 async barcode(raw) -> {"food": Food|None, "note": str, "valid": bool}      # Open Food Facts then USDA FDC (branded, match gtinUpc)
 async search(query, limit=8) -> list[Food]                                   # USDA FDC text search
+async search_off(query, limit=8) -> list[Food]                               # Open Food Facts text search (cgi/search.pl, json=1), [] on trouble
 ```
 Setting `fdc_api_key` via `config.get` (env `FDC_API_KEY`, default DEMO_KEY, empty also means DEMO_KEY), User-Agent "macrolog/0.1". Network errors never raise; return note text such as
 "Open Food Facts unreachable". Open Food Facts: `https://world.openfoodfacts.org/api/v2/product/{code}.json`. USDA:
@@ -144,7 +145,9 @@ Tables: foods(shared by both users), entries, favorites, last_used, meals, meal_
 entries snapshot name and macros at log time. `amount` and `unit` are what the user picked; `servings` is computed with units.scale.
 ```
 GET  /api/foods/barcode/{code} -> {"food": Food|None, "note","valid","can_ask_ai": bool}   # local cache by barcode first, then lookup.barcode, save found food
-GET  /api/foods/search?q=      -> {"results": [Food...]}   # order: user's favorites, local foods matching, then lookup.search; every result saved/cached and has id
+GET  /api/foods/search?q=&remote=&source= -> {"results": [Food...]}   # order: user's favorites, local foods matching, then remote; every result saved/cached and has id
+        # source all (default): local foods of any source, remote = lookup.search (USDA) then lookup.search_off (both at once);
+        # off or fdc: favorites, local foods and remote results of that source only; anything else 400. remote=0 skips the network.
 POST /api/foods                -> Food    # create custom or AI-confirmed food (source "custom" or "ai"); validates numbers >= 0
 GET  /api/foods/{id}           -> Food + {"units": units.available_units(food), "last": {"amount","unit"}|null, "favorite": bool}
 POST /api/entries   {food_id, amount, unit, day?, meal?} -> entry     # meal in breakfast|lunch|dinner|snack|null; updates last_used
@@ -214,6 +217,12 @@ PUT  /api/ai/key {"key"?: str, "cap"?: int 1..10000} -> status    # at least one
 DELETE /api/ai/key -> status
 POST /api/ai/label  multipart: images (1 to 3 files, jpeg/png/webp, each <= 5 MB), optional barcode (text), optional hint (text)
      -> {"draft": Food (no id, source "ai", barcode if given), "warnings": [str], "used_this_month","cap"}   # NOT saved; client confirms via POST /api/foods
+POST /api/ai/lookup JSON {"text": str 1..200, "note"?: str ..300} -> same reply as /label (barcode null)   # a text description, no images
+     # 400 empty, too long, wrong type or unknown keys (checked before the key and the cap); then 503 no key, 429 cap, 502 upstream.
+     # Same key resolution, reservation and release_once, usage row, cost fields, strict tool schema and build_draft as /label;
+     # the instruction asks for an estimate of one typical serving and wraps the user text in <food>/<note> tags as data, never
+     # instructions (angle brackets are stripped). Warnings use estimate wording instead of label wording.
+GET  /api/ai/status?chars=N   # est_cost_label is then for a text lookup of N characters (estimate_text_tokens: 650 + N/4 in, 400 out)
 ```
 Calls `POST https://api.anthropic.com/v1/messages` via httpx with headers `x-api-key`, `anthropic-version: 2023-06-01`, model from
 setting `ai_model` (env `AI_MODEL`, default `claude-haiku-5-5`), forced tool use with an input_schema returning the Food fields exactly as printed (serving
@@ -289,6 +298,14 @@ Screens: Login, Today, Add, Picker, Claude fallback, Settings. Bottom nav: Today
 - Lookup failure: show "Not Found" with two buttons, "Ask Claude" (only if can_ask_ai) and "Enter Manually". Ask Claude suggests photographing the NUTRITION
   LABEL (optionally with the barcode in the same photo), resizes images client side (max 1280 px, JPEG 0.8), uploads, shows the draft in an editable form
   with any warnings, and only saves via POST /api/foods after the user confirms.
+- Add: a Source select (labelled Source, above the search box: All Sources, Open Food Facts, USDA, Claude; util.js `SEARCH_SOURCES`,
+  `searchAction`, `searchHint`) picks where the search box looks and is remembered for the session (state.source). All Sources is the
+  Open Food Facts and USDA search and never calls Claude; Open Food Facts or USDA search only that source (local matches included).
+  Claude never runs while typing: Search or Enter sends the text (max 200 characters) to POST /api/ai/lookup after confirmClaude
+  (opts.chars, so the notice shows the text estimate) and shows one result row with the Claude badge and Estimate; tapping it opens
+  the `ai` screen with params.draft, the same editable draft form ("Check What Claude Estimated") that saves through POST /api/foods.
+  The last estimate is kept for the session so Back does not ask again. Without Claude for the user, a short hint says so.
+  Typed barcode digits and Scan behave the same for every source.
 - Add: Search, Scan and the Meal selector sit above the Favorites/Yesterday/Recipes tabs and list. Lists show 20 items with a Show More button.
 - Saved (Settings, then Saved): Favorites, Recipes and My foods lists with meal tag chips, rename, delete, recipe item editing, Remove From My Lists, and the food form for My foods.
   Refresh Nutrients (js/refresh.js) is a button in the food edit form (shown for every edited food, with a hint when it has no barcode) and in the picker (only when the food can be looked up and has a blank nutrient); it fills the blank boxes and never overwrites. My Foods also has Refresh All Missing, at most 10 foods per tap, one after another, stopping at a rate limit, with a summary of how many were done and how many are left.

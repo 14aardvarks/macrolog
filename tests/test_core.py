@@ -24,7 +24,7 @@ def env(tmp_path, monkeypatch):
         db.init_shared(c)
         core.init(c)
         c.execute("INSERT INTO users(id, username) VALUES (1, 'a'), (2, 'b')")
-    calls = {"barcode": [], "search": []}
+    calls = {"barcode": [], "search": [], "search_off": []}
 
     async def fake_barcode(raw):
         calls["barcode"].append(raw)
@@ -35,7 +35,12 @@ def env(tmp_path, monkeypatch):
         return calls.get("search_result", [])
 
     monkeypatch.setattr(lookup, "barcode", fake_barcode)
+    async def fake_search_off(query, limit=8):
+        calls["search_off"].append(query)
+        return calls.get("off_result", [])
+
     monkeypatch.setattr(lookup, "search", fake_search)
+    monkeypatch.setattr(lookup, "search_off", fake_search_off)
     api = FastAPI()
     api.include_router(core.router)
 
@@ -246,6 +251,33 @@ def test_search_remote_zero_keeps_favorites(env, a):
 def test_search_skips_bad_remote_food(env, a):
     env["search_result"] = [off_food(kcal=-1), off_food(source_id="9")]
     assert [f["source_id"] for f in a.get("/api/foods/search", params={"q": "x"}).json()["results"]] == ["9"]
+
+
+def test_search_all_sources_queries_usda_then_open_food_facts(env, a):
+    env["search_result"] = [off_food()]
+    env["off_result"] = [off_food(source="off", source_id="5000159407236", name="Rice Pudding")]
+    r = a.get("/api/foods/search", params={"q": "rice", "source": "all"}).json()["results"]
+    assert [(f["source"], f["name"]) for f in r] == [("fdc", "Remote Rice"), ("off", "Rice Pudding")]
+    assert env["search"] == ["rice"] and env["search_off"] == ["rice"]
+
+
+def test_search_one_source_only(env, a):
+    custom = food(a, BREAD | {"name": "Rice Cake"})
+    env["search_result"] = [off_food()]
+    env["off_result"] = [off_food(source="off", source_id="5000159407236", name="Rice Pudding")]
+    off = a.get("/api/foods/search", params={"q": "rice", "source": "off"}).json()["results"]
+    assert [f["name"] for f in off] == ["Rice Pudding"] and env["search"] == []
+    fdc = a.get("/api/foods/search", params={"q": "rice", "source": "fdc"}).json()["results"]
+    assert [f["name"] for f in fdc] == ["Remote Rice"] and env["search_off"] == ["rice"]
+    # Local matches follow the source too, so a custom food shows only under All.
+    typing = a.get("/api/foods/search", params={"q": "rice", "source": "off", "remote": 0}).json()["results"]
+    assert [f["name"] for f in typing] == ["Rice Pudding"]
+    every = [f["id"] for f in a.get("/api/foods/search", params={"q": "rice", "remote": 0}).json()["results"]]
+    assert custom["id"] in every
+
+
+def test_search_bad_source_400(env, a):
+    assert a.get("/api/foods/search", params={"q": "rice", "source": "ai"}).status_code == 400
 
 
 # ---------- id parsing ----------

@@ -22,8 +22,16 @@ export async function toJpeg(file) {
   });
 }
 
-// params: { barcode? }  ctx: { go, back }
+// The editable draft from a Claude reply ({ draft, warnings, cost }). described: it came from a text description, not a label photo.
+export function showDraft(root, r, ctx, described) {
+  renderFoodForm(root, { draft: r.draft, warnings: r.warnings, barcode: r.barcode, described }, ctx);
+  const title = root.querySelector('h1');
+  if (title && r.cost != null) title.after(h('p', { class: 'sub' }, (described ? 'This estimate' : 'This read') + ' cost about ' + centsText(r.cost) + '.'));
+}
+
+// params: { barcode? } for a label read, or { draft, warnings, cost } to check a text estimate from the Add search.  ctx: { go, back }
 export async function renderAi(root, params, ctx) {
+  if (params.draft) { showDraft(root, params, ctx, true); return; }
   let st = null;
   try { st = await api.aiStatus(); } catch (e) { st = { enabled: false }; }
   const manualBtn = h('button', { class: 'btn', type: 'button', onclick: () => ctx.go('manual', { barcode: params.barcode }) }, 'Enter Manually');
@@ -68,9 +76,7 @@ export async function renderAi(root, params, ctx) {
       show(status, message('Claude is reading the label...'));
       const r = await api.aiLabel(form);
       root.textContent = '';
-      renderFoodForm(root, { draft: r.draft, warnings: r.warnings, barcode: bc }, ctx);
-      const title = root.querySelector('h1');
-      if (title && r.cost != null) title.after(h('p', { class: 'sub' }, 'This read cost about ' + centsText(r.cost) + '.'));
+      showDraft(root, { ...r, barcode: bc }, ctx, false);
     } catch (e) {
       go.disabled = false;
       show(status, message(e.message, 'error'));

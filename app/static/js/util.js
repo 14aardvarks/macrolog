@@ -535,6 +535,44 @@ export function noticeLines(st, what) {
 
 export function photosText(n) { return n + (n === 1 ? ' photo' : ' photos') + ' of a label'; }
 
+// ---------- search source on Add ----------
+
+// The Source choice above the Add search. all = Open Food Facts and USDA (never Claude), ai = one Claude estimate on Search.
+export const SEARCH_SOURCES = [
+  { value: 'all', label: 'All Sources' }, { value: 'off', label: 'Open Food Facts' },
+  { value: 'fdc', label: 'USDA' }, { value: 'ai', label: 'Claude' },
+];
+export function searchSource(v) { return SEARCH_SOURCES.some((s) => s.value === v) ? v : 'all'; }
+export const MAX_AI_TEXT = 200;  // same as ai.MAX_TEXT on the server
+
+// What one search does. remote is true for Enter or the Search button, false while typing.
+// Returns { kind } where kind is tabs (empty box), barcode (typed digits), search (database search, with source),
+// wait (Claude waits for Search), off (Claude is not set up), long (too long for Claude) or claude.
+export function searchAction(source, text, remote, aiEnabled) {
+  const t = String(text == null ? '' : text).trim();
+  if (!t) return { kind: 'tabs' };
+  if (/^\d{8,14}$/.test(digitsOnly(t)) && /^[\d\s-]+$/.test(t)) return { kind: 'barcode', code: digitsOnly(t) };
+  const src = searchSource(source);
+  if (src !== 'ai') return { kind: 'search', source: src, remote: !!remote };
+  if (aiEnabled === false) return { kind: 'off' };
+  if (!remote) return { kind: 'wait' };
+  if (t.length > MAX_AI_TEXT) return { kind: 'long' };
+  return { kind: 'claude', text: t };
+}
+
+// Message for a search source with nothing (yet) to show.
+export function searchHint(source, kind) {
+  const src = searchSource(source);
+  if (kind === 'wait') return 'Press Search to ask Claude for an estimate. Each search uses 1 Claude request.';
+  if (kind === 'off') return 'Claude is not set up for you. Add your own Claude key in Settings, or ask the administrator.';
+  if (kind === 'long') return 'Keep the description to ' + MAX_AI_TEXT + ' characters or fewer.';
+  if (kind === 'none') return 'No results.';
+  const where = src === 'all' ? 'Open Food Facts and USDA' : sourceLabel(src);
+  return 'Press Search to check ' + where + '.';
+}
+
+export const DESCRIPTION_TEXT = 'your food description';
+
 // ---------- micronutrients and display settings ----------
 
 // Same order and units as the server. kind: 'goal' (aim to reach) or 'limit' (stay under).

@@ -3,7 +3,7 @@ import { h, clear, select, field, message, show, cameraIcon, sourceBadge } from 
 import {
   MEALS, MEAL_LABELS, parseDecimal, parseAmount, amountText, servingText, setAmountFormat, unitLabel, fmtNum, fmtAmount, groupByMeal, checkedItems, canSaveRecipe, rowAmountText, applyRowPick, draftFits, localDate, progressText, remainingText,
   sentence, newRecipeDraft, recipeAddRow, recipeSetRow, stepsBack, barWidth, debounce, digitsOnly, guessMeal, pctTotal, latestGuard, MEAL_FILTERS, MEAL_FILTER_LABELS, filterByMeal, filterSaved, pageOf, PAGE_SIZE, emptyText,
-  DEFAULT_DISPLAY,
+  DEFAULT_DISPLAY, SEARCH_SOURCES, searchSource, searchAction, searchHint, DESCRIPTION_TEXT,
 } from './util.js';
 import { microSection, displaySection, microTargets } from './micros.js';
 import { viewToggle, dayTable } from './daytable.js';
@@ -11,6 +11,7 @@ import { todayView } from './tablemodel.js';
 import { renderPicker } from './picker.js';
 import { renderScan } from './scan.js';
 import { renderAi } from './ai.js';
+import { confirmClaude } from './notice.js';
 import { renderFoodForm } from './foodform.js';
 import { splitChart, macroBar } from './chart.js';
 import { renderGuide } from './guide-view.js';
@@ -23,7 +24,7 @@ import { refreshLoggedControl } from './refresh.js';
 
 const main = document.getElementById('main');
 const nav = document.getElementById('nav');
-const state = { user: null, settings: { start_screen: 'today', default_meal: null, use_last: true, confirm_ai: true, amount_format: 'fraction' }, display: DEFAULT_DISPLAY, cleanup: null, depth: 0, tab: 'favorites', addMeal: null, draft: null, recipe: null };  // addMeal lives for the session only
+const state = { user: null, settings: { start_screen: 'today', default_meal: null, use_last: true, confirm_ai: true, amount_format: 'fraction' }, display: DEFAULT_DISPLAY, cleanup: null, depth: 0, tab: 'favorites', addMeal: null, draft: null, recipe: null, source: 'all', claude: null };  // addMeal, source and claude (last Claude estimate) live for the session only
 const NAV_OF = { today: 'today', settings: 'settings', admin: 'settings', saved: 'settings', editfood: 'settings' };  // every other screen belongs to Add
 
 const ctx = {
@@ -309,24 +310,79 @@ function addScreen(root, params) {
   mealSel.addEventListener('change', () => { state.addMeal = mealSel.value; if (!q.value.trim()) paintTabs(); });
   const mealPick = h('label', { class: 'meal-pick' }, h('span', null, 'Meal'), mealSel);
   let searchSeq = 0;
+  // Where the search box looks. Remembered for the session. Claude is only asked on Search or Enter, never while typing.
+  const srcSel = select(SEARCH_SOURCES, searchSource(state.source));
+  const srcPick = h('label', { class: 'meal-pick source-pick' }, h('span', null, 'Source'), srcSel);  // the wrapping label names the select
+  const srcNote = h('div', { 'aria-live': 'polite' });
+  let aiOn = null;  // null until /api/ai/status answers
+  const loadAi = () => api.aiStatus().then((st) => { aiOn = !!st.enabled; }, () => { aiOn = false; });
+  const paintSource = () => {
+    const ai = state.source === 'ai';
+    q.placeholder = ai ? 'Describe a food for Claude' : 'Search foods';
+    q.setAttribute('aria-label', ai ? 'Describe a food for Claude' : 'Search foods');
+    show(srcNote, ai && aiOn === false && !q.value.trim() ? message(searchHint('ai', 'off')) : null);  // with text the list says it
+  };
+  const paintSearch = () => {
+    paintSource();
+    const text = q.value.trim();
+    if (state.source === 'ai' && state.claude && state.claude.text === text) { showClaude(state.claude); return; }
+    if (text) search(false); else paintTabs();
+  };
+  srcSel.addEventListener('change', async () => {
+    state.source = searchSource(srcSel.value);
+    liveSearch.cancel();
+    if (state.source === 'ai' && aiOn == null) await loadAi();
+    paintSearch();
+  });
 
   // remote false while typing (local only), true for Enter or the Search button.
   async function search(remote) {
     const text = q.value.trim();
     const mine = ++searchSeq;
-    if (!text) { paintTabs(); return; }
+    if (state.source === 'ai' && aiOn == null) await loadAi();
+    const act = searchAction(state.source, text, remote, aiOn);
+    paintSource();
+    if (act.kind === 'tabs') { paintTabs(); return; }
+    if (act.kind === 'wait' && state.claude && state.claude.text === text) { showClaude(state.claude); return; }
     tabBar.querySelectorAll('button').forEach((b) => b.setAttribute('aria-selected', 'false'));
-    if (/^\d{8,14}$/.test(digitsOnly(text)) && /^[\d\s-]+$/.test(text)) { ctx.lookup(digitsOnly(text)); return; }
+    if (act.kind === 'barcode') { ctx.lookup(act.code); return; }
+    if (act.kind === 'claude') { askClaude(act.text, mine); return; }
+    if (act.kind !== 'search') { show(listBox, message(searchHint(state.source, act.kind), act.kind === 'long' ? 'error' : undefined)); return; }
     if (remote) show(listBox, message('Searching...'));
     try {
-      const r = (await api.search(text, remote)).results;
+      const r = (await api.search(text, remote, act.source)).results;
       if (mine !== searchSeq) return;
       const manual = h('button', { class: 'btn', type: 'button', onclick: () => go('manual', {}) }, 'Enter Manually');
-      const empty = remote ? message('No results.') : message('Press Search to check Open Food Facts and USDA.');
+      const empty = message(searchHint(act.source, remote ? 'none' : 'press'));
       show(listBox, h('div', null, r.length ? h('ul', { class: 'list' }, r.map((f) => foodRow(foodTitle(f),
         (f.label_text || unitText(f.serving_amount, f.serving_unit)) + ' - ' + fmtNum(f.kcal, 0) + ' kcal',
         () => go('picker', { foodId: f.id }), null, f, f.source))) : empty, r.length ? null : manual));
     } catch (e) { if (mine === searchSeq) show(listBox, message(e.message, 'error')); }
+  }
+
+  // One Claude estimate for the typed description, after the usual confirm step. Nothing is saved until the draft is checked.
+  async function askClaude(text, mine) {
+    if (!(await confirmClaude(ctx.settings, { what: DESCRIPTION_TEXT, chars: text.length }))) {
+      if (mine === searchSeq) show(listBox, message(searchHint('ai', 'wait')));
+      return;
+    }
+    if (mine !== searchSeq) return;
+    show(listBox, message('Asking Claude...'));
+    try {
+      const r = await api.aiLookup(text);
+      state.claude = { text, r };
+      if (mine === searchSeq) showClaude(state.claude);
+    } catch (e) { if (mine === searchSeq) show(listBox, message(e.message, 'error')); }
+  }
+
+  function showClaude({ r }) {
+    const d = r.draft;
+    const kcal = d.kcal == null ? '' : ' - ' + fmtNum(d.kcal, 0) + ' kcal';
+    const open = () => go('ai', { draft: d, warnings: r.warnings, cost: r.cost });
+    tabBar.querySelectorAll('button').forEach((b) => b.setAttribute('aria-selected', 'false'));
+    show(listBox, h('div', null, h('ul', { class: 'list' }, foodRow(foodTitle({ name: d.name || 'Unnamed food', brand: d.brand }),
+      (d.label_text || unitText(d.serving_amount, d.serving_unit)) + kcal, open, null, d, 'ai')),
+    h('p', { class: 'sub' }, 'Values are estimates from Claude. Tap the result to check and save it.')));
   }
   const liveSearch = debounce(() => search(false), 400);
   q.addEventListener('input', liveSearch);
@@ -346,6 +402,7 @@ function addScreen(root, params) {
   root.appendChild(h('section', { class: 'screen wide add' },
     ing ? h('div', { class: 'bar' }, h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back')) : null,
     ing ? h('h1', null, 'Add Ingredient') : null,
+    srcPick, srcNote,
     h('form', { class: 'row add-search', role: 'search', onsubmit: (e) => { e.preventDefault(); liveSearch.cancel(); search(true); } },
       q, h('button', { class: 'btn', type: 'submit' }, 'Search')),
     h('div', { class: 'row add-scan' },
@@ -353,7 +410,8 @@ function addScreen(root, params) {
       h('button', { class: 'btn primary scan-btn', type: 'button', onclick: () => go('scan', { autostart: true }) }, cameraIcon(), 'Scan Barcode')),
     ing ? null : h('div', { class: 'row add-create' }, h('button', { class: 'btn', type: 'button', onclick: () => { state.recipe = newRecipeDraft(); go('recipe', {}); } }, 'Create Recipe')),
     ing ? null : mealPick, tabBar, h('div', { class: 'tab-list' }, listBox)));
-  paintTabs();
+  if (state.source === 'ai' && state.claude) q.value = state.claude.text;  // back from the draft: the estimate is still here, no second request
+  if (state.source === 'ai') loadAi().then(paintSearch); else paintTabs();
   if (params.focus) root.addEventListener('mounted', () => q.focus());
 }
 
