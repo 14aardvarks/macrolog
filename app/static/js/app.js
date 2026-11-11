@@ -19,6 +19,7 @@ import { renderAdmin } from './admin.js';
 import { renderSaved } from './saved.js';
 import { renderRecipe } from './recipe.js';
 import { renderClaudeSection, renderSignIn } from './claudekey.js';
+import { refreshLoggedControl } from './refresh.js';
 
 const main = document.getElementById('main');
 const nav = document.getElementById('nav');
@@ -225,7 +226,9 @@ async function todayScreen(root) {
   const disp = state.display;
   const micros = microSection(d, disp, (open) => { ctx.saveDisplay({ micros_open: open }).catch(() => {}); });
   const nutrients = disp.show_macros !== false || micros ? h('div', { class: 'nutrients' },
-    disp.show_macros !== false ? [h('h2', null, 'Macro Nutrients'), h('div', { class: 'bars' }, bars)] : null, micros) : null;
+    disp.show_macros !== false ? [h('h2', null, 'Macro Nutrients'), h('div', { class: 'bars' }, bars)] : null, micros,
+    micros ? refreshLoggedControl({ scope: 'day:' + d.day, label: 'Refresh Nutrients', quiet: true,
+      load: () => api.missingNutrients(d.day), onFinish: () => go('today', {}, true) }).el : null) : null;
   const body = h('div', { class: 'entries-body' });
   const grid = h('div', { class: 'two-col today' });
   const paint = (view) => {
@@ -521,6 +524,8 @@ async function settingsScreen(root) {
     h('h2', null, 'Claude'), ai ? renderClaudeSection(ai, me.use_global_ai) : h('p', { class: 'sub' }, 'Claude status is not available.'),
     h('h2', null, 'Saved'), h('p', { class: 'sub' }, 'Favorites, recipes and your own foods, with meal tags.'),
     h('button', { class: 'btn', type: 'button', onclick: () => go('saved') }, 'Open Saved'),
+    h('p', { class: 'sub' }, 'Fill blank nutrients of every food you have logged from where it came from. It never changes values that are already there.'),
+    refreshLoggedControl({ scope: 'all', label: 'Refresh All Logged Foods', load: () => api.missingNutrients() }).el,
     renderSignIn(cfg, me),
     me.is_admin ? h('div', null, h('h2', null, 'Admin'), h('p', { class: 'sub' }, 'Users, sign-in, Claude and server settings.'),
       h('button', { class: 'btn', type: 'button', onclick: () => go('admin') }, 'Open Admin')) : null,

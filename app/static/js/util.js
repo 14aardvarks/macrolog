@@ -265,6 +265,18 @@ export function refreshTargets(foods, cap = REFRESH_CAP) {
   const all = (foods || []).filter(canRefresh);
   return { todo: all.slice(0, cap), left: Math.max(0, all.length - cap) };
 }
+// Logged foods from GET /api/foods/missing-nutrients. ids already checked in this visit (done) are skipped, so tapping again
+// continues instead of asking the same foods twice. total is every food still to check, todo the next batch, left the rest.
+export function pendingPlan(ids, done, cap = REFRESH_CAP) {
+  const all = (ids || []).filter((id) => !done || !done.has(id));
+  return { todo: all.slice(0, cap), left: Math.max(0, all.length - cap), total: all.length };
+}
+// The line shown above the button: how many foods the next tap checks.
+export function planText(plan, cap = REFRESH_CAP) {
+  const word = (n) => n + (n === 1 ? ' food' : ' foods');
+  if (!plan.total) return 'No logged foods need a refresh';
+  return plan.total > cap ? cap + ' of ' + word(plan.total) + ' will be checked now' : word(plan.total) + ' will be checked';
+}
 // Summary after a Refresh All Missing run. checked foods asked, filled values added, failed errors, stopped says a rate limit ended the run early.
 export function bulkSummary({ checked, filled, failed, left, stopped }) {
   const word = (n, one, many) => n + ' ' + (n === 1 ? one : many);

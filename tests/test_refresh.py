@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from app import core, db, lookup
-from tests.test_core import BREAD, a, b, env, food  # noqa: F401
+from tests.test_core import BREAD, TODAY, a, b, env, food  # noqa: F401
 
 FIX = Path(__file__).parent / "fixtures"
 OFF = json.loads((FIX / "off_micros.json").read_text())
@@ -167,3 +167,40 @@ def test_refresh_kind():
     assert lookup.refresh_kind({"source": "custom", "barcode": "3017620422003"}) == "barcode"
     assert lookup.refresh_kind({"source": "ai", "barcode": None}) is None
     assert lookup.refresh_kind({"source": "custom", "barcode": "12"}) is None
+
+
+def log(client, f, day=None):
+    body = {"food_id": f["id"], "amount": 1, "unit": "g"}
+    assert client.post("/api/entries", json={**body, **({"day": day} if day else {})}).status_code == 200
+
+
+def test_missing_nutrients_lists_logged_foods_with_a_source_and_blanks(a, b, env):
+    todo = saved(name="Todo")
+    full = saved(name="Full", source_id="111", barcode=None, **{k: 1 for k in MICROS})
+    nosrc = saved(source="custom", source_id=None, barcode=None, name="No Source")
+    unlogged = saved(name="Unlogged", source_id="222", barcode=None)
+    fdc = saved(source="fdc", source_id="777", barcode=None, name="Soup")
+    for f in (fdc, todo, full, nosrc, todo):
+        log(a, f)
+    log(a, saved(name="Old", source_id="333", barcode=None), "2020-01-02")
+    r = a.get("/api/foods/missing-nutrients").json()
+    assert r["total"] == len(r["ids"]) == 3 and unlogged["id"] not in r["ids"] and full["id"] not in r["ids"] and nosrc["id"] not in r["ids"]
+    assert len(set(r["ids"])) == 3  # distinct
+    day = a.get("/api/foods/missing-nutrients", params={"date": TODAY}).json()
+    assert day["total"] == 2 and day["ids"] == sorted(day["ids"])
+    assert a.get("/api/foods/missing-nutrients", params={"date": "2020-01-02"}).json()["total"] == 1
+    assert a.get("/api/foods/missing-nutrients", params={"date": "nope"}).status_code == 400
+
+
+def test_missing_nutrients_is_per_user(a, b, env):
+    mine = saved(name="Mine")
+    log(a, mine)
+    assert b.get("/api/foods/missing-nutrients").json() == {"ids": [], "total": 0}
+    # someone else's custom food that I logged cannot be refreshed by me, so it is not offered
+    with db.conn() as c:
+        c.execute("UPDATE foods SET source='custom', created_by=2 WHERE id=?", (mine["id"],))
+    assert a.get("/api/foods/missing-nutrients").json()["total"] == 0
+    assert b.get("/api/foods/missing-nutrients").json()["total"] == 0
+    with db.conn() as c:
+        c.execute("UPDATE foods SET created_by=1 WHERE id=?", (mine["id"],))
+    assert a.get("/api/foods/missing-nutrients").json()["ids"] == [mine["id"]]

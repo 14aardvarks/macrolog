@@ -337,6 +337,22 @@ def create_food(user: CurrentUser, body: dict = Body(...)):
         return saved
 
 
+@router.get("/foods/missing-nutrients")
+def missing_nutrients(user: CurrentUser, date: str | None = None):
+    """Ids of the foods I have logged (on `date` when given, else ever) that have a blank micronutrient, can be looked up
+    again and that I may refresh (custom and AI foods only when I created them). Oldest food first."""
+    uid = user["id"]
+    where, args = "e.user_id=?", [uid]
+    if date not in (None, ""):
+        where, args = where + " AND e.day=?", [*args, day_str(date)]
+    blank = " OR ".join(f"f.{k} IS NULL" for k in MICROS)
+    with db.conn() as c:
+        rows = c.execute(f"SELECT DISTINCT f.* FROM entries e JOIN foods f ON f.id=e.food_id WHERE {where} AND ({blank}) ORDER BY f.id",
+                         args).fetchall()
+    ids = [r["id"] for r in rows if (r["source"] not in ("custom", "ai") or r["created_by"] == uid) and lookup.refresh_kind(food_dict(r))]
+    return {"ids": ids, "total": len(ids)}
+
+
 @router.get("/foods/{food_id}")
 def get_food(food_id: int, user: CurrentUser):
     with db.conn() as c:
