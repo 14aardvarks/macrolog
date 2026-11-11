@@ -134,7 +134,7 @@ input[type=checkbox] { width: 24px; height: 24px; flex: none; accent-color: var(
 
 .cam { position: relative; margin-bottom: 12px; border-radius: 12px; overflow: hidden; background: #000; line-height: 0; }
 .cam[hidden] { display: none; }
-.video { display: block; width: 100%; max-height: 50vh; background: #000; }
+.video { display: block; width: 100%; height: clamp(150px, calc(100vh - 340px), 360px); height: clamp(150px, calc(100svh - 340px), 360px); object-fit: cover; background: #000; }
 .cam .cam-over { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); line-height: 1.4; white-space: nowrap;
   background: rgba(0, 0, 0, .6); color: #fff; border-color: rgba(255, 255, 255, .55); backdrop-filter: blur(4px); }
 
