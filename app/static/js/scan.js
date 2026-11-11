@@ -131,7 +131,8 @@ export function renderScan(root, ctx, opts = {}) {
     // still count it as a user gesture. Ask for the camera first, then load the barcode reader.
     let got;
     try {
-      got = await md.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+      // A sharper picture helps a lot with glare and small print, so ask for up to 1080p (the browser picks the closest).
+      got = await md.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
     } catch (e) {
       if (closed) return;
       const denied = e && (e.name === 'NotAllowedError' || e.name === 'SecurityError');
@@ -143,6 +144,7 @@ export function renderScan(root, ctx, opts = {}) {
     }
     if (closed) { got.getTracks().forEach((t) => t.stop()); return; }  // the screen was left while the browser asked
     stream = got;
+    keepFocused(got);
     let detect;
     try { detect = await getDetector(); } catch (e) {
       stop();
@@ -164,6 +166,13 @@ export function renderScan(root, ctx, opts = {}) {
       show(status, message('Could not start the camera. Take a photo instead, or type the digits below.', 'error'));
       startBtn.hidden = false;
     }
+  }
+
+  // Continuous autofocus where the camera offers it, so the barcode stays sharp when the phone moves.
+  function keepFocused(s) {
+    const track = s.getVideoTracks()[0];
+    const modes = track && track.getCapabilities ? (track.getCapabilities().focusMode || []) : [];
+    if (modes.includes('continuous')) track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
   }
 
   function loop(detect) {
