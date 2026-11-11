@@ -366,3 +366,11 @@ input[type=text], input[type=search], input[type=password], input[type=email], s
 .refresh { margin: 10px 0 16px; }
 .refresh .btn { margin-bottom: 8px; }
 .nutrients { margin-bottom: 16px; }
+
+/* Source badges. The word is always shown; Claude gets a filled badge so estimates stand out in light and dark. */
+.src-wrap { display: inline-flex; align-items: center; gap: 4px; margin-left: 2px; vertical-align: baseline; }
+.src { display: inline-block; padding: 0 6px; border: 1px solid var(--line); border-radius: 99px; font-size: .75rem; line-height: 1.5; color: var(--muted); white-space: nowrap; font-weight: 400; }
+.src-ai { background: var(--warn-bg); color: var(--text); border-color: var(--over); font-weight: 600; }
+.src-est { font-size: .75rem; color: var(--muted); }
+h1 .src { font-size: .875rem; vertical-align: middle; }
+.src-line { margin: 0 0 8px; }

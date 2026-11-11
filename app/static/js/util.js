@@ -304,6 +304,13 @@ export function sentence(text) {
   return t && t.split(/\s+/).length >= 4 && !/[.?!\u2026]$/.test(t) ? t + '.' : t;
 }
 
+// Where a food came from. The stored values are off, fdc, custom and ai (a barcode is only how a food was found, not a source).
+const SOURCE_LABELS = { off: 'Open Food Facts', fdc: 'USDA', custom: 'Custom', ai: 'Claude' };
+export function sourceLabel(source) { return Object.prototype.hasOwnProperty.call(SOURCE_LABELS, source) ? SOURCE_LABELS[source] : ''; }
+// Claude values are estimates read from a photo, so only they carry a note. Regular search results never do.
+export function isEstimate(source) { return source === 'ai'; }
+export function sourceNote(source) { return isEstimate(source) ? sentence('Values are estimates from Claude. Check them against the label') : ''; }
+
 // Text for an empty list. kind is favorites, yesterday or recipes. hasAny says the unfiltered list had items.
 export function emptyText(kind, meal, hasAny) {
   const w = mealWord(meal);

@@ -1,5 +1,5 @@
 import { api, setUnauthorizedHandler } from './api.js';
-import { h, clear, select, field, message, show, cameraIcon } from './dom.js';
+import { h, clear, select, field, message, show, cameraIcon, sourceBadge } from './dom.js';
 import {
   MEALS, MEAL_LABELS, parseDecimal, parseAmount, amountText, servingText, setAmountFormat, unitLabel, fmtNum, fmtAmount, groupByMeal, checkedItems, canSaveRecipe, rowAmountText, applyRowPick, draftFits, localDate, progressText, remainingText,
   sentence, newRecipeDraft, recipeAddRow, recipeSetRow, stepsBack, barWidth, debounce, digitsOnly, guessMeal, pctTotal, latestGuard, MEAL_FILTERS, MEAL_FILTER_LABELS, filterByMeal, filterSaved, pageOf, PAGE_SIZE, emptyText,
@@ -170,9 +170,10 @@ function mealSelect(value) {
 const defaultMeal = () => state.settings.default_meal || guessMeal(new Date().getHours());
 const unitText = amountText;
 
-function foodRow(title, sub, onclick, extra, macros) {
+function foodRow(title, sub, onclick, extra, macros, source) {
+  const badge = sourceBadge(source, true);
   return h('li', { class: 'item' },
-    h('button', { class: 'item-main', type: 'button', onclick }, h('span', { class: 'item-title' }, title), h('span', { class: 'item-sub' }, sub), macros && state.display.show_macro_bar !== false ? macroBar(macros) : null),
+    h('button', { class: 'item-main', type: 'button', onclick }, h('span', { class: 'item-title' }, title), h('span', { class: 'item-sub' }, sub, badge ? ' ' : null, badge), macros && state.display.show_macro_bar !== false ? macroBar(macros) : null),
     extra || null);
 }
 
@@ -324,7 +325,7 @@ function addScreen(root, params) {
       const empty = remote ? message('No results.') : message('Press Search to check Open Food Facts and USDA.');
       show(listBox, h('div', null, r.length ? h('ul', { class: 'list' }, r.map((f) => foodRow(foodTitle(f),
         (f.label_text || unitText(f.serving_amount, f.serving_unit)) + ' - ' + fmtNum(f.kcal, 0) + ' kcal',
-        () => go('picker', { foodId: f.id }), null, f))) : empty, r.length ? null : manual));
+        () => go('picker', { foodId: f.id }), null, f, f.source))) : empty, r.length ? null : manual));
     } catch (e) { if (mine === searchSeq) show(listBox, message(e.message, 'error')); }
   }
   const liveSearch = debounce(() => search(false), 400);
@@ -378,7 +379,7 @@ async function quickList(kind, meal) {
   return paged(items, (page) => h('ul', { class: 'list' }, page.map((it) => foodRow(foodTitle(it.food),
     useLast ? unitText(it.amount, it.unit) + ' - ' + fmtNum(it.kcal, 0) + ' kcal, ' + fmtNum(it.protein, 0) + ' g protein'
       : (it.food.label_text || unitText(it.food.serving_amount, it.food.serving_unit)) + ' - ' + fmtNum(it.food.kcal, 0) + ' kcal, ' + fmtNum(it.food.protein, 0) + ' g protein',
-    pickerOf({ food_id: it.food.id, amount: it.amount, unit: it.unit }, chosenMeal()), null, it.food))));
+    pickerOf({ food_id: it.food.id, amount: it.amount, unit: it.unit }, chosenMeal()), null, it.food, it.food.source))));
 }
 
 // With All the items are grouped under meal headings. With one meal chosen it is a plain list.
@@ -386,7 +387,7 @@ async function yesterdayList(meal) {
   const items = filterByMeal((await api.quick('yesterday', localDate())).items, meal);
   if (!items.length) return message(emptyText('yesterday', meal, true));
   const row = (it) => foodRow(foodTitle(it.food), unitText(it.amount, it.unit) + ' - ' + fmtNum(it.kcal, 0) + ' kcal',
-    pickerOf({ food_id: it.food.id, amount: it.amount, unit: it.unit }, meal === 'all' ? it.meal : meal), null, it.food);
+    pickerOf({ food_id: it.food.id, amount: it.amount, unit: it.unit }, meal === 'all' ? it.meal : meal), null, it.food, it.food.source);
   if (meal !== 'all') return paged(items, (page) => h('ul', { class: 'list' }, page.map(row)));
   return paged(items, (page) => h('div', null, groupByMeal(page, 'Other').map((g) => h('div', null,
     h('h2', { class: 'group' }, g.label, h('span', null, fmtNum(g.kcal, 0) + ' kcal')),

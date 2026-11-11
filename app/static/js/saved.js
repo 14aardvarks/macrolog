@@ -1,6 +1,6 @@
 // Saved screen: favorites, recipes and the foods I made, with meal tags, rename, delete and edit.
 import { api } from './api.js';
-import { h, clear, field, message, show, select } from './dom.js';
+import { h, clear, field, message, show, select, sourceBadge } from './dom.js';
 import { refreshAllControl } from './refresh.js';
 import { MEALS, MEAL_LABELS, toggleMeal, parseAmount, fmtAmount, unitLabel, fmtNum, amountText, SAVED_FILTERS, SAVED_FILTER_LABELS, filterSavedItems, pageOf, PAGE_SIZE } from './util.js';
 
@@ -23,13 +23,16 @@ export function chips(meals, save, status) {
   return box;
 }
 
+// Favorites have no sub line, so the source gets a small line of its own.
+const sourceLine = (food) => { const b = sourceBadge(food.source, true); return b ? h('span', { class: 'item-sub' }, b) : null; };
+
 function favoriteRow(fav, again) {
   const status = h('div', { 'aria-live': 'polite' });
   const remove = h('button', { class: 'btn', type: 'button', onclick: async () => {
     if (!window.confirm('Remove "' + fav.food.name + '" from your favorites, tags, Recent and Yesterday? Your past log stays.')) return;
     try { await api.removeFromLists(fav.food.id); await again(); } catch (e) { show(status, message(e.message, 'error')); }
   } }, 'Remove From My Lists');
-  return h('li', { class: 'saved-item' }, h('span', { class: 'item-title' }, title(fav.food)),
+  return h('li', { class: 'saved-item' }, h('span', { class: 'item-title' }, title(fav.food)), sourceLine(fav.food),
     chips(fav.meals, async (m) => { await api.favoriteTags(fav.food.id, m); fav.meals = m; }, status), h('div', { class: 'row wrap' }, remove), status);
 }
 
@@ -91,7 +94,7 @@ function foodRowMine(food, ctx, again) {
     try { await api.deleteFood(food.id); await again(); } catch (e) { show(status, message(e.message, 'error')); }
   };
   return h('li', { class: 'saved-item' }, h('span', { class: 'item-title' }, title(food)),
-    h('span', { class: 'item-sub' }, amountText(food.serving_amount, food.serving_unit) + ' - ' + fmtNum(food.kcal, 0) + ' kcal'),
+    h('span', { class: 'item-sub' }, amountText(food.serving_amount, food.serving_unit) + ' - ' + fmtNum(food.kcal, 0) + ' kcal', ' ', sourceBadge(food.source, true)),
     h('div', { class: 'row wrap' }, h('button', { class: 'btn', type: 'button', onclick: () => ctx.go('editfood', { food }) }, 'Edit'),
       h('button', { class: 'btn', type: 'button', onclick: del }, 'Delete')), status);
 }

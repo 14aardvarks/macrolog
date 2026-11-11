@@ -1,4 +1,4 @@
-import { sentence } from './util.js';
+import { sentence, sourceLabel, isEstimate, sourceNote } from './util.js';
 
 // Tiny DOM helpers. Text always goes through textContent / text nodes, never innerHTML.
 
@@ -76,4 +76,19 @@ export function cameraIcon() {
     'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true', focusable: 'false', class: 'icon' },
   svg('path', { d: 'M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z' }),
   svg('circle', { cx: '12', cy: '13', r: '3.5' }));
+}
+
+// A tiny text badge naming where a food came from, or null when the source is unknown. The word is always shown, so color is never the only cue.
+// Claude foods also get the word Estimate, so a list row says the values are not from a database.
+export function sourceBadge(source, withEstimate) {
+  const label = sourceLabel(source);
+  if (!label) return null;
+  const est = withEstimate && isEstimate(source);
+  return h('span', { class: 'src-wrap' }, h('span', { class: 'src src-' + source }, label), est ? h('span', { class: 'src-est' }, 'Estimate') : null);
+}
+
+// A line for the picker and the food form: the badge, and for Claude foods the estimate note.
+export function sourceLine(source) {
+  const b = sourceBadge(source);
+  return b ? h('p', { class: 'sub src-line' }, 'Source ', b, isEstimate(source) ? ' ' + sourceNote(source) : null) : null;
 }

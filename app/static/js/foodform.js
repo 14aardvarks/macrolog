@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { h, field, message, show, select } from './dom.js';
+import { h, field, message, show, select, sourceLine } from './dom.js';
 import { refreshControl } from './refresh.js';
 import { sentence, canLookUp, parseDecimal, fmtAmount, MEALS, MEAL_LABELS, guessMeal, MICROS } from './util.js';
 
@@ -44,6 +44,7 @@ export function renderFoodForm(root, opts, ctx) {
   const form = h('form', { class: 'screen', novalidate: '', onsubmit: submit },
     h('div', { class: 'bar' }, h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back')),
     h('h1', null, edit ? 'Edit Food' : fromAi ? 'Check What Claude Read' : 'Enter Food Manually'),
+    edit || fromAi ? sourceLine(draft.source) : null,
     h('p', { class: 'sub' }, locked ? 'This food is in your log or a recipe, so only the name, brand and label text can change.' : fromAi ? 'Fix anything that looks wrong and fill any empty boxes. Values are per label serving.'
       : 'Values are per label serving, as printed.'),
     warns.length ? h('ul', { class: 'warnings', role: 'alert' }, warns) : null,

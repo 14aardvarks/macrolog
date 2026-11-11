@@ -28,6 +28,7 @@ Dark mode follows the device setting, and the layout also works on desktop.
 - Each food shows a thin bar with its calorie share from carbs, protein and fat (blue, green, red) on Today, in Add lists and search results, and live in the picker.
 - Installable as an app, with PNG and maskable icons and a short launch splash. iOS apple-touch-startup-image sizes are not provided, so iOS shows its own blank launch screen briefly.
 - Light and dark themes follow the system setting.
+- Each food shows where it came from (Open Food Facts, USDA, Custom or Claude). Claude values are marked as estimates.
 - Optional: Claude reads a nutrition label from one to three photos. You check the draft before anything is saved.
 - Sign in with a local password, with optional single sign-on through OpenID Connect (authentik), set up entirely from the Admin page.
 - An Admin page for users, sign-in, Claude and food database settings, with lockout safeguards and an audit log.

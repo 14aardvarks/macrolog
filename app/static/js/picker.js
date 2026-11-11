@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { h, clear, select, message, show } from './dom.js';
+import { h, clear, select, message, show, sourceLine } from './dom.js';
 import { fillMacroBar } from './chart.js';
 import { microGrid } from './micros.js';
 import { refreshControl } from './refresh.js';
@@ -113,7 +113,7 @@ export async function renderPicker(root, params, ctx) {
     h('div', { class: 'bar' },
       h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back'), h('span', { class: 'spacer' }), adjust != null ? null : star),
     h('h1', null, food.name),
-    sub, baseLine,
+    sub, sourceLine(food.source), baseLine,
     h('div', { class: 'pick-row' },
       h('div', { class: 'pick-col' }, h('span', { class: 'pick-cap' }, 'Amount'), amtWheel.wrap, typeBox, typeBtn),
       h('div', { class: 'pick-col' }, h('span', { class: 'pick-cap' }, 'Unit'), unitWheel.wrap)),

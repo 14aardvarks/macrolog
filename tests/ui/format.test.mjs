@@ -155,3 +155,19 @@ test('macroBarParts is null when all macros are zero or missing', () => {
 test('macroBarLabel reads for screen readers', () => {
   assert.equal(macroBarLabel({ carbs: 50, protein: 30, fat: 20 }), 'Carbs 50%, Protein 30%, Fat 20%');
 });
+
+import { sourceLabel, isEstimate, sourceNote } from '../../app/static/js/util.js';
+
+test('sourceLabel names each stored source and nothing else', () => {
+  assert.equal(sourceLabel('off'), 'Open Food Facts');
+  assert.equal(sourceLabel('fdc'), 'USDA');
+  assert.equal(sourceLabel('custom'), 'Custom');
+  assert.equal(sourceLabel('ai'), 'Claude');
+  for (const bad of [undefined, null, '', 'barcode', 'toString', '__proto__']) assert.equal(sourceLabel(bad), '');
+});
+
+test('only Claude foods are estimates and carry the note', () => {
+  assert.equal(isEstimate('ai'), true);
+  for (const s of ['off', 'fdc', 'custom', undefined]) { assert.equal(isEstimate(s), false); assert.equal(sourceNote(s), ''); }
+  assert.equal(sourceNote('ai'), 'Values are estimates from Claude. Check them against the label.');
+});

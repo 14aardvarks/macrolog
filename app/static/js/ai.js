@@ -1,6 +1,6 @@
 import { api } from './api.js';
-import { h, field, message, show, loadImage } from './dom.js';
-import { fitSize, photosText, centsText } from './util.js';
+import { h, field, message, show, loadImage, sourceBadge } from './dom.js';
+import { fitSize, photosText, centsText, sourceNote } from './util.js';
 import { confirmClaude } from './notice.js';
 import { renderFoodForm } from './foodform.js';
 
@@ -28,7 +28,7 @@ export async function renderAi(root, params, ctx) {
   try { st = await api.aiStatus(); } catch (e) { st = { enabled: false }; }
   const manualBtn = h('button', { class: 'btn', type: 'button', onclick: () => ctx.go('manual', { barcode: params.barcode }) }, 'Enter Manually');
   if (!st.enabled) {
-    root.appendChild(h('section', { class: 'screen' }, h('h1', null, 'Ask Claude'),
+    root.appendChild(h('section', { class: 'screen' }, h('h1', null, 'Ask Claude ', sourceBadge('ai')),
       message('Claude is not set up on this server. You can still enter the food by hand.'), manualBtn));
     return;
   }
@@ -42,7 +42,8 @@ export async function renderAi(root, params, ctx) {
 
   root.appendChild(h('section', { class: 'screen' },
     h('div', { class: 'bar' }, h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back')),
-    h('h1', null, 'Ask Claude'),
+    h('h1', null, 'Ask Claude ', sourceBadge('ai')),
+    h('p', { class: 'sub' }, 'This is not a food database search. Claude reads your photo and estimates the values. ' + sourceNote('ai')),
     h('p', { class: 'sub' }, 'Photograph the nutrition label. If you can, get the barcode in the same photo. Up to 3 photos.'),
     h('p', { class: 'sub' }, 'Used ' + st.used_this_month + ' of ' + st.cap + ' this month.'),
     h('label', { class: 'btn' }, 'Choose or Take Photos', files), list, hint, code, status,
