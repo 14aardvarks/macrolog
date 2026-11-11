@@ -273,6 +273,19 @@ def test_entry_snapshot_survives_food_change_and_rounds(a):
     assert day["entries"][0]["name"] == "Bread" and day["entries"][0]["kcal"] == e["kcal"]
 
 
+def test_day_entries_carry_the_food_source(a):
+    custom = food(a, BREAD)
+    ai = food(a, {**BREAD, "name": "Photo Bar", "source": "ai"})
+    log(a, custom, 1, day="2025-03-01")
+    log(a, ai, 1, day="2025-03-01")
+    gone = log(a, custom, 2, day="2025-03-01")
+    with db.conn() as c:
+        c.execute("UPDATE entries SET food_id=NULL WHERE id=?", (gone["id"],))
+    got = a.get("/api/day", params={"day": "2025-03-01"}).json()["entries"]
+    assert [e["source"] for e in got] == ["custom", "ai", None]
+    assert "source" not in gone
+
+
 def test_day_totals_targets_percent_remaining(a):
     f = food(a, BREAD)
     log(a, f, 2, day="2025-03-01")

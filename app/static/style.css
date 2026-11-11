@@ -374,5 +374,7 @@ input[type=text], input[type=search], input[type=password], input[type=email], s
 .src-est { font-size: .75rem; color: var(--muted); }
 h1 .src { font-size: .875rem; vertical-align: middle; }
 .src-line { margin: 0 0 8px; }
+.day-table .src-sub { margin-top: 2px; font-weight: 400; line-height: 1.3; }
+.day-table .src-sub .src-wrap { margin-left: 0; flex-wrap: wrap; }
 
 .entries-body .item-title { font-weight: 400; }

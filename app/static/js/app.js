@@ -254,7 +254,7 @@ function entryRow(e, root) {
     try { await api.deleteEntry(e.id); await go('today', {}, true); } catch (err) { show(root.querySelector('[aria-live]'), message(err.message, 'error')); }
   } }, '×');
   if (e.food_id == null) return h('li', { class: 'item' }, h('div', { class: 'item-main' }, h('span', { class: 'item-title' }, title), h('span', { class: 'item-sub' }, sub), state.display.show_macro_bar !== false ? macroBar(e) : null), del);
-  return foodRow(title, sub, open, del, e);
+  return foodRow(title, sub, open, del, e, e.source);
 }
 
 // One Save as recipe button per meal group. It opens a checklist of that group's entries, all ticked.

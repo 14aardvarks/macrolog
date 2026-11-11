@@ -619,14 +619,15 @@ def day_micros(rows, targets: dict) -> dict:
 def get_day(user: CurrentUser, day: str | None = None):
     day = day_str(day)
     with db.conn() as c:
-        rows = c.execute("SELECT * FROM entries WHERE user_id=? AND day=? ORDER BY id", (user["id"], day)).fetchall()
+        rows = c.execute("SELECT e.*, f.source AS source FROM entries e LEFT JOIN foods f ON f.id=e.food_id "
+                         "WHERE e.user_id=? AND e.day=? ORDER BY e.id", (user["id"], day)).fetchall()
         goals = read_goals(c, user["id"])
         mtargets = micro_targets(c, user["id"])
     sums = {k: sum(r[k] or 0 for r in rows) for k in (*MACROS, "fiber")}
     targets = {"kcal": float(goals["kcal"])}
     for key, (pct, kcal_g) in GOAL_KEYS.items():
         targets[key] = goals["kcal"] * goals[pct] / 100 / kcal_g
-    return {"day": day, "entries": [entry_dict(r) for r in rows],
+    return {"day": day, "entries": [{**entry_dict(r), "source": r["source"]} for r in rows],
             "totals": {k: r1(v) for k, v in sums.items()},
             "targets": {k: r1(v) for k, v in targets.items()},
             "percent": {k: math.floor(100 * sums[k] / targets[k] + 0.5) if targets[k] else 0 for k in MACROS},

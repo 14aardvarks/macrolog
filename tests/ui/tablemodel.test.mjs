@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { todayView, tableColumns, columnHeader, cellText, sumColumn, buildTable } from '../../app/static/js/tablemodel.js';
-import { DEFAULT_DISPLAY } from '../../app/static/js/util.js';
+import { DEFAULT_DISPLAY, sourceLabel, isEstimate } from '../../app/static/js/util.js';
 
 test('today view comes from the display setting and falls back to list', () => {
   assert.equal(todayView(DEFAULT_DISPLAY), 'list');
@@ -55,4 +55,12 @@ test('buildTable handles an empty day', () => {
   assert.equal(t.groups.length, 0);
   assert.equal(t.totals[0], '0');
   assert.equal(t.totals[4], '-');
+});
+
+test('table rows keep the entry source for the badge and the source words match the lists', () => {
+  const t = buildTable([{ id: 1, meal: null, name: 'A', kcal: 1, source: 'ai' }, { id: 2, meal: null, name: 'B', kcal: 1, source: null }], DEFAULT_DISPLAY);
+  const rows = t.groups.flatMap((g) => g.rows);
+  assert.deepEqual(rows.map((r) => r.entry.source), ['ai', null]);
+  assert.deepEqual(['off', 'fdc', 'custom', 'ai', null].map(sourceLabel), ['Open Food Facts', 'USDA', 'Custom', 'Claude', '']);
+  assert.deepEqual(['off', 'ai'].map(isEstimate), [false, true]);
 });
