@@ -230,6 +230,17 @@ docker compose exec macrolog python -m app.auth_cli list-users
 
 `unset-config KEY` removes any saved setting, for example `oidc_issuer`, so `.env` applies again. `remove-admin` and `disable-user` refuse to leave the app without an active administrator. `add-user`, `set-email` and `disable-user` also exist. Passwords are always read with a no-echo prompt, so use `-it` for commands that ask for one.
 
+## Prebuilt image
+
+Every push to `main` publishes `ghcr.io/14aardvarks/macrolog` through GitHub Actions, tagged `latest`, the short commit SHA and the full commit SHA. There are two ways to deploy.
+
+- Build locally. The default `build: .` in `docker-compose.yml` builds the image from the checked out source, for example with `docker compose up -d --build`. Use this to deploy a specific commit.
+- Pull the prebuilt image. Replace `build: .` with the commented `image:` line in `docker-compose.yml`, then update with `docker compose pull && docker compose up -d`, or Re-pull image in Portainer. Use a SHA tag instead of `latest` to pin a version.
+
+The pull option works without a login only when the package is Public. After the first successful run, open the package on GitHub (profile, Packages, macrolog, Package settings, Danger Zone, Change visibility) and set it to Public. Until then pulls need a login with `docker login ghcr.io`.
+
+The workflow builds linux/amd64 only. A comment in `.github/workflows/publish.yml` shows how to add linux/arm64.
+
 ## Backups
 
 All data is one SQLite file, `macrolog.db`, in the `macrolog-data` volume. While the app runs there are also `-wal` and `-shm` files next to it. Copying the raw files while the app runs can miss recent changes. Use SQLite's backup function, which is safe while the app runs:

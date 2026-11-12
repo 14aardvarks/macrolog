@@ -1,6 +1,10 @@
 services:
   macrolog:
     build: .
+    # Alternative: pull the prebuilt image instead of building it here.
+    # Replace the build line above with the image line below. The package must be Public
+    # on GitHub first, see "Prebuilt image" in the README. Pin a commit SHA tag to match a build.
+    # image: ghcr.io/14aardvarks/macrolog:latest
     env_file: .env
     ports:
       # Bound to localhost so only a reverse proxy on this host can reach it.
