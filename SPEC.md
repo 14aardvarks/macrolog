@@ -175,6 +175,7 @@ POST /api/entries   {food_id, amount, unit, day?, meal?} -> entry     # meal in 
 PATCH /api/entries/{id} {amount?, unit?, meal?}   DELETE /api/entries/{id}   # only own entries
 GET  /api/preview?food_id=&amount=&unit=  -> units.scale result        # live macros while scrolling the picker
 GET  /api/day?day=YYYY-MM-DD -> {"day","entries":[...],"totals","targets","percent","remaining"}   # day defaults to today (server local date; accept ?tz offset optional)
+        # entries: plain entries (kind "food") and one item per recipe log (kind "recipe"), see "Recipe Logs on Today" below
 GET  /api/quick/favorites | /api/quick/yesterday | /api/quick/recent -> {"items":[{"food": Food, "amount","unit","servings","kcal","protein"}]}  # amount/unit = last used, else the package serving (units.default_pick)
 GET  /api/quick/recent?meal=breakfast|lunch|dinner|snack|dessert|all   # Past Foods (the Add ingredient finder). With a meal: foods the user logged as that meal
         # (an entry of that food with that meal) plus foods never logged with any meal (untagged, shown under every meal like untagged favorites), newest first,
@@ -242,6 +243,8 @@ POST /api/meals/{id}/log {"day"?,"meal"?,"items"?:[{"food_id","amount","unit"}],
         # whole recipes, every saved amount scaled by it (core.recipe_fraction). Without them the whole saved recipe, as before.
         # logs the matched rows only (core.need_matched); unmatched, skipped and Check Amount rows are left out, never a 409.
         # The one refusal is 400 "Match at least one ingredient to log this recipe." when no row is matched
+        # Every log is one recipe log (entry_groups row, entries.group_id); with items, amount and unit only name its portion.
+        # Answers {"entries": [...], "group": recipe log item}
 POST /api/meals/import {"name","servings"?: number 0..1000,"meals"?,"steps"?:[str],"ingredients":[{"text"?,"amount"?,"unit"?,"name","note"?}]} (1..100) -> meal
         # saves an imported recipe at once with every ingredient unmatched
 GET  /api/meals/{id} -> meal
@@ -491,7 +494,7 @@ Screens: Login, Today, Add, Recipes, Picker, Claude fallback, Settings. Bottom n
   When one is installed and waiting while another controls the page (or a new worker took over by itself), a sticky bar at the top of the app
   reads "Update Available" with a Reload button (role status, light and dark). Reload posts `{type: 'SKIP_WAITING'}` to the waiting worker (sw.js
   answers with skipWaiting), then reloads on controllerchange (with a short timer as a fallback). A fresh install, with no earlier controller,
-  shows nothing. The page also asks the registration for a newer worker whenever it becomes visible. Bump the sw.js cache name (now v42) with
+  shows nothing. The page also asks the registration for a newer worker whenever it becomes visible. Bump the sw.js cache name (now v50) with
   every change to the shell and list new js files in SHELL.
 - Do not ship a mock server. Test pure helpers (picker math, number formatting, day grouping) with node scripts in tests/ui,
   run with `node --test tests/ui`. Keep those helpers in their own module (js/util.js) so node can import them.
@@ -518,6 +521,45 @@ Maximize compatibility. Every feature needs a working fallback, and nothing may 
 ## Quality bar
 
 Every module ships with tests that run offline in under 10 seconds. No secrets in code. No print debugging. Clear error messages. Keep functions short.
+
+## Recipe Logs on Today (v50)
+
+- A logged recipe is one row on Today. Every ingredient is still its own entry (snapshot nutrients, history, totals, micros,
+  goals and Refresh Nutrients unchanged), linked by `entries.group_id` (INTEGER, null = a plain entry, added in place by core.init with
+  index entries_group) to one `entry_groups` row: `id, user_id, day, meal, meal_id` (the recipe, no foreign key, so a log outlives a
+  deleted recipe), `name` (the recipe name at log time), `amount, unit` (the portion: serving, pct or a yield unit), `fraction` (share
+  of the whole recipe) and `portions` (JSON snapshot of meal.portions, so the log rescales even after the recipe changes or is deleted).
+  `recipe_logs` (tags and Most Used counts) is unchanged and separate. Entries logged from recipes before v50 have no link and stay
+  separate rows; there is no data to group them.
+- POST /api/meals/{id}/log creates the group. Without amount the portion is the whole recipe (servings servings); with items (the Add
+  checklist) amount and unit, when sent, only name the portion.
+- /api/day `entries` holds plain entries (`kind` "food", every entry also carries `group_id`) and, at the place of its first ingredient, one
+  item per recipe log: `{"kind": "recipe", "id": null, "group_id", "meal_id", "day", "meal", "name", "brand": null, "food_id": null,
+  "source": null, "amount", "unit", "fraction", "servings": null, "portions", "parts": [entries], kcal, carbs, protein, fat (sums, 2 places)
+  and every micronutrient (sum of the parts that know it, null when none)}`. totals, percent, remaining and micros (known and count count
+  ingredient rows, as before) are computed from the ingredient rows exactly as before.
+```
+GET    /api/entry-groups/{id} -> recipe log item          # own only, 404 otherwise
+PATCH  /api/entry-groups/{id} {amount?, unit?, meal?}      # amount and unit: one of its portions (core.recipe_fraction, at most 100 whole
+       # recipes); every row is scaled by new fraction / old fraction and worked out again from its food like PATCH /api/entries
+       # (the snapshot is scaled when the food is gone or its unit unreachable). meal moves every row.
+DELETE /api/entry-groups/{id} -> {"deleted": id}           # removes every row of the log
+POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log item   # logs it again as a new group (Yesterday on Add);
+       # meal defaults to the log's own; counts in recipe_logs and tags the recipe when it still exists and a meal is given
+```
+  PATCH /api/entries/{id} with another meal takes that row out of its group; deleting the last row of a group deletes the group.
+  GET /api/quick/yesterday lists a recipe log once (`kind` "recipe", group_id, meal_id, name, amount, unit, fraction, portions, meal, kcal,
+  carbs, protein, fat, parts = row count), ordered with the food items by entry id; its rows are not listed as foods. Past Foods (recent)
+  and meal counts still see every ingredient row. POST /api/meals/from-meal takes the ingredient entry ids, so a recipe saved from Today
+  holds ingredients, never a recipe inside a recipe.
+- Client: recipeimport.js `isRecipeLog`, `recipeAmountText` ("1 serving", "1/2 serving", "25% of the recipe", "250 g"),
+  `entryAmountText`, `saveRecipeRows` and `tickedIds` (Save As Recipe: one ticked row per recipe log standing for its parts), `scaledLog`
+  (live preview), `REMOVE_RECIPE_CONFIRM` ("Remove This Recipe From Today?"). Today's list row and table row look like an entry with a
+  Recipe badge in place of the source; tapping opens js/recipelog.js (`recipelog` screen, params groupId): name, portion and ingredient
+  count, combined calories, macros, macro bar and shown micros (live while the amount changes), Change (Amount and Of the recipe unit,
+  Meal, Save Changes, one PATCH with what changed), the read only Ingredients (amount, kcal, source) and Remove Recipe. Remove Recipe and the
+  row's X ask REMOVE_RECIPE_CONFIRM first and delete the group. Yesterday on Add shows a recipe log as one row; tapping opens the same
+  screen with params.copy (heading Log Again, button Log, no Remove, Add tab marked), which posts /copy for today.
 
 ## Match With Search, editing on Match Ingredients, Add order (v42)
 

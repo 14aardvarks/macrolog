@@ -21,7 +21,9 @@ import { renderSaved } from './saved.js';
 import { renderRecipe } from './recipe.js';
 import { renderRecipes, renderRecipeView } from './recipes.js';
 import { renderImport, renderReview, renderMatch } from './recipeflow.js';
-import { recipeSubText, notCounted, notCountedText, portionUnits, portionFraction, portionItems, portionNote, portionAmount, autoMatchOn } from './recipeimport.js';
+import { recipeSubText, notCounted, notCountedText, portionUnits, portionFraction, portionItems, portionNote, portionAmount, autoMatchOn,
+  isRecipeLog, recipeAmountText, saveRecipeRows, tickedIds, REMOVE_RECIPE_CONFIRM } from './recipeimport.js';
+import { renderRecipeLog } from './recipelog.js';
 import { renderClaudeSection, renderSignIn } from './claudekey.js';
 import { refreshLoggedControl } from './refresh.js';
 import { startUpdates } from './update.js';
@@ -30,7 +32,7 @@ const main = document.getElementById('main');
 const nav = document.getElementById('nav');
 const state = { user: null, settings: { start_screen: 'today', default_meal: null, use_last: true, confirm_ai: true, amount_format: 'fraction' }, display: DEFAULT_DISPLAY, cleanup: null, depth: 0, tab: 'favorites', addMeal: null, quickMeal: null, draft: null, recipe: null, source: null, aiSt: null, claude: null,
   importInput: null, importDraft: null, importBase: 0, proposals: {}, selections: {}, matchFocus: null, matchBase: {}, matchMethod: 'search', autoMatch: null };  // Import Recipe and Match Ingredients  // addMeal, source (null = the Default Search Source setting), aiSt (last /api/ai/status) and claude (last Claude estimate) live for the session only
-const NAV_OF = { today: 'today', settings: 'settings', admin: 'settings', saved: 'settings', editfood: 'settings',
+const NAV_OF = { today: 'today', recipelog: 'today', settings: 'settings', admin: 'settings', saved: 'settings', editfood: 'settings',
   recipes: 'recipes', recipeview: 'recipes', recipe: 'recipes', import: 'recipes', importreview: 'recipes', match: 'recipes' };  // every other screen belongs to Add
 const FINDER = ['add', 'picker', 'scan', 'lookup', 'manual', 'ai'];  // screens New Recipe and Match Ingredients borrow from Add
 
@@ -263,8 +265,9 @@ function mealSelect(value) {
 const defaultMeal = () => state.settings.default_meal || guessMeal(new Date().getHours());
 const unitText = amountText;
 
-function foodRow(title, sub, onclick, extra, macros, source) {
-  const badge = sourceBadge(source, true);
+// tag: a plain text badge instead of a source (Recipe for a logged recipe).
+function foodRow(title, sub, onclick, extra, macros, source, tag) {
+  const badge = tag ? h('span', { class: 'src-wrap' }, h('span', { class: 'src src-recipe' }, tag)) : sourceBadge(source, true);
   return h('li', { class: 'item' },
     h('button', { class: 'item-main', type: 'button', onclick }, h('span', { class: 'item-title' }, title), h('span', { class: 'item-sub' }, sub, badge ? ' ' : null, badge), macros && state.display.show_macro_bar !== false ? macroBar(macros) : null),
     extra || null);
@@ -316,9 +319,9 @@ async function todayScreen(root) {
     g.entries.length ? h('ul', { class: 'list' }, g.entries.map((e) => entryRow(e, root))) : null,
     g.entries.length ? saveMealBox(g, status) : null));
   const removeEntry = async (e) => {
-    try { await api.deleteEntry(e.id); await go('today', {}, true); } catch (err) { show(status, message(err.message, 'error')); }
+    try { if (await removeRow(e)) await go('today', {}, true); } catch (err) { show(status, message(err.message, 'error')); }
   };
-  const openEntry = (e) => go('picker', { foodId: e.food_id, entryId: e.id, amount: e.amount, unit: e.unit, meal: e.meal });
+  const openEntry = (e) => openRow(e);
   const disp = state.display;
   const micros = microSection(d, disp, (open) => { ctx.saveDisplay({ micros_open: open }).catch(() => {}); });
   const nutrients = disp.show_macros !== false || micros ? h('div', { class: 'nutrients' },
@@ -344,13 +347,26 @@ async function todayScreen(root) {
   root.appendChild(h('section', { class: 'screen wide' }, h('h1', null, 'Today'), grid));
 }
 
+// A Today row opens the picker for a food, or the recipe log screen for a logged recipe (one group of ingredient rows).
+const openRow = (e) => (isRecipeLog(e) ? go('recipelog', { groupId: e.group_id })
+  : go('picker', { foodId: e.food_id, entryId: e.id, amount: e.amount, unit: e.unit, meal: e.meal }));
+// Removes a food entry at once, or a whole recipe log after a confirm. Resolves false when the confirm was declined.
+async function removeRow(e) {
+  if (!isRecipeLog(e)) { await api.deleteEntry(e.id); return true; }
+  if (!window.confirm(REMOVE_RECIPE_CONFIRM)) return false;
+  await api.deleteGroup(e.group_id);
+  return true;
+}
+
 function entryRow(e, root) {
-  const sub = unitText(e.amount, e.unit) + ' - ' + fmtNum(e.kcal, 0) + ' kcal';
+  const recipe = isRecipeLog(e);
+  const sub = (recipe ? recipeAmountText(e.amount, e.unit) : unitText(e.amount, e.unit)) + ' - ' + fmtNum(e.kcal, 0) + ' kcal';
   const title = e.brand ? e.name + ' (' + e.brand + ')' : e.name;
-  const open = () => go('picker', { foodId: e.food_id, entryId: e.id, amount: e.amount, unit: e.unit, meal: e.meal });
+  const open = () => openRow(e);
   const del = h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Remove ' + e.name, onclick: async () => {
-    try { await api.deleteEntry(e.id); await go('today', {}, true); } catch (err) { show(root.querySelector('[aria-live]'), message(err.message, 'error')); }
+    try { if (await removeRow(e)) await go('today', {}, true); } catch (err) { show(root.querySelector('[aria-live]'), message(err.message, 'error')); }
   } }, '×');
+  if (recipe) return foodRow(title, sub, open, del, e, null, 'Recipe');
   if (e.food_id == null) return h('li', { class: 'item' }, h('div', { class: 'item-main' }, h('span', { class: 'item-title' }, title), h('span', { class: 'item-sub' }, sub), state.display.show_macro_bar !== false ? macroBar(e) : null), del);
   return foodRow(title, sub, open, del, e, e.source);
 }
@@ -360,8 +376,9 @@ function saveMealBox(g, status) {
   const box = h('div', { class: 'save-meal' });
   const reset = () => show(box, h('button', { class: 'btn', type: 'button', onclick: ask }, 'Save As Recipe'));
   function ask() {
-    const rows = g.entries.filter((e) => e.food_id != null).map((e) => ({ e,
-      box: h('input', { type: 'checkbox', checked: true, 'aria-label': 'Include ' + e.name }) }));
+    // A logged recipe is one row here but stands for its ingredient rows, so the new recipe holds ingredients.
+    const rows = saveRecipeRows(g.entries).map((r) => ({ r,
+      box: h('input', { type: 'checkbox', checked: true, 'aria-label': 'Include ' + r.name }) }));
     const name = field('Recipe name', { autocomplete: 'off', value: g.label });
     const save = h('button', { class: 'btn primary', type: 'submit' }, 'Save');
     const sync = () => { save.disabled = !canSaveRecipe(rows.filter((r) => r.box.checked).length, name.input.value); };
@@ -369,7 +386,7 @@ function saveMealBox(g, status) {
     name.input.addEventListener('input', sync);
     show(box, h('form', { class: 'sheet', onsubmit: async (ev) => {
       ev.preventDefault();
-      const ids = rows.filter((r) => r.box.checked).map((r) => r.e.id);
+      const ids = tickedIds(rows.map((x) => x.r), rows.map((x) => x.box.checked));
       if (save.disabled) return;
       try {
         const m = await api.mealFromMeal(name.input.value.trim(), g.meal, ids, localDate());
@@ -377,8 +394,8 @@ function saveMealBox(g, status) {
         reset();
       } catch (err) { show(status, message(err.message, 'error')); }
     } },
-    h('ul', { class: 'list' }, rows.map((r) => h('li', { class: 'item meal-item' }, r.box,
-      h('span', { class: 'item-title' }, r.e.name), h('span', { class: 'unit' }, unitText(r.e.amount, r.e.unit))))),
+    h('ul', { class: 'list' }, rows.map((x) => h('li', { class: 'item meal-item' }, x.box,
+      h('span', { class: 'item-title' }, x.r.name), h('span', { class: 'unit' }, x.r.text)))),
     name, h('div', { class: 'row' }, save, h('button', { class: 'btn ghost', type: 'button', onclick: reset }, 'Cancel'))));
     sync();
   }
@@ -558,8 +575,11 @@ async function quickList(kind, meal) {
 async function yesterdayList(meal) {
   const items = filterByMeal((await api.quick('yesterday', localDate())).items, meal);
   if (!items.length) return message(emptyText('yesterday', meal, true));
-  const row = (it) => foodRow(foodTitle(it.food), unitText(it.amount, it.unit) + ' - ' + fmtNum(it.kcal, 0) + ' kcal',
-    pickerOf({ food_id: it.food.id, amount: it.amount, unit: it.unit }, meal === 'all' ? it.meal : meal), null, it.food, it.food.source);
+  const row = (it) => (isRecipeLog(it)  // a recipe log is one row and is logged again as one group
+    ? foodRow(it.name, recipeAmountText(it.amount, it.unit) + ' - ' + fmtNum(it.kcal, 0) + ' kcal',
+      () => go('recipelog', { groupId: it.group_id, copy: true, meal: meal === 'all' ? it.meal : meal, nav: 'add' }), null, it, null, 'Recipe')
+    : foodRow(foodTitle(it.food), unitText(it.amount, it.unit) + ' - ' + fmtNum(it.kcal, 0) + ' kcal',
+      pickerOf({ food_id: it.food.id, amount: it.amount, unit: it.unit }, meal === 'all' ? it.meal : meal), null, it.food, it.food.source));
   if (meal !== 'all') return paged(items, (page) => h('ul', { class: 'list' }, page.map(row)));
   return paged(items, (page) => h('div', null, groupByMeal(page, 'Other').map((g) => h('div', null,
     h('h2', { class: 'group' }, g.label, h('span', null, fmtNum(g.kcal, 0) + ' kcal')),
@@ -659,7 +679,8 @@ async function mealScreen(root, params) {
   async function log() {
     const { items, error } = checkedItems(rows.map((r) => ({ checked: r.box.checked, amount: r.amt.value, food_id: r.it.food_id, unit: r.unit, name: r.it.food.name })));
     if (error) { show(status, message(error, 'error')); return; }
-    try { await api.logMeal(meal.id, { items, meal: mealSel.value === 'none' ? null : mealSel.value }); await go('today', {}, true); } catch (e) {
+    // amount and unit name the portion of the recipe log on Today; the rows themselves come from items
+    try { await api.logMeal(meal.id, { items, amount: shareAmount, unit, meal: mealSel.value === 'none' ? null : mealSel.value }); await go('today', {}, true); } catch (e) {
       show(status, message(e.message, 'error'));
     }
   }
@@ -771,6 +792,7 @@ const SCREENS = {
   saved: (root) => renderSaved(root, ctx),
   recipes: (root) => renderRecipes(root, ctx),
   recipeview: (root, p) => renderRecipeView(root, p, ctx),
+  recipelog: (root, p) => renderRecipeLog(root, p, ctx),
   recipe: (root) => { if (!state.recipe) state.recipe = newRecipeDraft(); state.recipe.depth = state.depth; return renderRecipe(root, ctx); }, editfood: (root, p) => renderFoodForm(root, { edit: p.food }, ctx),
   picker: (root, p) => (state.recipe && state.recipe.match && p.adjust && p.entryId == null ? autoMatch(root, p) : renderPicker(root, p, ctx)),
   scan: (root, p) => { const auto = !!p.autostart; p.autostart = false; return renderScan(root, ctx, { autostart: auto }); },

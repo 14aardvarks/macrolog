@@ -37,7 +37,7 @@ NEW_MICROS = MICROS[1:]
 FOOD_COLS = ("id", "source", "source_id", "barcode", "name", "brand", "serving_amount", "serving_unit",
              "serving_g", "serving_ml", "label_text", "kcal", "carbs", "protein", "fat", *MICROS)
 ENTRY_COLS = ("id", "day", "meal", "food_id", "name", "brand", "amount", "unit", "servings",
-              "kcal", "carbs", "protein", "fat", *MICROS)
+              "kcal", "carbs", "protein", "fat", *MICROS, "group_id")
 DEFAULT_GOALS = {"kcal": 3000, "carb_pct": 50, "protein_pct": 30, "fat_pct": 20}
 GOAL_KEYS = {"carbs": ("carb_pct", 4), "protein": ("protein_pct", 4), "fat": ("fat_pct", 9)}  # pct key, kcal per g
 
@@ -82,6 +82,10 @@ CREATE TABLE IF NOT EXISTS recipe_tags(
   meal_id INTEGER NOT NULL REFERENCES meals(id) ON DELETE CASCADE, meal TEXT NOT NULL, PRIMARY KEY(meal_id, meal));
 CREATE TABLE IF NOT EXISTS recipe_logs(
   id INTEGER PRIMARY KEY, meal_id INTEGER NOT NULL REFERENCES meals(id) ON DELETE CASCADE, meal TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS entry_groups(
+  id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), day TEXT NOT NULL, meal TEXT, meal_id INTEGER,
+  name TEXT NOT NULL, amount REAL NOT NULL, unit TEXT NOT NULL, fraction REAL NOT NULL, portions TEXT NOT NULL,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS hidden_foods(
   user_id INTEGER NOT NULL, food_id INTEGER NOT NULL, PRIMARY KEY(user_id, food_id));
 CREATE TABLE IF NOT EXISTS deleted_foods(
@@ -169,6 +173,9 @@ def init(c: sqlite3.Connection) -> None:
         for key in NEW_MICROS:
             if key not in have:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN {key} REAL")
+    if "group_id" not in {r[1] for r in c.execute("PRAGMA table_info(entries)")}:  # databases made before recipe logs were grouped
+        c.execute("ALTER TABLE entries ADD COLUMN group_id INTEGER")  # null: a plain entry, or one logged from a recipe before this
+    c.execute("CREATE INDEX IF NOT EXISTS entries_group ON entries(group_id)")
 
 
 # ---------- validation helpers ----------
@@ -470,14 +477,14 @@ def own_entry(c, uid: int, entry_id: int):
     return row
 
 
-def log_entry(c, uid: int, food: dict, amount: float, unit: str, day: str, meal) -> dict:
-    """Insert a snapshot entry and update last_used. Inputs must already be validated."""
+def log_entry(c, uid: int, food: dict, amount: float, unit: str, day: str, meal, group_id: int | None = None) -> dict:
+    """Insert a snapshot entry and update last_used. Inputs must already be validated. group_id: the recipe log it belongs to."""
     m = macros(food, amount, unit)
     nutrients = (*MACROS, *MICROS)
     cur = c.execute(
-        f"INSERT INTO entries(user_id,day,meal,food_id,name,brand,amount,unit,servings,{','.join(nutrients)}) "
-        f"VALUES({','.join('?' * (9 + len(nutrients)))})",
-        (uid, day, meal, food["id"], food["name"], food["brand"], amount, unit, m["servings"], *[m[k] for k in nutrients]))
+        f"INSERT INTO entries(user_id,day,meal,food_id,name,brand,amount,unit,servings,group_id,{','.join(nutrients)}) "
+        f"VALUES({','.join('?' * (10 + len(nutrients)))})",
+        (uid, day, meal, food["id"], food["name"], food["brand"], amount, unit, m["servings"], group_id, *[m[k] for k in nutrients]))
     c.execute("INSERT INTO last_used(user_id,food_id,amount,unit,used_at) VALUES(?,?,?,?,?) "
               "ON CONFLICT(user_id,food_id) DO UPDATE SET amount=excluded.amount, unit=excluded.unit, "
               "used_at=excluded.used_at", (uid, food["id"], amount, unit, now()))
@@ -508,6 +515,8 @@ def patch_entry(entry_id: int, user: CurrentUser, body: dict = Body(...)):
         sets["meal"] = pick(body["meal"], MEALS, "meal", nullable=True)
     with db.conn() as c:
         row = own_entry(c, user["id"], entry_id)
+        if row["group_id"] is not None and "meal" in sets and sets["meal"] != row["meal"]:
+            sets["group_id"] = None  # one ingredient moved to another meal leaves its recipe log (the app moves whole groups)
         if {"amount", "unit"} & body.keys():
             if row["food_id"] is None:
                 raise bad("This entry's food no longer exists, so its amount cannot change")
@@ -524,9 +533,178 @@ def patch_entry(entry_id: int, user: CurrentUser, body: dict = Body(...)):
 @router.delete("/entries/{entry_id}")
 def delete_entry(entry_id: int, user: CurrentUser):
     with db.conn() as c:
-        own_entry(c, user["id"], entry_id)
+        row = own_entry(c, user["id"], entry_id)
         c.execute("DELETE FROM entries WHERE id=? AND user_id=?", (entry_id, user["id"]))
+        drop_empty_group(c, row["group_id"])
     return {"deleted": entry_id}
+
+
+# ---------- recipe logs on Today ----------
+# Logging a recipe writes one entry per ingredient, so totals, micronutrients and history stay exact, plus one entry_groups
+# row that links them (entries.group_id): the recipe's name, the portion logged (amount and a unit of the recipe's portions,
+# kept as a snapshot so the group can be rescaled after the recipe changes or is deleted) and its share of the whole recipe.
+# /api/day shows each group as one item. Entries logged from a recipe before groups existed have no link and stay separate.
+
+def drop_empty_group(c, gid) -> None:
+    if gid is not None and not c.execute("SELECT 1 FROM entries WHERE group_id=? LIMIT 1", (gid,)).fetchone():
+        c.execute("DELETE FROM entry_groups WHERE id=?", (gid,))
+
+
+def new_group(c, uid: int, day: str, meal, meal_id, name: str, amount: float, unit: str, frac: float, plist: list) -> int:
+    return c.execute("INSERT INTO entry_groups(user_id, day, meal, meal_id, name, amount, unit, fraction, portions) VALUES(?,?,?,?,?,?,?,?,?)",
+                     (uid, day, meal, meal_id, name, amount, unit, frac, json.dumps(plist))).lastrowid
+
+
+def group_portions(row) -> list:
+    try:
+        v = json.loads(row["portions"] or "[]")
+    except ValueError:
+        v = []
+    return v if isinstance(v, list) and v else portions(1, None)
+
+
+def day_entry(r) -> dict:
+    return {**entry_dict(r), "kind": "food", "source": r["source"]}
+
+
+def group_item(g, parts: list) -> dict:
+    """One recipe log as an entry-like item with the summed nutrients of its ingredient rows (parts). A micronutrient is
+    null when no part knows it. id is null so it is never mistaken for an entry id; group_id names it."""
+    out = {"kind": "recipe", "id": None, "group_id": g["id"], "meal_id": g["meal_id"], "day": g["day"], "meal": g["meal"],
+           "name": g["name"], "brand": None, "food_id": None, "source": None, "amount": g["amount"], "unit": g["unit"],
+           "fraction": g["fraction"], "servings": None, "portions": group_portions(g), "parts": parts}
+    for k in MACROS:
+        out[k] = r2(sum(p[k] or 0 for p in parts))
+    for k in MICROS:
+        known = [p[k] for p in parts if p[k] is not None]
+        out[k] = r2(sum(known)) if known else None
+    return out
+
+
+def day_items(c, uid: int, rows) -> list:
+    """A day's entries as Today lists them: plain entries, and one item per recipe log in the place of its first ingredient."""
+    gids = sorted({r["group_id"] for r in rows if r["group_id"] is not None})
+    groups = {}
+    if gids:
+        marks = ",".join("?" * len(gids))
+        groups = {g["id"]: g for g in c.execute(f"SELECT * FROM entry_groups WHERE user_id=? AND id IN ({marks})", (uid, *gids))}
+    order, parts = [], {}
+    for r in rows:
+        g = groups.get(r["group_id"])
+        if g is None:
+            order.append(day_entry(r))
+            continue
+        if g["id"] not in parts:
+            parts[g["id"]] = []
+            order.append(g)
+        parts[g["id"]].append(day_entry(r))
+    return [x if isinstance(x, dict) else group_item(x, parts[x["id"]]) for x in order]
+
+
+def own_group(c, uid: int, gid: int):
+    row = c.execute("SELECT * FROM entry_groups WHERE id=? AND user_id=?", (gid, uid)).fetchone()
+    if not row:
+        raise HTTPException(404, "Recipe log not found")
+    return row
+
+
+def group_out(c, uid: int, gid: int) -> dict:
+    g = own_group(c, uid, gid)
+    rows = c.execute("SELECT e.*, f.source AS source FROM entries e LEFT JOIN foods f ON f.id=e.food_id "
+                     "WHERE e.user_id=? AND e.group_id=? ORDER BY e.id", (uid, gid)).fetchall()
+    if not rows:
+        raise HTTPException(404, "Recipe log not found")
+    return group_item(g, [day_entry(r) for r in rows])
+
+
+def portion_body(g, body: dict) -> tuple[float, str, float]:
+    """amount and unit (one of the group's portions) of a PATCH or copy body: (amount, unit, share of the whole recipe)."""
+    plist = group_portions(g)
+    unit = body.get("unit", g["unit"])
+    frac = recipe_fraction({"portions": plist}, body.get("amount", g["amount"]), unit)
+    return float(body.get("amount", g["amount"])), unit, frac
+
+
+def scaled_nutrients(c, row, k: float) -> dict:
+    """An ingredient row at k times its amount: worked out again from its food like PATCH /api/entries, or the snapshot scaled
+    when the food row is gone or its unit can no longer be reached."""
+    amount = round(row["amount"] * k, 4)
+    food = c.execute("SELECT * FROM foods WHERE id=?", (row["food_id"],)).fetchone() if row["food_id"] is not None else None
+    if food is not None:
+        try:
+            m = macros(food_dict(food), amount, row["unit"])
+            m.pop("estimated")
+            return {"amount": amount, **m}
+        except ValueError:
+            pass
+    return {"amount": amount, "servings": round(row["servings"] * k, 4),
+            **{key: None if row[key] is None else r2(row[key] * k) for key in (*MACROS, *MICROS)}}
+
+
+@router.get("/entry-groups/{group_id}")
+def get_group(group_id: int, user: CurrentUser):
+    with db.conn() as c:
+        return group_out(c, user["id"], group_id)
+
+
+@router.patch("/entry-groups/{group_id}")
+def patch_group(group_id: int, user: CurrentUser, body: dict = Body(...)):
+    """Change how much of the recipe was logged (amount and unit of its portions; every ingredient row is rescaled by the same
+    factor) and or the meal (the whole group moves)."""
+    if not {"amount", "unit", "meal"} & body.keys():
+        raise bad("Nothing to update: send amount, unit or meal")
+    meal = pick(body["meal"], MEALS, "meal", nullable=True) if "meal" in body else None
+    uid = user["id"]
+    with db.conn() as c:
+        g = own_group(c, uid, group_id)
+        if {"amount", "unit"} & body.keys():
+            amount, unit, frac = portion_body(g, body)
+            k = frac / g["fraction"] if g["fraction"] else 1.0
+            for row in c.execute("SELECT * FROM entries WHERE user_id=? AND group_id=?", (uid, group_id)).fetchall():
+                sets = scaled_nutrients(c, row, k)
+                c.execute(f"UPDATE entries SET {', '.join(key + '=?' for key in sets)} WHERE id=?", [*sets.values(), row["id"]])
+            c.execute("UPDATE entry_groups SET amount=?, unit=?, fraction=? WHERE id=?", (amount, unit, frac, group_id))
+        if "meal" in body:
+            c.execute("UPDATE entry_groups SET meal=? WHERE id=?", (meal, group_id))
+            c.execute("UPDATE entries SET meal=? WHERE user_id=? AND group_id=?", (meal, uid, group_id))
+        return group_out(c, uid, group_id)
+
+
+@router.delete("/entry-groups/{group_id}")
+def delete_group(group_id: int, user: CurrentUser):
+    """Remove a recipe log: every ingredient row of it."""
+    with db.conn() as c:
+        own_group(c, user["id"], group_id)
+        c.execute("DELETE FROM entries WHERE user_id=? AND group_id=?", (user["id"], group_id))
+        c.execute("DELETE FROM entry_groups WHERE id=?", (group_id,))
+    return {"deleted": group_id}
+
+
+@router.post("/entry-groups/{group_id}/copy")
+def copy_group(group_id: int, user: CurrentUser, body: dict | None = Body(None)):
+    """Log a recipe log again (Yesterday on Add) as one new group: the same ingredient rows, on day and meal, optionally at
+    another amount and unit of its portions. Counts as a log of the recipe when it still exists, like POST /api/meals/{id}/log."""
+    body = body or {}
+    day = day_str(body.get("day"))
+    uid = user["id"]
+    with db.conn() as c:
+        g = own_group(c, uid, group_id)
+        meal = pick(body["meal"], MEALS, "meal", nullable=True) if "meal" in body else g["meal"]
+        amount, unit, frac = portion_body(g, body)
+        k = frac / g["fraction"] if g["fraction"] else 1.0
+        rows = c.execute("SELECT * FROM entries WHERE user_id=? AND group_id=? AND food_id IS NOT NULL ORDER BY id", (uid, group_id)).fetchall()
+        gid = new_group(c, uid, day, meal, g["meal_id"], g["name"], amount, unit, frac, group_portions(g))
+        for row in rows:
+            try:
+                log_entry(c, uid, need_food(c, row["food_id"]), round(row["amount"] * k, 4), row["unit"], day, meal, gid)
+            except (ValueError, HTTPException):
+                continue  # a food whose unit can no longer be reached is left out
+        if not c.execute("SELECT 1 FROM entries WHERE group_id=?", (gid,)).fetchone():
+            raise bad("Nothing in this recipe log can be logged again.")
+        if meal and g["meal_id"] is not None and c.execute("SELECT 1 FROM meals WHERE id=? AND user_id=?", (g["meal_id"], uid)).fetchone():
+            c.execute("INSERT OR IGNORE INTO recipe_tags(meal_id, meal) VALUES(?,?)", (g["meal_id"], meal))
+            c.execute("INSERT INTO recipe_logs(meal_id, meal) VALUES(?,?)", (g["meal_id"], meal))
+        return group_out(c, uid, gid)
 
 
 # ---------- goals, settings and the day view ----------
@@ -718,11 +896,12 @@ def get_day(user: CurrentUser, day: str | None = None):
                          "WHERE e.user_id=? AND e.day=? ORDER BY e.id", (user["id"], day)).fetchall()
         goals = read_goals(c, user["id"])
         mtargets = micro_targets(c, user["id"])
+        items = day_items(c, user["id"], rows)  # totals and micros below still count every ingredient row once, as before
     sums = {k: sum(r[k] or 0 for r in rows) for k in (*MACROS, "fiber")}
     targets = {"kcal": float(goals["kcal"])}
     for key, (pct, kcal_g) in GOAL_KEYS.items():
         targets[key] = goals["kcal"] * goals[pct] / 100 / kcal_g
-    return {"day": day, "entries": [{**entry_dict(r), "source": r["source"]} for r in rows],
+    return {"day": day, "entries": items,
             "totals": {k: r1(v) for k, v in sums.items()},
             "targets": {k: r1(v) for k, v in targets.items()},
             "percent": {k: math.floor(100 * sums[k] / targets[k] + 0.5) if targets[k] else 0 for k in MACROS},
@@ -809,16 +988,27 @@ def quick_recent(user: CurrentUser, meal: str | None = None):
 def quick_yesterday(user: CurrentUser, day: str | None = None):
     prev = (date.fromisoformat(day_str(day)) - timedelta(days=1)).isoformat()
     with db.conn() as c:
-        entries = c.execute("SELECT e.food_id, e.amount, e.unit, e.meal FROM entries e JOIN foods f ON f.id=e.food_id "
-                            f"WHERE e.user_id=? AND e.day=? AND {VISIBLE} AND e.food_id NOT IN (SELECT food_id FROM hidden_foods WHERE user_id=?) "
+        entries = c.execute("SELECT e.id, e.food_id, e.amount, e.unit, e.meal FROM entries e JOIN foods f ON f.id=e.food_id "
+                            f"WHERE e.user_id=? AND e.day=? AND e.group_id IS NULL AND {VISIBLE} "
+                            "AND e.food_id NOT IN (SELECT food_id FROM hidden_foods WHERE user_id=?) "
                             "ORDER BY e.id", (user["id"], prev, user["id"], user["id"])).fetchall()
         last: dict = {}  # last entry per distinct (food, meal) pair, in order of that last entry
         for e in entries:
             key = (e["food_id"], e["meal"])
             last.pop(key, None)
             last[key] = e
-        items = [quick_item(need_food(c, fid), e["amount"], e["unit"], e["meal"]) for (fid, _), e in last.items()]
-    return {"items": items}
+        items = [(e["id"], quick_item(need_food(c, fid), e["amount"], e["unit"], e["meal"])) for (fid, _), e in last.items()]
+        # Recipe logs stay one item each (kind recipe, at their first ingredient), logged again as one group by POST /api/entry-groups/{id}/copy
+        firsts = c.execute("SELECT group_id, MIN(id) AS first FROM entries WHERE user_id=? AND day=? AND group_id IS NOT NULL GROUP BY group_id",
+                           (user["id"], prev)).fetchall()
+        for r in firsts:
+            try:
+                g = group_out(c, user["id"], r["group_id"])
+            except HTTPException:
+                continue
+            items.append((r["first"], {k: g[k] for k in ("kind", "group_id", "meal_id", "name", "amount", "unit", "fraction", "portions",
+                                                          "meal", "kcal", "carbs", "protein", "fat")} | {"parts": len(g["parts"])}))
+    return {"items": [it for _, it in sorted(items, key=lambda x: x[0])]}
 
 
 def clean_tags(v) -> list[str]:
@@ -1423,18 +1613,24 @@ def log_meal(meal_id: int, user: CurrentUser, body: dict | None = Body(None)):
     with db.conn() as c:
         row = own_meal(c, user["id"], meal_id)
         need_matched(c, row)
+        md = meal_dict(c, row)
+        # amount and unit: how much of the recipe (servings, pct of the recipe, or a yield unit), as a share of the whole.
+        # With items (the checklist) they only name the portion of the recipe log; without either it is the whole recipe.
+        given = "amount" in body or "unit" in body
+        frac = recipe_fraction(md, body.get("amount"), body.get("unit")) if given else None
         if body.get("items") is not None:  # the client's checklist replaces the saved items
             items = parse_items(c, body["items"])
         else:
-            # amount and unit: how much of the recipe (servings, pct of the recipe, or a yield unit), as a share of the whole
-            frac = recipe_fraction(meal_dict(c, row), body.get("amount"), body.get("unit")) if "amount" in body or "unit" in body else None
             items = [(need_food(c, i["food_id"]), i["amount"] if frac is None else round(i["amount"] * frac, 4), i["unit"]) for i in
                      c.execute("SELECT * FROM meal_items WHERE meal_id=? AND food_id IS NOT NULL AND skipped=0 AND needs_check=0 "
                                  "ORDER BY position, id", (row["id"],))]
         if meal:  # logging a recipe with a meal tags the recipe and counts toward that meal
             c.execute("INSERT OR IGNORE INTO recipe_tags(meal_id, meal) VALUES(?,?)", (meal_id, meal))
             c.execute("INSERT INTO recipe_logs(meal_id, meal) VALUES(?,?)", (meal_id, meal))
-        return {"entries": [log_entry(c, user["id"], f, a, u, day, meal) for f, a, u in items]}
+        amount, unit = (float(body["amount"]), body["unit"]) if given else (md["servings"], units.SERVING)
+        gid = new_group(c, user["id"], day, meal, meal_id, row["name"], amount, unit, 1.0 if frac is None else frac, md["portions"])
+        entries = [log_entry(c, user["id"], f, a, u, day, meal, gid) for f, a, u in items]
+        return {"entries": entries, "group": group_out(c, user["id"], gid)}
 
 
 # ---------- saved screen: favorites, recipes and my foods ----------

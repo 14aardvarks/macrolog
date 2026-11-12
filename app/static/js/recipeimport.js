@@ -1,5 +1,5 @@
 // Pure helpers for Import Recipe and Match Ingredients. No DOM access, safe to import from node.
-import { plural, parseAmount, fmtAmount, qtyText, servingText, matchedAmountText, sentence, stepsCheck, MEALS, MEAL_LABELS, autoMatch } from './util.js';
+import { plural, parseAmount, fmtAmount, qtyText, servingText, amountText, roundTo, matchedAmountText, sentence, stepsCheck, MEALS, MEAL_LABELS, MICROS, autoMatch } from './util.js';
 
 // Unit words found at the start of an ingredient line, mapped to the server's canonical units or a count word.
 const UNIT_WORDS = {
@@ -403,6 +403,53 @@ export function portionNote(meal, amount, unit) {
   const label = YIELD_LABEL[unit] || unit;
   return 'Amounts are for ' + qtyText(amount, unit) + ' ' + label + ' of ' + qtyText(p.whole, unit) + ' ' + label + '.';
 }
+
+// ---------- a logged recipe on Today (one recipe log) ----------
+
+// A recipe log is one item of /api/day with kind recipe: the recipe's name, the portion logged, the summed nutrients and its
+// ingredient rows as parts. Plain entries have kind food (older replies have no kind).
+export const isRecipeLog = (e) => !!e && e.kind === 'recipe';
+
+// How much of a recipe was logged: "1 serving", "1/2 serving", "2 servings", "25% of the recipe", "250 g", "1 cup".
+export function recipeAmountText(amount, unit) {
+  const n = Number(amount);
+  if (unit === 'serving') return servingText(n) + (n > 1 ? ' servings' : ' serving');
+  if (unit === 'pct') return fmtAmount(n) + '% of the recipe';
+  return qtyText(n, unit) + ' ' + (YIELD_LABEL[unit] || unit);
+}
+
+// The amount column of a Today row, for a plain entry or a recipe log.
+export const entryAmountText = (e) => (isRecipeLog(e) ? recipeAmountText(e.amount, e.unit) : amountText(e.amount, e.unit));
+
+// Save As Recipe from Today: one checklist row per Today row, { ids, name, text }. A recipe log stands for its ingredient
+// rows, so the new recipe holds ingredients and never a recipe inside a recipe. Rows whose food is gone are left out.
+export function saveRecipeRows(entries) {
+  const out = [];
+  for (const e of entries || []) {
+    if (isRecipeLog(e)) {
+      const ids = (e.parts || []).filter((p) => p.food_id != null).map((p) => p.id);
+      if (ids.length) out.push({ ids, name: e.name, text: recipeAmountText(e.amount, e.unit), recipe: true });
+    } else if (e.food_id != null) out.push({ ids: [e.id], name: e.name, text: amountText(e.amount, e.unit), recipe: false });
+  }
+  return out;
+}
+
+// Entry ids of the ticked rows of saveRecipeRows, in order.
+export const tickedIds = (rows, ticked) => rows.reduce((ids, r, i) => (ticked[i] ? ids.concat(r.ids) : ids), []);
+
+// A recipe log at another share of the recipe, for the live numbers before Save: every nutrient scaled like its rows.
+// The server works each row out again on Save, so this is a preview only.
+export function scaledLog(log, fraction) {
+  const k = log.fraction > 0 ? fraction / log.fraction : 1;
+  const out = { ...log };
+  ['kcal', 'carbs', 'protein', 'fat', ...MICROS.map((m) => m.key)].forEach((key) => {
+    if (log[key] != null) out[key] = roundTo(Number(log[key]) * k, 2);
+  });
+  return out;
+}
+
+export const REMOVE_RECIPE_CONFIRM = 'Remove This Recipe From Today? ' + sentence('All of its ingredients are removed from your log');
+export const partsText = (n) => plural(n, 'ingredient');
 
 // ---------- Import Recipe photos ----------
 

@@ -106,6 +106,14 @@ export const GUIDE = [
     'Tap X to remove it.',
     'Add Food opens Add. Each meal has Add, Scan and Search buttons.',
   ] },
+  { heading: 'Logged Recipes', bullets: [
+    'A logged recipe is one row on Today with its total calories.',
+    'Tap it to see the portion, the nutrition and each ingredient.',
+    'Change the amount or the meal there, then tap Save Changes.',
+    'Remove Recipe or the X removes all of its ingredients, after a check.',
+    'Save As Recipe uses the ingredients of a logged recipe.',
+    'Yesterday on Add lists a logged recipe once. Tap it, then Log.',
+  ] },
   { heading: 'Micro Nutrients', bullets: [
     'Fiber, sugars, sodium, vitamins and minerals sit under the macro bars.',
     'Tap the arrow to open or close the section. It stays as you left it.',

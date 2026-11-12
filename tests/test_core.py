@@ -777,12 +777,13 @@ def test_quick_items_and_meals_keep_pseudo_units(a):
     r = a.post(f"/api/meals/{m.json()['id']}/log", json={"day": "2025-04-03"})
     assert r.status_code == 200, r.text
     d = a.get("/api/day", params={"day": "2025-04-03"}).json()
-    assert [(e["amount"], e["unit"]) for e in d["entries"]] == [(0.5, "serving")]
+    assert [(e["amount"], e["unit"]) for e in d["entries"][0]["parts"]] == [(0.5, "serving")]  # one recipe log, its rows inside
     r = a.post(f"/api/meals/{m.json()['id']}/log",
                json={"day": "2025-04-03", "items": [{"food_id": f["id"], "amount": 50, "unit": "%"}]})
     assert r.status_code == 200, r.text
     d = a.get("/api/day", params={"day": "2025-04-03"}).json()
-    assert (d["entries"][-1]["amount"], d["entries"][-1]["unit"]) == (50, "pct")
+    part = d["entries"][-1]["parts"][-1]
+    assert (part["amount"], part["unit"]) == (50, "pct")
 
 
 def test_recipe_from_meal_tags_and_validates(a, b):

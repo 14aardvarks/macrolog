@@ -1,6 +1,6 @@
 import { h, sourceBadge } from './dom.js';
 import { buildTable, columnHeader, VIEWS, VIEW_LABELS } from './tablemodel.js';
-import { amountText } from './util.js';
+import { isRecipeLog, entryAmountText } from './recipeimport.js';
 
 // The List and Table buttons above the day's entries. onPick(view) runs after a tap.
 export function viewToggle(current, onPick) {
@@ -23,10 +23,11 @@ export function dayTable(entries, opts) {
     g.rows.forEach((r) => {
       const e = r.entry;
       const name = e.brand ? e.name + ' (' + e.brand + ')' : e.name;
-      const food = e.food_id == null ? h('span', null, name)
+      const recipe = isRecipeLog(e);  // a logged recipe is one row with the combined values of its ingredients
+      const food = e.food_id == null && !recipe ? h('span', null, name)
         : h('button', { class: 'food-link', type: 'button', onclick: () => opts.onOpen(e) }, name);
-      const src = sourceBadge(e.source, true);
-      rows.push(h('tr', null, h('th', { scope: 'row', class: 'food-col' }, food, src ? h('div', { class: 'src-sub' }, src) : null), h('td', { class: 'amt-col' }, amountText(e.amount, e.unit)),
+      const src = recipe ? h('span', { class: 'src-wrap' }, h('span', { class: 'src src-recipe' }, 'Recipe')) : sourceBadge(e.source, true);
+      rows.push(h('tr', null, h('th', { scope: 'row', class: 'food-col' }, food, src ? h('div', { class: 'src-sub' }, src) : null), h('td', { class: 'amt-col' }, entryAmountText(e)),
         r.cells.map((s) => h('td', { class: 'num' }, s)),
         h('td', { class: 'del-col' }, h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Remove ' + e.name, onclick: () => opts.onDelete(e) }, '×'))));
     });
