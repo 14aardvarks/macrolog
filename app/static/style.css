@@ -334,6 +334,7 @@ input[type=text], input[type=search], input[type=password], input[type=email], s
 .screen.recipe .chips { margin-bottom: 12px; }
 .saved-filter { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
 .saved-filter input[type=search] { width: 100%; }
+.saved-filter .chips { margin: 0; }
 .saved .list + .btn, .saved .sub + .btn { width: 100%; margin: 8px 0; }
 
 /* today: list or table view */

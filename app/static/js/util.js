@@ -734,6 +734,22 @@ export function filterSavedItems(items, query, meal, text) {
   });
 }
 
+// ---------- Recipes tab sort ----------
+
+export const RECIPE_SORTS = ['name', 'newest', 'used'];
+export const RECIPE_SORT_LABELS = { name: 'Name (A to Z)', newest: 'Newest', used: 'Most Used' };
+
+// How many times a recipe was logged, from its per meal counts.
+export const recipeUses = (rec) => Object.values((rec && rec.counts) || {}).reduce((a, n) => a + (Number(n) || 0), 0);
+
+// A sorted copy. name is A to Z ignoring case, newest is the highest id first (ids only grow), used is the most logged first.
+// Ties fall back to name, then id, so the order is stable.
+export function sortRecipes(items, sort) {
+  const byName = (a, b) => String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' }) || a.id - b.id;
+  const by = { newest: (a, b) => b.id - a.id || byName(a, b), used: (a, b) => recipeUses(b) - recipeUses(a) || byName(a, b) };
+  return (items || []).slice().sort(by[sort] || byName);
+}
+
 // ---------- Create Recipe draft ----------
 
 export const newRecipeDraft = (depth) => ({ name: '', meals: [], rows: [], steps: [], depth, adding: false, picking: null });

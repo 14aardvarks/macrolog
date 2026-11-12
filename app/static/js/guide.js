@@ -49,6 +49,7 @@ export const GUIDE = [
   ] },
   { heading: 'Recipes', bullets: [
     'The Recipes tab lists your recipes with tags, servings and matching progress.',
+    'Search by name, filter by meal tag, or sort by name, newest or most used.',
     'Tap New Recipe to build one from foods, or Import Recipe to bring one in.',
     'On Today, Save As Recipe under a meal also makes one.',
     'Tap a recipe, pick the meal and how much, then tap Log.',

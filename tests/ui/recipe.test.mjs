@@ -71,3 +71,18 @@ test('twenty per section then more', () => {
   assert.equal(pageOf(list, PAGE_SIZE).more, 25);
   assert.equal(pageOf(list, PAGE_SIZE * 3).more, 0);
 });
+
+test('sortRecipes by name, newest and most used', async () => {
+  const { sortRecipes, recipeUses, RECIPE_SORTS, RECIPE_SORT_LABELS } = await import('../../app/static/js/util.js');
+  const r = [{ id: 1, name: 'banana bread', counts: { lunch: 2, dinner: 1 } }, { id: 3, name: 'Apple Pie' }, { id: 2, name: 'Chili', counts: { dinner: 3 } }, { id: 4, name: 'apple pie' }];
+  const ids = (s) => sortRecipes(r, s).map((x) => x.id);
+  assert.deepEqual(ids('name'), [3, 4, 1, 2]);
+  assert.deepEqual(ids('newest'), [4, 3, 2, 1]);
+  assert.deepEqual(ids('used'), [1, 2, 3, 4]);
+  assert.deepEqual(ids('bogus'), [3, 4, 1, 2]);
+  assert.equal(recipeUses(r[0]), 3);
+  assert.equal(recipeUses({}), 0);
+  assert.deepEqual(sortRecipes(null, 'name'), []);
+  assert.deepEqual(r.map((x) => x.id), [1, 3, 2, 4]);
+  assert.deepEqual(RECIPE_SORTS.map((s) => RECIPE_SORT_LABELS[s]), ['Name (A to Z)', 'Newest', 'Most Used']);
+});
