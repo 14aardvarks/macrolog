@@ -211,11 +211,30 @@ export const AUTO_MATCH_LOADING = 'Finding Matches...';
 export const AUTO_MATCH_FAILED = sentence('Suggestions could not be found just now. Match Selected With Search tries again');
 export const RATE_LIMIT_NOTE = sentence('USDA lookup limit reached. Rows below were not searched');
 
-// Auto-Match runs for the Search setting (the default) and not for Off.
-export const autoMatchOn = (display) => autoMatch(display && display.auto_match) === 'search';
+export const AUTO_CLAUDE_OFF = sentence('Claude is not available, so Search ran instead');
+export const AUTO_CLAUDE_FAILED = sentence('Claude could not match the rest just now. Match Selected With Claude tries again');
+export const AUTO_CLAUDE_CANCELLED = sentence('Claude was not asked. Match Selected With Claude runs it later');
+
+// Auto-Match runs for every setting except Off.
+export const autoMatchOn = (display) => autoMatch(display && display.auto_match) !== 'off';
+
+// What the setting does right now. aiOn: Claude is set up for this user and the recipe switch is on. A Claude setting without Claude
+// falls back to Search with a short note. { search: run Search, claude: then ask Claude for the rows without a proposal, note }.
+export function autoMatchPlan(setting, aiOn) {
+  const s = autoMatch(setting);
+  if (s === 'off') return { search: false, claude: false, note: '' };
+  const wantsClaude = s !== 'search';
+  const claude = wantsClaude && !!aiOn;
+  return { search: s !== 'claude' || !claude, claude, note: wantsClaude && !claude ? AUTO_CLAUDE_OFF : '' };
+}
 
 // The rows to search: every unmatched row, up to the Search cap (rows beyond it stay ticked for a manual Match Selected).
 export const autoMatchIds = (items) => methodBatch('search', unmatchedIds(items)).send;
+
+// The rows to ask Claude about: unmatched rows with no proposal (nothing waiting, or a Search Result with no food), up to the Claude
+// cap. send: ask now, rest: stay ticked for a manual Match Selected With Claude.
+export const autoClaudeBatch = (items, proposals) =>
+  methodBatch('claude', unmatchedIds(items).filter((id) => !(proposals && proposals[id] && proposals[id].food)));
 
 // What to do with the answer. Rows that were matched or skipped while it ran are left alone. found: rows that got a food (these
 // are un-ticked); the rest stay ticked. fresh: the proposals to keep waiting.

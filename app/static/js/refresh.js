@@ -77,6 +77,7 @@ export function refreshLoggedControl({ scope, load, label, quiet, onFinish }) {
   const status = h('div', { 'aria-live': 'polite' });
   const btn = h('button', { class: 'btn', type: 'button', onclick: run }, label);
   const el = h('div', { class: 'refresh' }, btn, status);
+  el.hidden = !!quiet;  // starts hidden when quiet, so a repaint of Today does not shift the page when the control turns out unneeded
   async function paint() {
     try {
       const plan = pendingPlan((await load()).ids, st.done);

@@ -105,7 +105,7 @@ CREATE TABLE IF NOT EXISTS micro_targets(
 DISPLAY_FLAGS = {"show_macros": 1, "show_micros": 1, "show_split": 1, "show_macro_bar": 1, "show_table": 1, "micros_open": 0}
 TODAY_VIEWS = ("list", "table")  # the Today tab's default view, stored as settings.today_view
 START_SOURCES = ("all", "off", "fdc", "ai")  # the Add search Source to start with, stored as settings.search_source
-AUTO_MATCHES = ("search", "off")  # Auto-Match After Import: the free Search runs on a new import (default) or nothing runs, stored as settings.auto_match
+AUTO_MATCHES = ("search", "claude", "search_claude", "off")  # Auto-Match After Import: the free Search (default), Claude, Search then Claude for rows Search left without a proposal, or nothing; stored as settings.auto_match (plain TEXT, validated here, no schema change)
 SCHEMA = SCHEMA.replace("{MEAL_ITEMS_BODY}", MEAL_ITEMS_BODY)
 
 
@@ -829,7 +829,7 @@ def put_display(user: CurrentUser, body: dict = Body(...)):
             d["search_source"] = body["search_source"]
         if "auto_match" in body:
             if body["auto_match"] not in AUTO_MATCHES:
-                raise bad("auto_match must be " + " or ".join(AUTO_MATCHES))
+                raise bad("auto_match must be one of " + ", ".join(AUTO_MATCHES[:-1]) + " or " + AUTO_MATCHES[-1])
             d["auto_match"] = body["auto_match"]
         cols = [*DISPLAY_FLAGS, "micros_hidden", "today_view", "search_source", "auto_match"]
         vals = [int(d[k]) for k in DISPLAY_FLAGS] + [",".join(k for k in MICROS if k not in d["micros_shown"]), d["today_view"],

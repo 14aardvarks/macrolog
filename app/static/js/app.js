@@ -3,7 +3,7 @@ import { h, clear, select, field, message, show, cameraIcon, sourceBadge } from 
 import {
   MEALS, MEAL_LABELS, parseDecimal, parseAmount, amountText, servingText, qtyText, setAmountFormat, unitLabel, fmtNum, fmtAmount, groupByMeal, mealGroupsAll, quickLabel, checkedItems, canSaveRecipe, rowAmountText, applyRowPick, draftFits, localDate, progressText, remainingText,
   sentence, matchAmount, newRecipeDraft, recipeAddRow, recipeSetRow, stepsBack, barWidth, debounce, digitsOnly, guessMeal, pctTotal, latestGuard, MEAL_FILTERS, MEAL_FILTER_LABELS, filterByMeal, filterSaved, pageOf, PAGE_SIZE, emptyText,
-  DEFAULT_DISPLAY, searchSource, searchAction, searchHint, DESCRIPTION_TEXT, aiFeature, aiFeatureOff, searchSources, startSource,
+  entryKey, todayHold, holdFresh, holdTarget, DEFAULT_DISPLAY, searchSource, searchAction, searchHint, DESCRIPTION_TEXT, aiFeature, aiFeatureOff, searchSources, startSource,
 } from './util.js';
 import { microSection, displaySection, microTargets } from './micros.js';
 import { viewToggle, dayTable } from './daytable.js';
@@ -31,7 +31,7 @@ import { startUpdates } from './update.js';
 const main = document.getElementById('main');
 const nav = document.getElementById('nav');
 const state = { user: null, settings: { start_screen: 'today', default_meal: null, use_last: true, confirm_ai: true, amount_format: 'fraction' }, display: DEFAULT_DISPLAY, cleanup: null, depth: 0, tab: 'favorites', addMeal: null, quickMeal: null, draft: null, recipe: null, source: null, aiSt: null, claude: null,
-  importInput: null, importDraft: null, importBase: 0, proposals: {}, selections: {}, matchFocus: null, matchBase: {}, matchMethod: 'search', autoMatch: null };  // Import Recipe and Match Ingredients  // addMeal, source (null = the Default Search Source setting), aiSt (last /api/ai/status) and claude (last Claude estimate) live for the session only
+  importInput: null, importDraft: null, importBase: 0, proposals: {}, selections: {}, matchFocus: null, matchBase: {}, matchMethod: 'search', autoMatch: null, hold: null };  // Import Recipe and Match Ingredients  // addMeal, source (null = the Default Search Source setting), aiSt (last /api/ai/status) and claude (last Claude estimate) live for the session only
 const NAV_OF = { today: 'today', recipelog: 'today', settings: 'settings', admin: 'settings', saved: 'settings', editfood: 'settings',
   recipes: 'recipes', recipeview: 'recipes', recipe: 'recipes', import: 'recipes', importreview: 'recipes', match: 'recipes' };  // every other screen belongs to Add
 const FINDER = ['add', 'picker', 'scan', 'lookup', 'manual', 'ai'];  // screens New Recipe and Match Ingredients borrow from Add
@@ -200,11 +200,13 @@ async function render(entry) {
   trackRecipeFlow(entry);
   const screen = SCREENS[entry.name] || SCREENS.today;
   const key = navKey(entry);
+  const hold = entry.name === 'today' && holdFresh(state.hold, localDate()) ? state.hold : null;  // Today repaints in place, see holdToday
+  if (!['picker', 'recipelog'].includes(entry.name)) state.hold = null;  // only a row's own screens hand it back to Today
   nav.hidden = entry.name === 'login';
   nav.querySelectorAll('button').forEach((b) => {
     if (b.dataset.go === key) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   });
-  clear(main);
+  if (!hold) clear(main);  // a repaint in place keeps the old screen (and its height) until the new one is ready
   const box = h('div', { class: 'view' });
   let cleanup = null;
   try {
@@ -219,14 +221,43 @@ async function render(entry) {
   state.cleanup = cleanup;
   clear(main).appendChild(box);
   box.dispatchEvent(new Event('mounted'));
-  window.scrollTo(0, 0);
-  main.focus({ preventScroll: true });
+  if (hold) restoreToday(hold);
+  else {
+    window.scrollTo(0, 0);
+    main.focus({ preventScroll: true });
+  }
   hideSplash();
+}
+
+// Today repaints without jumping: the scroll position is kept and focus lands on the row that took the removed row's place (or on
+// the row just edited, or the heading when no rows are left). Real navigation still starts at the top with focus on main.
+const rowKeys = () => [...main.querySelectorAll('[data-row]')].map((b) => b.dataset.row);
+// Remembers where Today is (scroll and the row e, if any) so the next Today render restores it.
+function holdToday(e) {
+  const key = e ? entryKey(e) : null;
+  state.hold = todayHold(window.scrollY, key, key == null ? 0 : rowKeys().indexOf(key), localDate());
+}
+const refreshToday = (e) => { holdToday(e); return go('today', {}, true); };
+function restoreToday(hold) {
+  window.scrollTo(0, hold.y);
+  const btns = [...main.querySelectorAll('[data-row]')];
+  const t = holdTarget(hold, btns.map((b) => b.dataset.row));
+  let el = null;
+  if (t.kind === 'heading') el = main.querySelector('h1');
+  else if (t.kind === 'row') {
+    el = btns[t.index];
+    if (el.dataset.row === hold.key) el = el.closest('li, tr').querySelector('.item-main, .food-link') || el;  // the row just edited: its own button
+  }
+  if (!el) { main.focus({ preventScroll: true }); return; }
+  if (!el.matches('button')) el.setAttribute('tabindex', '-1');
+  el.focus({ preventScroll: true });
+  const r = el.getBoundingClientRect();
+  if (r.top < 0 || r.bottom > window.innerHeight) el.scrollIntoView({ block: 'nearest' });
 }
 
 nav.addEventListener('click', (e) => {
   const b = e.target.closest('button[data-go]');
-  if (b) { state.quickMeal = null; go(b.dataset.go, {}, false); }
+  if (b) { state.hold = null; state.quickMeal = null; go(b.dataset.go, {}, false); }
 });
 
 function showLogin() {
@@ -319,7 +350,7 @@ async function todayScreen(root) {
     g.entries.length ? h('ul', { class: 'list' }, g.entries.map((e) => entryRow(e, root))) : null,
     g.entries.length ? saveMealBox(g, status) : null));
   const removeEntry = async (e) => {
-    try { if (await removeRow(e)) await go('today', {}, true); } catch (err) { show(status, message(err.message, 'error')); }
+    try { if (await removeRow(e)) await refreshToday(e); } catch (err) { show(status, message(err.message, 'error')); }
   };
   const openEntry = (e) => openRow(e);
   const disp = state.display;
@@ -327,7 +358,7 @@ async function todayScreen(root) {
   const nutrients = disp.show_macros !== false || micros ? h('div', { class: 'nutrients' },
     disp.show_macros !== false ? [h('h2', null, 'Macro Nutrients'), h('div', { class: 'bars' }, bars)] : null, micros,
     micros ? refreshLoggedControl({ scope: 'day:' + d.day, label: 'Refresh Nutrients', quiet: true,
-      load: () => api.missingNutrients(d.day), onFinish: () => go('today', {}, true) }).el : null) : null;
+      load: () => api.missingNutrients(d.day), onFinish: () => refreshToday() }).el : null) : null;
   const body = h('div', { class: 'entries-body' });
   const grid = h('div', { class: 'two-col today' });
   const paint = (view) => {
@@ -348,7 +379,8 @@ async function todayScreen(root) {
 }
 
 // A Today row opens the picker for a food, or the recipe log screen for a logged recipe (one group of ingredient rows).
-const openRow = (e) => (isRecipeLog(e) ? go('recipelog', { groupId: e.group_id })
+const openRow = (e) => { holdToday(e); return openRowScreen(e); };
+const openRowScreen = (e) => (isRecipeLog(e) ? go('recipelog', { groupId: e.group_id })
   : go('picker', { foodId: e.food_id, entryId: e.id, amount: e.amount, unit: e.unit, meal: e.meal }));
 // Removes a food entry at once, or a whole recipe log after a confirm. Resolves false when the confirm was declined.
 async function removeRow(e) {
@@ -363,8 +395,8 @@ function entryRow(e, root) {
   const sub = (recipe ? recipeAmountText(e.amount, e.unit) : unitText(e.amount, e.unit)) + ' - ' + fmtNum(e.kcal, 0) + ' kcal';
   const title = e.brand ? e.name + ' (' + e.brand + ')' : e.name;
   const open = () => openRow(e);
-  const del = h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Remove ' + e.name, onclick: async () => {
-    try { if (await removeRow(e)) await go('today', {}, true); } catch (err) { show(root.querySelector('[aria-live]'), message(err.message, 'error')); }
+  const del = h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Remove ' + e.name, 'data-row': entryKey(e), onclick: async () => {
+    try { if (await removeRow(e)) await refreshToday(e); } catch (err) { show(root.querySelector('[aria-live]'), message(err.message, 'error')); }
   } }, '×');
   if (recipe) return foodRow(title, sub, open, del, e, null, 'Recipe');
   if (e.food_id == null) return h('li', { class: 'item' }, h('div', { class: 'item-main' }, h('span', { class: 'item-title' }, title), h('span', { class: 'item-sub' }, sub), state.display.show_macro_bar !== false ? macroBar(e) : null), del);

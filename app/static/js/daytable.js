@@ -1,6 +1,7 @@
 import { h, sourceBadge } from './dom.js';
 import { buildTable, columnHeader, VIEWS, VIEW_LABELS } from './tablemodel.js';
 import { isRecipeLog, entryAmountText } from './recipeimport.js';
+import { entryKey } from './util.js';
 
 // The List and Table buttons above the day's entries. onPick(view) runs after a tap.
 export function viewToggle(current, onPick) {
@@ -29,7 +30,7 @@ export function dayTable(entries, opts) {
       const src = recipe ? h('span', { class: 'src-wrap' }, h('span', { class: 'src src-recipe' }, 'Recipe')) : sourceBadge(e.source, true);
       rows.push(h('tr', null, h('th', { scope: 'row', class: 'food-col' }, food, src ? h('div', { class: 'src-sub' }, src) : null), h('td', { class: 'amt-col' }, entryAmountText(e)),
         r.cells.map((s) => h('td', { class: 'num' }, s)),
-        h('td', { class: 'del-col' }, h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Remove ' + e.name, onclick: () => opts.onDelete(e) }, '×'))));
+        h('td', { class: 'del-col' }, h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Remove ' + e.name, 'data-row': entryKey(e), onclick: () => opts.onDelete(e) }, '×'))));
     });
   }
   rows.push(h('tr', { class: 'total-row' }, h('th', { scope: 'row', class: 'food-col' }, 'Total'), h('td', { class: 'amt-col' }),

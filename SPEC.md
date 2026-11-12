@@ -258,12 +258,12 @@ PATCH /api/meals/{id} also takes "servings" (null = 1), "yield" ({"amount","unit
 GET/PUT /api/goals   {"kcal","carb_pct","protein_pct","fat_pct"}  pcts total 100. Default 3000 and 50/30/20 (carbs/protein/fat).
         targets: carbs g = kcal*pct/4, protein same, fat g = kcal*pct/9. Goals are per user.
 GET/PUT /api/settings {"start_screen": "today"|"scan"|"search"|"ai", "default_meal": ...}   # per user, validated
-GET/PUT /api/settings/display {"show_macros","show_micros","show_split","show_macro_bar","show_table","micros_open": bool, "micros_shown": [nutrient...], "today_view": "list"|"table", "search_source": "all"|"off"|"fdc"|"ai", "auto_match": "search"|"off"}
+GET/PUT /api/settings/display {"show_macros","show_micros","show_split","show_macro_bar","show_table","micros_open": bool, "micros_shown": [nutrient...], "today_view": "list"|"table", "search_source": "all"|"off"|"fdc"|"ai", "auto_match": "search"|"claude"|"search_claude"|"off"}
         # per user, stored in the settings table (micros_hidden comma list). PUT takes any subset, booleans only (today_view is the string list or table), 400 otherwise.
         # today_view is the Today tab's view, column settings.today_view TEXT NOT NULL DEFAULT 'list', added in place by core.init.
         # Defaults: everything shown, micros_open false (the new section starts collapsed), so existing users see no change.
         # search_source is the Default Search Source (column settings.search_source TEXT NOT NULL DEFAULT 'all', added in place).
-        # auto_match is Auto-Match After Import (column settings.auto_match TEXT NOT NULL DEFAULT 'search', added in place; core.AUTO_MATCHES;
+        # auto_match is Auto-Match After Import (column settings.auto_match TEXT NOT NULL DEFAULT 'search', added in place; core.AUTO_MATCHES = search, claude, search_claude, off, a plain TEXT column so new values need no migration;
         # anything else is 400, a bad stored value reads as search). See "Auto-Match After Import" below.
 GET/PUT /api/goals/micros  GET -> {"micros": [{"key","label","unit","kind": "goal"|"limit","default","target"}]}
         PUT {"targets": {nutrient: number > 0 and <= 100000}} (any subset). Table micro_targets(user_id, nutrient, target).
@@ -494,7 +494,7 @@ Screens: Login, Today, Add, Recipes, Picker, Claude fallback, Settings. Bottom n
   When one is installed and waiting while another controls the page (or a new worker took over by itself), a sticky bar at the top of the app
   reads "Update Available" with a Reload button (role status, light and dark). Reload posts `{type: 'SKIP_WAITING'}` to the waiting worker (sw.js
   answers with skipWaiting), then reloads on controllerchange (with a short timer as a fallback). A fresh install, with no earlier controller,
-  shows nothing. The page also asks the registration for a newer worker whenever it becomes visible. Bump the sw.js cache name (now v50) with
+  shows nothing. The page also asks the registration for a newer worker whenever it becomes visible. Bump the sw.js cache name (now v51) with
   every change to the shell and list new js files in SHELL.
 - Do not ship a mock server. Test pure helpers (picker math, number formatting, day grouping) with node scripts in tests/ui,
   run with `node --test tests/ui`. Keep those helpers in their own module (js/util.js) so node can import them.
@@ -521,6 +521,16 @@ Maximize compatibility. Every feature needs a working fallback, and nothing may 
 ## Quality bar
 
 Every module ships with tests that run offline in under 10 seconds. No secrets in code. No print debugging. Clear error messages. Keep functions short.
+
+## Today Keeps Its Place (v51)
+
+- Removing an entry (X on a row, in List or Table), Remove Recipe on the recipe log screen, changing a portion (picker or recipe log) and Refresh Nutrients
+  repaint Today without jumping to the top. Real navigation (a tab, a new screen) still starts at the top with focus on main.
+- app.js `holdToday(e)` stores `state.hold` (util.js `todayHold`: scrollY, the row key from `entryKey`, its index, the day). Remove buttons carry `data-row`. `render`
+  takes the hold for the next Today render only (same day, and only from Today, the picker or the recipe log), skips the early clear of main so the page keeps its height,
+  then `restoreToday` scrolls back and focuses with util.js `holdTarget`: the opened row's own button when it is still there, else the remove button that took the
+  removed row's place (the last one when the last row went), else the Today heading when no rows are left. At the very bottom of a page that shrank the browser clamps scrollY.
+- The quiet Refresh Nutrients control on Today starts hidden, so the page does not shift when it turns out to be unneeded.
 
 ## Recipe Logs on Today (v50)
 
@@ -591,15 +601,24 @@ POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log i
 
 ## Auto-Match After Import
 
-- Settings, Display has Auto-Match After Import (select, Search | Off, saved at once like the other Display choices, per user, default Search) with a hint
-  that Search is the default, is the free Search and never uses Claude. Server: `settings.auto_match`, `core.AUTO_MATCHES`, returned and validated by
-  GET/PUT /api/settings/display. Client: util.js `AUTO_MATCHES`, `autoMatch`, `DEFAULT_DISPLAY.auto_match`.
+- Settings, Display has Auto-Match After Import (select: Search, Claude, Search Then Claude, Off; saved at once like the other Display choices, per user,
+  default Search) with a hint that states Search is the default, that Search is free, that the Claude choices use Claude requests (cost shown first when Confirm
+  before using Claude is on) and fall back to Search when Claude is not set up, and that Off leaves every ingredient to match. Server: `settings.auto_match`
+  (plain TEXT, no CHECK constraint, so the new values need no migration), `core.AUTO_MATCHES` = search, claude, search_claude, off, returned and validated by
+  GET/PUT /api/settings/display (anything else is 400, a bad stored value reads as search). Client: util.js `AUTO_MATCHES`, `autoMatch`,
+  `DEFAULT_DISPLAY.auto_match`; recipeimport.js `autoMatchOn` (every value except off), `autoMatchPlan(setting, aiOn)`, `autoClaudeBatch`.
+- Claude options (same flow as Match Selected With Claude, no new route): `autoRun` computes the plan with aiOn = Claude is set up and the recipe switch is on.
+  Search runs Search only. Claude asks Claude about every unmatched row (up to 15, the rest stay ticked). Search Then Claude runs Search first, then asks Claude
+  about the unmatched rows that have no food proposal (up to 15). `confirmClaude` runs first (respects confirm_ai, shows the request count and cost, blocks past the
+  monthly cap); Cancel leaves those rows unmatched and ticked with a quiet note, keeping any Search proposals. With Claude not set up or the switch off, Claude and
+  Search Then Claude run Search only and add the note "Claude is not available, so Search ran instead." A Claude failure keeps the Search proposals and adds a quiet
+  note. Proposals are Claude Suggests like a manual run, never accepted automatically; Accept N Suggested Matches works as before.
 - Save and Continue (ctx.flow.saved in app.js) sets a one-shot in memory (`state.autoMatch` = the new meal id) when the setting is Search. Match Ingredients
   takes it once (`ctx.flow.takeAuto`, params.saved only), so reopening a recipe, a return from the food finder, Back and a reload never search again.
   Nothing is stored for it.
 - The page renders at once with every unmatched row ticked, then `autoRun` (recipeflow.js) calls POST /api/recipes/{id}/match-search on the unmatched rows
   (recipeimport.js `autoMatchIds`: the same 40 row cap, the Default Search Source or the Source chosen on Add). Status "Finding Matches..." while it runs,
-  with Match Selected disabled and the rest of the page usable. Claude is never asked, no credit is used. Proposals are kept like a manual Search (Suggested
+  with Match Selected disabled and the rest of the page usable. The Search setting never asks Claude and uses no credit. Proposals are kept like a manual Search (Suggested
   Match with source badge, amount and unit from units.match_amount, Estimated Conversion or Check Amount where relevant) and "Accept N Suggested Matches"
   appears. `autoMatchResult` drops answers for rows that were matched or skipped while it ran; only rows that got a food are un-ticked, rows without one stay
   ticked for a manual Match Selected. On a failure the rows stay unmatched and ticked and a quiet note says suggestions could not be found (never an error,

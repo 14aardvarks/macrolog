@@ -636,9 +636,11 @@ export const SEARCH_SOURCES = [
 export function searchSource(v) { return SEARCH_SOURCES.some((s) => s.value === v) ? v : 'all'; }
 
 // Settings, Display, Auto-Match After Import: what happens on Match Ingredients right after an import. Search (default) is the free
-// name search, never Claude. Same values as core.AUTO_MATCHES.
-export const AUTO_MATCHES = [{ value: 'search', label: 'Search' }, { value: 'off', label: 'Off' }];
-export const autoMatch = (v) => (v === 'off' ? 'off' : 'search');
+// name search. Claude matches the unmatched rows with Claude. Search Then Claude searches first, then asks Claude only about the rows
+// Search left without a proposal. Off does nothing. Same values as core.AUTO_MATCHES.
+export const AUTO_MATCHES = [{ value: 'search', label: 'Search' }, { value: 'claude', label: 'Claude' },
+  { value: 'search_claude', label: 'Search Then Claude' }, { value: 'off', label: 'Off' }];
+export const autoMatch = (v) => (AUTO_MATCHES.some((o) => o.value === v) ? v : 'search');
 export const MAX_AI_TEXT = 200;  // same as ai.MAX_TEXT on the server
 
 // What one search does. remote is true for Enter or the Search button, false while typing.
@@ -826,3 +828,29 @@ export function stepsCheck(list) {
 
 // History steps from the current screen back to the recipe screen, at least one.
 export const stepsBack = (depth, base) => Math.max(1, depth - base);
+
+// ---------- Today keeps its place ----------
+// Removing an entry, changing a portion or coming back from a row's screen repaints Today. The repaint keeps the scroll position and
+// puts focus on something sensible instead of the top of the page.
+
+// A stable key for one Today row: a logged recipe is one row (its group), any other entry is itself.
+export const entryKey = (e) => (e && e.kind === 'recipe' ? 'g' + e.group_id : 'e' + (e && e.id));
+
+// What to remember before leaving or repainting Today. y: window scroll, key: the row acted on, index: where that row sits among
+// the rows (in screen order), day: the date shown, so a hold never carries over to another day.
+export const todayHold = (y, key, index, day) => ({ y: Math.max(0, Math.round(Number(y) || 0)), key: key == null ? null : String(key),
+  index: Math.max(0, Math.floor(Number(index) || 0)), day: day || null });
+
+// A hold applies once, to the same day only.
+export const holdFresh = (hold, day) => !!hold && hold.day === day;
+
+// Where focus goes after the repaint. keys: the row keys now on screen in order. The same row when it is still there (a portion
+// change, a return from the row's screen), else the row that took its place (the next one, or the last when the removed row was
+// the last), else the heading when no rows are left. page: no row was involved, focus stays on the page.
+export function holdTarget(hold, keys) {
+  const list = Array.isArray(keys) ? keys : [];
+  if (hold && hold.key == null) return { kind: 'page', index: -1 };  // a repaint that acted on no row (Refresh Nutrients)
+  if (!hold || !list.length) return { kind: 'heading', index: -1 };
+  const same = list.indexOf(hold.key);
+  return { kind: 'row', index: same >= 0 ? same : Math.min(hold.index, list.length - 1) };
+}

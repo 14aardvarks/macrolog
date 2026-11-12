@@ -133,21 +133,48 @@ test('portionAmount converts a share into a unit, rounded for the box', () => {
 
 // ---------- Auto-Match After Import ----------
 import {
-  autoMatchOn, autoMatchIds, autoMatchResult, rateLimitNote, RATE_LIMIT_NOTE, AUTO_MATCH_LOADING, AUTO_MATCH_FAILED,
+  autoMatchOn, autoMatchIds, autoMatchResult, autoMatchPlan, autoClaudeBatch, AUTO_CLAUDE_OFF, AUTO_CLAUDE_FAILED, AUTO_CLAUDE_CANCELLED, rateLimitNote, RATE_LIMIT_NOTE, AUTO_MATCH_LOADING, AUTO_MATCH_FAILED,
 } from '../../app/static/js/recipeimport.js';
 import { AUTO_MATCHES, autoMatch, DEFAULT_DISPLAY, sentence } from '../../app/static/js/util.js';
 
 const amRow = (id, over) => ({ id, food: null, food_id: null, skipped: false, check: false, src: { text: 'r' + id }, ...over });
 
-test('Auto-Match After Import: Search by default, Off turns it off, anything odd means Search', () => {
-  assert.deepEqual(AUTO_MATCHES.map((o) => o.value), ['search', 'off']);
+test('Auto-Match After Import: Search by default, four choices, anything odd means Search', () => {
+  assert.deepEqual(AUTO_MATCHES.map((o) => o.value), ['search', 'claude', 'search_claude', 'off']);
+  assert.deepEqual(AUTO_MATCHES.map((o) => o.label), ['Search', 'Claude', 'Search Then Claude', 'Off']);
   assert.equal(DEFAULT_DISPLAY.auto_match, 'search');
-  assert.equal(autoMatch('off'), 'off');
-  for (const v of ['search', undefined, null, '', 'claude', 'OFF']) assert.equal(autoMatch(v), 'search');
-  assert.equal(autoMatchOn({ auto_match: 'search' }), true);
+  for (const v of ['off', 'claude', 'search_claude', 'search']) assert.equal(autoMatch(v), v);
+  for (const v of [undefined, null, '', 'OFF', 'Claude', 'bogus']) assert.equal(autoMatch(v), 'search');
+  for (const v of ['search', 'claude', 'search_claude']) assert.equal(autoMatchOn({ auto_match: v }), true);
   assert.equal(autoMatchOn({ auto_match: 'off' }), false);
   assert.equal(autoMatchOn({}), true);
   assert.equal(autoMatchOn(undefined), true);
+});
+
+test('auto-match plan: what runs for each setting, with and without Claude', () => {
+  assert.deepEqual(autoMatchPlan('search', true), { search: true, claude: false, note: '' });
+  assert.deepEqual(autoMatchPlan('search', false), { search: true, claude: false, note: '' });
+  assert.deepEqual(autoMatchPlan('off', true), { search: false, claude: false, note: '' });
+  assert.deepEqual(autoMatchPlan('claude', true), { search: false, claude: true, note: '' });
+  assert.deepEqual(autoMatchPlan('search_claude', true), { search: true, claude: true, note: '' });
+  // Claude not set up, or the recipe switch is off: Search only, with a short note
+  assert.deepEqual(autoMatchPlan('claude', false), { search: true, claude: false, note: AUTO_CLAUDE_OFF });
+  assert.deepEqual(autoMatchPlan('search_claude', false), { search: true, claude: false, note: AUTO_CLAUDE_OFF });
+  assert.deepEqual(autoMatchPlan(undefined, true), { search: true, claude: false, note: '' });
+  for (const t of [AUTO_CLAUDE_OFF, AUTO_CLAUDE_FAILED, AUTO_CLAUDE_CANCELLED]) assert.ok(/\.$/.test(t) && !t.includes('\u2014'));
+});
+
+test('auto-match Claude rows: unmatched rows without a food proposal, up to the Claude cap of 15', () => {
+  const items = [amRow(1), amRow(2), amRow(3, { food: { id: 9 }, food_id: 9 }), amRow(4, { skipped: true }), amRow(5), amRow(6)];
+  assert.deepEqual(autoClaudeBatch(items, {}).send, [1, 2, 5, 6]);  // Claude only: nothing proposed yet
+  const props = { 1: { item_id: 1, food: { name: 'a' } }, 2: { item_id: 2, food: null }, 6: { item_id: 6, food: { name: 'b' } } };
+  assert.deepEqual(autoClaudeBatch(items, props), { send: [2, 5], rest: [] });  // Search Then Claude: rows with no proposal only
+  assert.deepEqual(autoClaudeBatch(items, undefined).send, [1, 2, 5, 6]);
+  const many = Array.from({ length: 20 }, (_, i) => amRow(i + 1));
+  const b = autoClaudeBatch(many, {});
+  assert.equal(b.send.length, 15);
+  assert.deepEqual(b.rest, [16, 17, 18, 19, 20]);
+  assert.deepEqual(autoClaudeBatch([], {}), { send: [], rest: [] });
 });
 
 test('auto-match searches unmatched rows only, up to the Search cap of 40', () => {

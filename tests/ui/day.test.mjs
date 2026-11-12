@@ -84,3 +84,29 @@ test('quickLabel names the action and the meal', () => {
   assert.equal(quickLabel('scan', 'snack'), 'Scan for Snack');
   assert.equal(quickLabel('search', 'dessert'), 'Search for Dessert');
 });
+
+import { entryKey, todayHold, holdFresh, holdTarget } from '../../app/static/js/util.js';
+
+test('entryKey uses the group for a logged recipe and the id otherwise', () => {
+  assert.equal(entryKey({ id: 4, kind: 'recipe', group_id: 9 }), 'g9');
+  assert.equal(entryKey({ id: 4, kind: 'food' }), 'e4');
+  assert.equal(entryKey({ id: 4 }), 'e4');
+});
+
+test('todayHold cleans its numbers and holdFresh only matches the same day', () => {
+  assert.deepEqual(todayHold(412.6, 'e3', 2, '2026-01-02'), { y: 413, key: 'e3', index: 2, day: '2026-01-02' });
+  assert.deepEqual(todayHold(-5, null, -1, null), { y: 0, key: null, index: 0, day: null });
+  assert.equal(holdFresh(todayHold(1, 'e1', 0, '2026-01-02'), '2026-01-02'), true);
+  assert.equal(holdFresh(todayHold(1, 'e1', 0, '2026-01-02'), '2026-01-03'), false);
+  assert.equal(holdFresh(null, '2026-01-02'), false);
+});
+
+test('holdTarget keeps the row, else the next row, else the last, else the heading', () => {
+  const hold = todayHold(300, 'e3', 2, 'd');
+  assert.deepEqual(holdTarget(hold, ['e1', 'e2', 'e3', 'e4']), { kind: 'row', index: 2 });  // still there (portion change)
+  assert.deepEqual(holdTarget(hold, ['e1', 'e2', 'e4', 'e5']), { kind: 'row', index: 2 });  // removed: the next row slid up
+  assert.deepEqual(holdTarget(hold, ['e1', 'e2']), { kind: 'row', index: 1 });  // removed the last row
+  assert.deepEqual(holdTarget(hold, []), { kind: 'heading', index: -1 });
+  assert.deepEqual(holdTarget(null, ['e1']), { kind: 'heading', index: -1 });
+  assert.deepEqual(holdTarget(todayHold(10, null, 0, 'd'), ['e1']), { kind: 'page', index: -1 });
+});

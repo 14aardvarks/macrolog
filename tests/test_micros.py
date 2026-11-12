@@ -243,17 +243,25 @@ def test_search_source_validation(a, value):
 
 def test_auto_match_default_save_and_isolation(a, b):
     assert a.get("/api/settings/display").json()["auto_match"] == "search"
-    for v in ("off", "search", "off"):
+    for v in ("off", "claude", "search_claude", "search", "off"):
         assert a.put("/api/settings/display", json={"auto_match": v}).json()["auto_match"] == v
     a.put("/api/settings/display", json={"show_split": False, "search_source": "fdc"})  # other display saves keep it
     assert a.get("/api/settings/display").json()["auto_match"] == "off"
     assert b.get("/api/settings/display").json()["auto_match"] == "search"
 
 
-@pytest.mark.parametrize("value", ["claude", "", None, True, 1, ["off"], {"a": 1}, "OFF", "Search"])
+@pytest.mark.parametrize("value", ["", None, "Claude", "search claude", "search_claude ", "claude_search", "auto", True, 1, ["off"], {"a": 1}, "OFF", "Search"])
 def test_auto_match_validation(a, value):
     assert a.put("/api/settings/display", json={"auto_match": value}).status_code == 400
     assert a.get("/api/settings/display").json()["auto_match"] == "search"
+
+
+def test_auto_match_error_lists_the_values(a):
+    r = a.put("/api/settings/display", json={"auto_match": "nope"})
+    assert r.status_code == 400
+    for v in core.AUTO_MATCHES:
+        assert v in r.json()["detail"]
+    assert core.AUTO_MATCHES == ("search", "claude", "search_claude", "off")
 
 
 def test_auto_match_migrates_old_settings_table(tmp_path, monkeypatch):
@@ -269,3 +277,6 @@ def test_auto_match_migrates_old_settings_table(tmp_path, monkeypatch):
     assert core.read_display(c, 1)["auto_match"] == "search"
     c.execute("UPDATE settings SET auto_match='bogus'")  # a bad stored value reads as the default
     assert core.read_display(c, 1)["auto_match"] == "search"
+    for v in core.AUTO_MATCHES:  # every allowed value reads back as stored
+        c.execute("UPDATE settings SET auto_match=?", (v,))
+        assert core.read_display(c, 1)["auto_match"] == v

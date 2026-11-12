@@ -13,7 +13,7 @@ import {
   parseIngredientText, parseIngredientLine, reviewDraft, reviewBody, blankRow, matchState, matchCountText, toggleAll, toggleId,
   proposalText, matchWhat, importWhat, matchSnapshot, restoreBody, changedSince, nextUnmatched, pendingProposals,
   acceptAllText, notMatchedText, saveChoice, canSaveWithout, SAVE_WITHOUT_NONE, unmatchedIds, photoPick, PHOTOS_TEXT, MATCH_METHODS, matchMethod, matchRunText, methodBatch, matchDoneText, proposalHead,
-  AUTO_MATCH_LOADING, AUTO_MATCH_FAILED, autoMatchIds, autoMatchResult, rateLimitNote,
+  AUTO_MATCH_LOADING, AUTO_MATCH_FAILED, autoMatchIds, autoMatchResult, autoMatchPlan, autoClaudeBatch, AUTO_CLAUDE_FAILED, AUTO_CLAUDE_CANCELLED, rateLimitNote,
 } from './recipeimport.js';
 import { servingSizeEditor } from './servingsize.js';
 
@@ -273,25 +273,55 @@ export async function renderMatch(root, params, ctx) {
     } catch (e) { fail(e); } finally { acceptBtn.disabled = false; }
   }
   const showLimit = (r) => { const t = rateLimitNote(r); show(limitNote, t ? h('p', { class: 'sub match-limit', role: 'status' }, t) : null); };
-  // Auto-Match After Import: the free Search on the unmatched rows, once, right after the import. It never blocks: the page is
-  // already usable, and a failure only leaves the rows unmatched (and ticked) with a quiet note.
+  // Auto-Match After Import, once, right after the import. Search is the free name search, Claude asks Claude (same confirm, cap and
+  // cost as Match Selected With Claude), Search Then Claude asks Claude only about rows Search left without a proposal. It never
+  // blocks: the page is already usable, and a failure or a cancel only leaves the rows unmatched (and ticked) with a quiet note.
   async function autoRun() {
-    const ids = autoMatchIds(meal.items);
-    if (!ids.length) return;
+    const plan = autoMatchPlan(ctx.display.auto_match, aiOn);
+    if (!plan.search && !plan.claude) return;
     busy = true;
     status.setAttribute('aria-busy', 'true');
     paintHead();
-    show(status, message(AUTO_MATCH_LOADING));
-    try {
-      const r = await api.matchSearch(meal.id, ids, ctx.flow.searchSource());
+    const keep = (r) => {  // keeps the proposals, un-ticks only rows that got a food, so the rest stay ticked for a manual Match
       const { fresh, found } = autoMatchResult(meal.items, r.proposals);
       fresh.forEach((p) => { props[p.item_id] = p; });
-      selected = selected.filter((id) => found.indexOf(id) < 0);  // rows without a suggestion stay ticked for a manual Match
+      selected = selected.filter((id) => found.indexOf(id) < 0);
       keepSel();
+      return fresh;
+    };
+    let text = '';
+    try {
+      if (plan.search) {
+        const ids = autoMatchIds(meal.items);
+        if (ids.length) {
+          show(status, message(AUTO_MATCH_LOADING));
+          const r = await api.matchSearch(meal.id, ids, ctx.flow.searchSource());
+          const fresh = keep(r);
+          showLimit(r);
+          text = matchDoneText('search', fresh, 0, '');
+          busy = plan.claude;
+          paintRows();
+          show(status, message(text));
+        }
+      }
+      if (plan.claude) {
+        const b = autoClaudeBatch(meal.items, props);
+        if (b.send.length) {
+          if (!(await confirmClaude(ctx.settings, { what: matchWhat(b.send.length), query: { match_rows: b.send.length } }))) {
+            text = [text, AUTO_CLAUDE_CANCELLED].filter(Boolean).join(' ');
+          } else {
+            show(status, message('Claude is matching ' + b.send.length + (b.send.length === 1 ? ' ingredient...' : ' ingredients...')));
+            try {
+              const r = await api.matchIngredients(meal.id, b.send);
+              keep(r);
+              text = matchDoneText('claude', Object.values(props), b.rest.length, r.cost != null ? 'This cost about ' + centsText(r.cost) + '.' : '');
+            } catch (e) { text = [text, AUTO_CLAUDE_FAILED].filter(Boolean).join(' '); }
+          }
+        }
+      }
       busy = false;  // before the repaint, so Match Selected is enabled again
       paintRows();
-      showLimit(r);
-      show(status, message(matchDoneText('search', fresh, 0, '')));
+      show(status, text || plan.note ? message([text, plan.note].filter(Boolean).join(' ')) : null);
     } catch (e) {
       show(status, message(AUTO_MATCH_FAILED));
     } finally { busy = false; status.removeAttribute('aria-busy'); paintHead(); }
