@@ -249,7 +249,11 @@ export async function renderPicker(root, params, ctx) {
   async function save() {
     const m = mealSel.value === 'none' ? null : mealSel.value;
     finishTyping(false);
-    if (adjust != null) { ctx.finishAdjust(adjust, st.amount, st.unit, food); return; }  // hands the pick back, logs nothing
+    if (adjust != null) {  // hands the pick back, logs nothing (a recipe match saves the match and may fail)
+      logBtn.disabled = true;
+      try { await ctx.finishAdjust(adjust, st.amount, st.unit, food); } catch (e) { logBtn.disabled = false; show(status, message(e.message, 'error')); }
+      return;
+    }
     logBtn.disabled = true;
     try {
       if (edit) await api.patchEntry(params.entryId, { amount: st.amount, unit: st.unit, meal: m });

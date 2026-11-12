@@ -19,12 +19,15 @@ import { renderSetup } from './setup.js';
 import { renderAdmin } from './admin.js';
 import { renderSaved } from './saved.js';
 import { renderRecipe } from './recipe.js';
+import { renderImport, renderReview, renderMatch } from './recipeflow.js';
+import { recipeSubText } from './recipeimport.js';
 import { renderClaudeSection, renderSignIn } from './claudekey.js';
 import { refreshLoggedControl } from './refresh.js';
 
 const main = document.getElementById('main');
 const nav = document.getElementById('nav');
-const state = { user: null, settings: { start_screen: 'today', default_meal: null, use_last: true, confirm_ai: true, amount_format: 'fraction' }, display: DEFAULT_DISPLAY, cleanup: null, depth: 0, tab: 'favorites', addMeal: null, draft: null, recipe: null, source: 'all', claude: null };  // addMeal, source and claude (last Claude estimate) live for the session only
+const state = { user: null, settings: { start_screen: 'today', default_meal: null, use_last: true, confirm_ai: true, amount_format: 'fraction' }, display: DEFAULT_DISPLAY, cleanup: null, depth: 0, tab: 'favorites', addMeal: null, draft: null, recipe: null, source: 'all', claude: null,
+  importInput: null, importDraft: null, importBase: 0, proposals: {}, selections: {}, matchFocus: null };  // Import Recipe and Match Ingredients  // addMeal, source and claude (last Claude estimate) live for the session only
 const NAV_OF = { today: 'today', settings: 'settings', admin: 'settings', saved: 'settings', editfood: 'settings' };  // every other screen belongs to Add
 
 const ctx = {
@@ -51,9 +54,43 @@ const ctx = {
     return go('picker', { foodId: r.food_id, adjust: { index: i }, amount: r.amount, unit: r.unit });
   },
   saved() { state.recipe = null; state.tab = 'recipes'; return ctx.back(); },
+  // Import Recipe (step 1) and Match Ingredients (step 2). See js/recipeflow.js.
+  flow: {
+    get input() { return state.importInput || (state.importInput = { kind: 'text', text: '', note: '' }); },
+    get draft() { return state.importDraft; },
+    set draft(d) { state.importDraft = d; },
+    // Save and Continue: the recipe exists now, so the import screens leave history and step 2 opens on top of Add.
+    saved(meal) {
+      state.importDraft = null;
+      state.importInput = null;
+      state.tab = 'recipes';
+      backThen(state.depth - state.importBase, () => go('match', { mealId: meal.id, saved: true }));
+    },
+    cancel() { state.importDraft = null; state.importInput = null; backThen(state.depth - state.importBase, () => {}); },
+    exit() { state.tab = 'recipes'; return ctx.back(); },
+    proposals(id) { return state.proposals[id] || (state.proposals[id] = {}); },
+    selection(id) { return state.selections[id] || []; },
+    setSelection(id, ids) { state.selections[id] = ids; },
+    takeFocus() { const f = state.matchFocus; state.matchFocus = null; return f; },
+    // Search or Scan for one ingredient. The finder and picker run in ingredient mode and finishAdjust saves the match.
+    find(meal, item, how) {
+      const src = item.src || {};
+      state.recipe = { match: { mealId: meal.id, itemId: item.id, amount: item.food ? item.amount : src.amount, unit: item.food ? item.unit : src.unit,
+        label: src.text || (item.food && item.food.name) || '' }, name: '', meals: [], rows: [], depth: state.depth, adding: true, picking: null };
+      state.matchFocus = item.id;
+      return how === 'scan' ? go('scan', { autostart: true }) : go('add', { ingredient: true, q: src.name || (item.food && item.food.name) || '' });
+    },
+  },
   // Recipe row adjust: the picker hands back the chosen amount and unit, then the recipe screen is shown again with its draft.
-  finishAdjust(index, amount, unit, food) {
+  async finishAdjust(index, amount, unit, food) {
     const r = state.recipe;
+    if (r && r.match) {  // Match Ingredients: save the match, then go back past the finder to the match screen
+      await api.matchItem(r.match.mealId, r.match.itemId, { food_id: food.id, amount, unit });
+      delete ctx.flow.proposals(r.match.mealId)[r.match.itemId];
+      const n = stepsBack(state.depth, r.depth);
+      state.recipe = null;
+      return history.go(-n);
+    }
     if (r && r.picking != null) {  // Create Recipe: a new ingredient comes from the finder, so go back past it to the recipe screen
       r.rows = r.picking >= r.rows.length ? recipeAddRow(r.rows, food, amount, unit) : recipeSetRow(r.rows, r.picking, amount, unit);
       const n = r.adding ? stepsBack(state.depth, r.depth) : 1;
@@ -76,6 +113,14 @@ function go(name, params, replace) {
   return render(entry);
 }
 
+// Go back n history steps, then run fn once the screen there has started to render.
+function backThen(n, fn) {
+  if (n <= 0) { fn(); return; }
+  const once = () => { window.removeEventListener('popstate', once); setTimeout(fn, 0); };
+  window.addEventListener('popstate', once);
+  history.go(-n);
+}
+
 window.addEventListener('popstate', (e) => {
   const entry = e.state && e.state.name ? e.state : { name: 'today', params: {}, d: 0 };
   state.depth = entry.d || 0;
@@ -92,7 +137,11 @@ function trackRecipeFlow(entry) {
   const p = entry.params || (entry.params = {});
   if (entry.name === 'add') r.adding = !!p.ingredient;
   else if (entry.name === 'picker') {
-    if (r.adding && !p.adjust && p.entryId == null) { p.adjust = { index: r.rows.length }; r.picking = r.rows.length; }
+    if (r.adding && !p.adjust && p.entryId == null) {
+      p.adjust = { index: r.rows.length };
+      r.picking = r.rows.length;
+      if (r.match && p.amount == null && r.match.unit) { p.amount = r.match.amount; p.unit = r.match.unit; }  // start from the recipe's own amount
+    }
   } else {
     if (!['lookup', 'scan', 'manual', 'ai'].includes(entry.name)) r.adding = false;
     r.picking = null;
@@ -300,6 +349,7 @@ const foodTitle = (f) => (f.brand ? f.name + ' (' + f.brand + ')' : f.name);
 // params.ingredient: the finder used by Create Recipe. It shows Favorites and Past Foods only and no meal choice.
 function addScreen(root, params) {
   const ing = !!(params.ingredient && state.recipe);
+  const matching = ing && state.recipe.match ? state.recipe.match : null;  // finding a food for one imported ingredient
   let tab = ing ? 'favorites' : state.tab;
   const listBox = h('div', { 'aria-live': 'polite' });
   const q = h('input', { type: 'search', placeholder: 'Search foods', 'aria-label': 'Search foods', enterkeyhint: 'search', autocomplete: 'off' });
@@ -401,17 +451,20 @@ function addScreen(root, params) {
   // Search, scan and the meal filter sit above the lists so a long list never pushes them off screen.
   root.appendChild(h('section', { class: 'screen wide add' },
     ing ? h('div', { class: 'bar' }, h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back')) : null,
-    ing ? h('h1', null, 'Add Ingredient') : null,
+    ing ? h('h1', null, matching ? 'Find Ingredient' : 'Add Ingredient') : null,
+    matching && matching.label ? h('p', { class: 'sub' }, 'For: ' + matching.label) : null,
     srcPick, srcNote,
     h('form', { class: 'row add-search', role: 'search', onsubmit: (e) => { e.preventDefault(); liveSearch.cancel(); search(true); } },
       q, h('button', { class: 'btn', type: 'submit' }, 'Search')),
     h('div', { class: 'row add-scan' },
       h('button', { class: 'btn', type: 'button', onclick: () => go('manual', {}) }, 'Enter Manually'),
       h('button', { class: 'btn primary scan-btn', type: 'button', onclick: () => go('scan', { autostart: true }) }, cameraIcon(), 'Scan Barcode')),
-    ing ? null : h('div', { class: 'row add-create' }, h('button', { class: 'btn', type: 'button', onclick: () => { state.recipe = newRecipeDraft(); go('recipe', {}); } }, 'Create Recipe')),
+    ing ? null : h('div', { class: 'row add-create' }, h('button', { class: 'btn', type: 'button', onclick: () => { state.recipe = newRecipeDraft(); go('recipe', {}); } }, 'Create Recipe'),
+      h('button', { class: 'btn', type: 'button', onclick: () => { state.importBase = state.depth; go('import', {}); } }, 'Import Recipe')),
     ing ? null : mealPick, tabBar, h('div', { class: 'tab-list' }, listBox)));
   if (state.source === 'ai' && state.claude) q.value = state.claude.text;  // back from the draft: the estimate is still here, no second request
-  if (state.source === 'ai') loadAi().then(paintSearch); else paintTabs();
+  if (matching && params.q && state.source !== 'ai') { q.value = params.q; search(true); }  // the ingredient's name, searched at once
+  else if (state.source === 'ai') loadAi().then(paintSearch); else paintTabs();
   if (params.focus) root.addEventListener('mounted', () => q.focus());
 }
 
@@ -461,7 +514,8 @@ async function recipesList(meal) {
       if (!window.confirm('Delete the recipe "' + m.name + '"?')) return;
       try { await api.deleteMeal(m.id); await go('add', {}, true); } catch (e) { del.parentNode.appendChild(message(e.message, 'error')); }
     } }, '×');
-    return foodRow(m.name, m.items.length + ' items - ' + fmtNum(m.kcal, 0) + ' kcal', () => go('meal', { mealId: m.id, meal: chosenMeal() }), del);
+    const open = m.complete ? () => go('meal', { mealId: m.id, meal: chosenMeal() }) : () => go('match', { mealId: m.id });  // partial: resume matching
+    return foodRow(m.name, recipeSubText(m, fmtNum(m.kcal, 0)), open, del);
   })));
 }
 
@@ -481,8 +535,12 @@ async function lookupScreen(root, params) {
 }
 
 async function mealScreen(root, params) {
-  const meal = (await api.meals()).meals.find((m) => m.id === params.mealId);
-  if (!meal) throw new Error('Recipe not found');
+  const found = (await api.meals()).meals.find((m) => m.id === params.mealId);
+  if (!found) throw new Error('Recipe not found');
+  if (!found.complete) { await go('match', { mealId: found.id }, true); return; }  // not loggable until matched
+  // Skipped ingredients are left out. A recipe that makes several servings starts at one serving.
+  const per = found.servings > 1 ? found.servings : 1;
+  const meal = { ...found, items: found.items.filter((it) => it.food && !it.skipped).map((it) => ({ ...it, amount: it.amount / per })) };
   const status = h('div', { 'aria-live': 'polite' });
   const mealSel = mealSelect(params.meal || defaultMeal());
   const draft = draftFits(state.draft, meal.id, state.depth, meal.items.length) ? state.draft : null;
@@ -516,7 +574,8 @@ async function mealScreen(root, params) {
   }
   root.appendChild(h('section', { class: 'screen' },
     h('div', { class: 'bar' }, h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back')),
-    h('h1', null, meal.name), h('ul', { class: 'list' }, rows.map((r) => r.el)),
+    h('h1', null, meal.name), per > 1 ? h('p', { class: 'sub' }, 'Amounts are for 1 of ' + fmtAmount(per) + ' servings.') : null,
+    h('ul', { class: 'list' }, rows.map((r) => r.el)),
     h('label', { class: 'field' }, h('span', null, 'Meal'), mealSel), status,
     h('button', { class: 'btn primary', type: 'button', onclick: log }, 'Log')));
 }
@@ -599,6 +658,9 @@ const SCREENS = {
   picker: (root, p) => renderPicker(root, p, ctx),
   scan: (root, p) => { const auto = !!p.autostart; p.autostart = false; return renderScan(root, ctx, { autostart: auto }); },
   ai: (root, p) => renderAi(root, p, ctx),
+  import: (root) => renderImport(root, ctx),
+  importreview: (root) => renderReview(root, ctx),
+  match: (root, p) => { if (state.recipe && state.recipe.match) state.recipe = null; return renderMatch(root, p, ctx); },
   manual: (root, p) => renderFoodForm(root, { barcode: p.barcode }, ctx),
 };
 

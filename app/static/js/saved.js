@@ -2,6 +2,7 @@
 import { api } from './api.js';
 import { h, clear, field, message, show, select, sourceBadge } from './dom.js';
 import { refreshAllControl } from './refresh.js';
+import { recipeSubText } from './recipeimport.js';
 import { MEALS, MEAL_LABELS, toggleMeal, parseAmount, fmtAmount, unitLabel, fmtNum, amountText, SAVED_FILTERS, SAVED_FILTER_LABELS, filterSavedItems, pageOf, PAGE_SIZE } from './util.js';
 
 const title = (f) => (f.brand ? f.name + ' (' + f.brand + ')' : f.name);
@@ -36,7 +37,7 @@ function favoriteRow(fav, again) {
     chips(fav.meals, async (m) => { await api.favoriteTags(fav.food.id, m); fav.meals = m; }, status), h('div', { class: 'row wrap' }, remove), status);
 }
 
-function recipeRow(rec, again) {
+function recipeRow(rec, again, ctx) {
   const status = h('div', { 'aria-live': 'polite' });
   const body = h('div');
   const fail = (e) => show(status, message(e.message, 'error'));
@@ -80,10 +81,13 @@ function recipeRow(rec, again) {
     try { await api.deleteMeal(rec.id); await again(); } catch (e) { fail(e); }
   };
   return h('li', { class: 'saved-item' }, h('span', { class: 'item-title' }, rec.name),
-    h('span', { class: 'item-sub' }, rec.items.length + ' items - ' + fmtNum(rec.kcal, 0) + ' kcal'),
+    h('span', { class: 'item-sub' }, recipeSubText(rec, fmtNum(rec.kcal, 0))),
     chips(rec.meals, async (m) => { await api.patchMeal(rec.id, { meals: m }); rec.meals = m; }, status),
     h('div', { class: 'row wrap' }, h('button', { class: 'btn', type: 'button', onclick: rename }, 'Rename'),
-      h('button', { class: 'btn', type: 'button', onclick: items }, 'Edit Items'), h('button', { class: 'btn', type: 'button', onclick: del }, 'Delete')),
+      // An imported recipe with unmatched or skipped ingredients is edited on Match Ingredients, which keeps the recipe's own lines.
+      rec.complete && !rec.skipped ? h('button', { class: 'btn', type: 'button', onclick: items }, 'Edit Items')
+        : h('button', { class: 'btn', type: 'button', onclick: () => ctx.go('match', { mealId: rec.id }) }, 'Match Ingredients'),
+      h('button', { class: 'btn', type: 'button', onclick: del }, 'Delete')),
     body, status);
 }
 
@@ -124,7 +128,7 @@ export async function renderSaved(root, ctx) {
   function paint() {
     clear(lists).append(
       section('favorites', 'Favorites', data.favorites, (f) => title(f.food), (p) => p.map((f) => favoriteRow(f, again)), 'No favorites yet.', true),
-      section('recipes', 'Recipes', data.recipes, (r) => r.name, (p) => p.map((r) => recipeRow(r, again)), 'No recipes yet.', true),
+      section('recipes', 'Recipes', data.recipes, (r) => r.name, (p) => p.map((r) => recipeRow(r, again, ctx)), 'No recipes yet.', true),
       section('foods', 'My Foods', data.foods, (f) => title(f), (p) => p.map((f) => foodRowMine(f, ctx, again)), 'Foods you create by hand or with Claude appear here.', false, bulk.el));
     bulk.update();
   }

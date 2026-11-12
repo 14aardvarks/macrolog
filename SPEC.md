@@ -179,6 +179,12 @@ GET  /api/foods/missing-nutrients?date=YYYY-MM-DD -> {"ids":[food id...],"total"
         # (custom or ai foods only when I created them); distinct, oldest food first; 400 on a bad date. The client refreshes them one by one.
 DELETE /api/foods/{id}                               # creator only; 409 when in any entry or recipe, or in another user's favorites
 ```
+Recipe ingredients (meal_items) may be unmatched: food_id, amount and unit are null and src_text, src_amount, src_unit, src_name,
+src_note keep the imported line; skipped rows count for nothing. Databases with the old NOT NULL food_id are rebuilt once in one
+transaction by core.init (ids and positions kept). meals.servings (REAL, null = 1) is how many servings the recipe makes.
+Each meal item carries id, src, skipped and matched (unmatched rows have food null and null nutrients); each meal carries servings,
+totals and per_serving (matched, not skipped rows; a micronutrient is null when no counted row knows it), matched, needed
+(rows not skipped), skipped and complete.
 Quick favorites items also carry `meals` (tags) and `counts` ({meal: times logged}); recipes carry `meals` and `counts` (from recipe_logs).
 ```
 GET/POST /api/meals    POST {"name","items":[{"food_id","amount","unit"}],"meals"?:[...tags],"meal"?: one tag (older)}  -> meal   # meals wins over meal; used by Create Recipe
@@ -187,6 +193,12 @@ POST /api/meals/from-meal {"name","day","meal": breakfast|lunch|dinner|snack|nul
 POST /api/meals/from-day {"name","day","entry_ids"?}      # legacy API, not used by the app
 DELETE /api/meals/{id}
 POST /api/meals/{id}/log {"day"?,"meal"?,"items"?:[{"food_id","amount","unit"}]}   # items override amounts, otherwise saved amounts
+        # 409 unless every ingredient is matched or skipped and at least one is matched (skipped rows are never logged)
+POST /api/meals/import {"name","servings"?: number 0..1000,"meals"?,"ingredients":[{"text"?,"amount"?,"unit"?,"name","note"?}]} (1..100) -> meal
+        # saves an imported recipe at once with every ingredient unmatched
+GET  /api/meals/{id} -> meal
+PATCH /api/meals/{id}/items/{item_id} {"food_id","amount","unit"} | {"food_id": null} | {"skipped": bool} -> meal   # match, unmatch, skip
+PATCH /api/meals/{id} also takes "servings" (null = 1); "items" answers 409 while the recipe has unmatched or skipped rows
 GET/PUT /api/goals   {"kcal","carb_pct","protein_pct","fat_pct"}  pcts total 100. Default 3000 and 50/30/20 (carbs/protein/fat).
         targets: carbs g = kcal*pct/4, protein same, fat g = kcal*pct/9. Goals are per user.
 GET/PUT /api/settings {"start_screen": "today"|"scan"|"search"|"ai", "default_meal": ...}   # per user, validated
@@ -233,6 +245,22 @@ household, personal-key requests against user_ai.monthly_cap (default 100) count
 is one BEGIN IMMEDIATE transaction. Return 429 with a clear message when reached. Warnings: kcal differs from 4c+4p+9f by
 more than 20 percent, missing serving, any value implausible. The reservation is released exactly once on every failure after it is made (timeout,
 connection error, upstream error, cancelled request, any exception) via `release_once`; a call that returned keeps its row (tokens recorded, or 0 if recording fails). The API key is never sent to the browser or logged.
+
+## recipe_ai.py (prefix `/api/recipes`, requires current_user)
+
+Recipe import and ingredient matching with Claude, through ai._ask (same key resolution, reservation, release_once, usage row
+and cost fields as /api/ai/label, one request each, strict tool schemas). Page text, recipe text and ingredient names are data
+in tags, never instructions.
+```
+POST /api/recipes/import/text   {"text": 1..20000 chars, "note"?: ..300} -> {"recipe": {"name","servings","ingredients":[{text,amount,unit,name,note}]}, "warnings", usage fields}
+POST /api/recipes/import/photos multipart images (1 to 3, same limits as /label), hint? -> same   # nothing is saved
+POST /api/recipes/{meal_id}/match {"item_ids": [1..15 ids of my recipe]} -> {"proposals":[{item_id, kind: candidate|estimate|none,
+     food (candidate: saved with id; estimate: source ai draft without id), amount, unit, note, warnings, preview}], usage fields}
+     # candidates per row: up to 3 local foods, 3 USDA and 3 Open Food Facts results; only a chosen remote candidate is saved.
+     # The client applies a proposal only on Accept (POST /api/foods first for an estimate, then PATCH the item).
+GET /api/ai/status?recipe_chars=N | recipe_images=N | match_rows=N   # cost estimates for those requests
+```
+A URL source is not built (no server side fetching). It would be one more import route here feeding the text path.
 
 ## config.py (live settings store)
 
@@ -307,6 +335,13 @@ Screens: Login, Today, Add, Picker, Claude fallback, Settings. Bottom nav: Today
   The last estimate is kept for the session so Back does not ask again. Without Claude for the user, a short hint says so.
   Typed barcode digits and Scan behave the same for every source.
 - Add: Search, Scan and the Meal selector sit above the Favorites/Yesterday/Recipes tabs and list. Lists show 20 items with a Show More button.
+- Import Recipe (Add tab button next to Create Recipe, js/recipeflow.js with pure helpers in js/recipeimport.js): step 1 is Paste Text
+  (Read With Claude, or Split Lines Without Claude which parses locally and uses no credit) or Photos (up to 3, toJpeg), then a review
+  screen (name, servings, ingredient rows with amount, unit, name and note, add and remove, meal tag chips, Save and Continue, Cancel).
+  Save and Continue posts /api/meals/import and opens Match Ingredients ("Saved", "Step 2 of 2"): per row the line and its state, Search
+  and Scan Barcode (the ingredient finder and picker in ingredient mode, Done saves the match), Ask Claude, Skip; checkboxes, Select All
+  and Match Selected With Claude; proposals with Accept and Change; per serving macros and micronutrients; Save and Next (next unmatched
+  row) and Save and Exit. Recipes on Add and Saved show "N of M matched" for partial recipes and open matching instead of logging.
 - Saved (Settings, then Saved): Favorites, Recipes and My foods lists with meal tag chips, rename, delete, recipe item editing, Remove From My Lists, and the food form for My foods.
   Refresh Nutrients (js/refresh.js) is a button in the food edit form (shown for every edited food, with a hint when it has no barcode) and in the picker (only when the food can be looked up and has a blank nutrient); it fills the blank boxes and never overwrites. My Foods also has Refresh All Missing, at most 10 foods per tap, one after another, stopping at a rate limit, with a summary of how many were done and how many are left.
   Refresh logged foods (refreshLoggedControl in js/refresh.js): Today has a Refresh Nutrients button under Micro Nutrients (the logged foods of the viewed day, hidden when nothing needs it) and Settings has Refresh All Logged Foods (every food ever logged). Both take ids from /api/foods/missing-nutrients, say how many foods will be checked, run at most 10 per tap one after another, stop at once on a 429 with a rate limit message, skip foods without a source, remember which foods were already checked this visit so tapping again continues, and report foods checked, values filled and foods left. Today repaints after a batch.

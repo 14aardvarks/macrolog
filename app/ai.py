@@ -192,6 +192,27 @@ def estimate_text_tokens(chars: int = MAX_TEXT) -> tuple[int, int]:
     return EST_TOKENS_TEXT_PROMPT + math.ceil(n / 4), EST_TOKENS_OUT
 
 
+# Recipe import and ingredient matching (app/recipe_ai.py) use these for the cost notice.
+RECIPE_TEXT_MAX = 20000
+RECIPE_MATCH_MAX = 15
+EST_TOKENS_RECIPE_PROMPT = 900
+EST_TOKENS_RECIPE_OUT = 1200
+EST_TOKENS_MATCH_ROW_IN = 450  # the ingredient plus up to 6 database candidates
+EST_TOKENS_MATCH_ROW_OUT = 160
+
+
+def estimate_recipe_tokens(chars: int = 0, images: int = 0) -> tuple[int, int]:
+    """One recipe import: pasted text (about 4 characters per token) or photos."""
+    if images:
+        return min(MAX_IMAGES, images) * EST_TOKENS_PER_IMAGE + EST_TOKENS_RECIPE_PROMPT, EST_TOKENS_RECIPE_OUT
+    return EST_TOKENS_RECIPE_PROMPT + math.ceil(min(RECIPE_TEXT_MAX, max(0, chars)) / 4), EST_TOKENS_RECIPE_OUT
+
+
+def estimate_match_tokens(rows: int) -> tuple[int, int]:
+    n = min(RECIPE_MATCH_MAX, max(1, rows))
+    return EST_TOKENS_RECIPE_PROMPT + n * EST_TOKENS_MATCH_ROW_IN, n * EST_TOKENS_MATCH_ROW_OUT
+
+
 def init(c: sqlite3.Connection) -> None:
     config.init(c)
     c.executescript(SCHEMA)
@@ -293,9 +314,9 @@ def sniff(data: bytes) -> Optional[str]:
     return None
 
 
-async def read_images(files: list[UploadFile]) -> list[tuple[str, bytes]]:
+async def read_images(files: list[UploadFile], what: str = "the nutrition label") -> list[tuple[str, bytes]]:
     if not files:
-        raise HTTPException(400, "Attach 1 to 3 photos of the nutrition label")
+        raise HTTPException(400, f"Attach 1 to 3 photos of {what}")
     if len(files) > MAX_IMAGES:
         raise HTTPException(400, f"At most {MAX_IMAGES} photos are allowed")
     out = []
@@ -315,11 +336,11 @@ async def read_images(files: list[UploadFile]) -> list[tuple[str, bytes]]:
 
 # ---------- Claude call ----------
 
-def tool_choice() -> dict:
+def tool_choice(name: str = TOOL_NAME) -> dict:
     """Force the tool only on Haiku. Other models (extended thinking, newer families) can reject a
     forced tool, so they get "auto" and rely on strict tool schemas plus the instruction text."""
     if "haiku" in model().lower():
-        return {"type": "tool", "name": TOOL_NAME}
+        return {"type": "tool", "name": name}
     return {"type": "auto"}
 
 
@@ -383,9 +404,9 @@ def _upstream_message(status: int, source: str = "global", what: str = "read the
     return f"Claude could not {what} ({why}, status {status}). Try again, or enter the food manually."
 
 
-def tool_input(body: dict) -> Optional[dict]:
+def tool_input(body: dict, name: str = TOOL_NAME) -> Optional[dict]:
     for block in body.get("content") or []:
-        if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") == TOOL_NAME:
+        if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") == name:
             data = block.get("input")
             return data if isinstance(data, dict) else None
     return None
@@ -501,8 +522,9 @@ def _key_state(c: sqlite3.Connection, user_id: int) -> dict:
     return {"state": state, "use_global": use_global, "source": source}
 
 
-def _status(user_id: int, images: int = 1, chars: Optional[int] = None) -> dict:
-    """chars set: the cost estimate is for a text lookup of that many characters, else for a label read of `images` photos."""
+def _status(user_id: int, images: int = 1, chars: Optional[int] = None, est: Optional[tuple[int, int]] = None) -> dict:
+    """chars set: the cost estimate is for a text lookup of that many characters, else for a label read of `images` photos.
+    est: explicit (input, output) tokens for the estimate (recipe import and matching)."""
     with db.conn() as c:
         ks = _key_state(c, user_id)
         p_cap, p_used = personal_cap(c, user_id), used_this_month(c, "user", user_id)
@@ -510,7 +532,7 @@ def _status(user_id: int, images: int = 1, chars: Optional[int] = None) -> dict:
         limit = p_cap if active == "user" else cap()
         used = p_used if active == "user" else used_this_month(c)
         tin, tout = tokens_this_month(c, active, user_id)
-    est_in, est_out = estimate_text_tokens(chars) if chars is not None else estimate_label_tokens(images)
+    est_in, est_out = est or (estimate_text_tokens(chars) if chars is not None else estimate_label_tokens(images))
     return {"enabled": ks["source"] is not None, "key_source": SOURCE_NAMES.get(ks["source"]),
             "used_this_month": used, "cap": limit, "remaining": max(0, limit - used),
             "model": model(), "price_known": prices() is not None,
@@ -538,9 +560,20 @@ def _cap_message(source: str, limit: int) -> str:
 
 @router.get("/status")
 def status(user: CurrentUser, images: int = Query(1, ge=1, le=MAX_IMAGES),
-           chars: Optional[int] = Query(None, ge=0, le=MAX_TEXT + MAX_HINT)):
-    """images: photos for a label read estimate. chars: characters of text for a text lookup estimate (wins when given)."""
-    return _status(user["id"], images, chars)
+           chars: Optional[int] = Query(None, ge=0, le=MAX_TEXT + MAX_HINT),
+           recipe_chars: Optional[int] = Query(None, ge=0, le=RECIPE_TEXT_MAX),
+           recipe_images: Optional[int] = Query(None, ge=1, le=MAX_IMAGES),
+           match_rows: Optional[int] = Query(None, ge=1, le=RECIPE_MATCH_MAX)):
+    """images: photos for a label read estimate. chars: characters of text for a text lookup estimate (wins when given).
+    recipe_chars or recipe_images: a recipe import; match_rows: ingredients matched in one request. These win over the rest."""
+    est = None
+    if match_rows is not None:
+        est = estimate_match_tokens(match_rows)
+    elif recipe_images is not None:
+        est = estimate_recipe_tokens(images=recipe_images)
+    elif recipe_chars is not None:
+        est = estimate_recipe_tokens(chars=recipe_chars)
+    return _status(user["id"], images, chars, est)
 
 
 def _clean_key(value) -> str:
@@ -610,7 +643,7 @@ async def label(user: CurrentUser,
     return {"draft": draft, "warnings": warnings, **out}
 
 
-async def _ask(user_id: int, source: str, key: str, payload: dict, what: str, unreadable: str) -> dict:
+async def _ask(user_id: int, source: str, key: str, payload: dict, what: str, unreadable: str, tool: str = TOOL_NAME) -> dict:
     """Reserve one request against the source's monthly cap, call Claude, record the tokens, and return the tool input
     with the usage fields every Claude route answers with. The reservation is released once on any failure before
     Claude answered; a call that returned keeps its row."""
@@ -631,7 +664,7 @@ async def _ask(user_id: int, source: str, key: str, payload: dict, what: str, un
     except Exception:  # noqa: BLE001
         log.exception("Could not record AI usage for row %s", row)  # the call was made, so the row stays counted
     tin, tout = _tokens(usage, "input_tokens"), _tokens(usage, "output_tokens")
-    data = tool_input(body)
+    data = tool_input(body, tool)
     if data is None:
         raise HTTPException(502, unreadable)
     return {"data": data, "used_this_month": get_used(source, user_id), "cap": limit,

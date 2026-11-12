@@ -41,6 +41,13 @@ ENTRY_COLS = ("id", "day", "meal", "food_id", "name", "brand", "amount", "unit",
 DEFAULT_GOALS = {"kcal": 3000, "carb_pct": 50, "protein_pct": 30, "fat_pct": 20}
 GOAL_KEYS = {"carbs": ("carb_pct", 4), "protein": ("protein_pct", 4), "fat": ("fat_pct", 9)}  # pct key, kcal per g
 
+# Recipe ingredients. food_id, amount and unit are null while an imported ingredient is not matched to a food yet;
+# src_* keep what the recipe said ("1 1/2 cups flour, sifted"). skipped rows (salt to taste, water) count for nothing.
+MEAL_ITEMS_BODY = """
+  id INTEGER PRIMARY KEY, meal_id INTEGER NOT NULL REFERENCES meals(id) ON DELETE CASCADE,
+  food_id INTEGER REFERENCES foods(id), amount REAL, unit TEXT, position INTEGER NOT NULL DEFAULT 0,
+  src_text TEXT, src_amount REAL, src_unit TEXT, src_name TEXT, src_note TEXT, skipped INTEGER NOT NULL DEFAULT 0"""
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS foods(
   id INTEGER PRIMARY KEY, source TEXT NOT NULL, source_id TEXT, barcode TEXT,
@@ -65,10 +72,7 @@ CREATE TABLE IF NOT EXISTS last_used(
 CREATE TABLE IF NOT EXISTS meals(
   id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), name TEXT NOT NULL,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP, meal TEXT);
-CREATE TABLE IF NOT EXISTS meal_items(
-  id INTEGER PRIMARY KEY, meal_id INTEGER NOT NULL REFERENCES meals(id) ON DELETE CASCADE,
-  food_id INTEGER NOT NULL REFERENCES foods(id), amount REAL NOT NULL, unit TEXT NOT NULL,
-  position INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS meal_items({MEAL_ITEMS_BODY});
 CREATE TABLE IF NOT EXISTS favorite_tags(
   user_id INTEGER NOT NULL, food_id INTEGER NOT NULL, meal TEXT NOT NULL, PRIMARY KEY(user_id, food_id, meal));
 CREATE TABLE IF NOT EXISTS recipe_tags(
@@ -91,6 +95,28 @@ CREATE TABLE IF NOT EXISTS micro_targets(
 # the new Micro Nutrients section starts collapsed. micros_hidden is a comma list of hidden nutrients.
 DISPLAY_FLAGS = {"show_macros": 1, "show_micros": 1, "show_split": 1, "show_macro_bar": 1, "show_table": 1, "micros_open": 0}
 TODAY_VIEWS = ("list", "table")  # the Today tab's default view, stored as settings.today_view
+SCHEMA = SCHEMA.replace("{MEAL_ITEMS_BODY}", MEAL_ITEMS_BODY)
+
+
+def migrate_meal_items(c: sqlite3.Connection) -> None:
+    """Databases made before imported recipes have meal_items.food_id NOT NULL. SQLite cannot drop a NOT NULL, so the
+    table is rebuilt once in one transaction (ids and positions kept). Safe to run again: it only acts on the old shape."""
+    info = {r[1]: r for r in c.execute("PRAGMA table_info(meal_items)")}
+    if "src_text" in info and not info["food_id"][3]:
+        return
+    c.commit()
+    c.execute("BEGIN IMMEDIATE")
+    try:
+        c.execute("DROP TABLE IF EXISTS meal_items_new")
+        c.execute(f"CREATE TABLE meal_items_new({MEAL_ITEMS_BODY})")
+        c.execute("INSERT INTO meal_items_new(id, meal_id, food_id, amount, unit, position) "
+                  "SELECT id, meal_id, food_id, amount, unit, position FROM meal_items")
+        c.execute("DROP TABLE meal_items")
+        c.execute("ALTER TABLE meal_items_new RENAME TO meal_items")
+        c.execute("COMMIT")
+    except BaseException:
+        c.execute("ROLLBACK")
+        raise
 
 
 def init(c: sqlite3.Connection) -> None:
@@ -99,6 +125,10 @@ def init(c: sqlite3.Connection) -> None:
         c.execute("ALTER TABLE foods ADD COLUMN created_by INTEGER")
     if "meal" not in {r[1] for r in c.execute("PRAGMA table_info(meals)")}:  # databases made before recipes had a meal
         c.execute("ALTER TABLE meals ADD COLUMN meal TEXT")
+    if "servings" not in {r[1] for r in c.execute("PRAGMA table_info(meals)")}:  # databases made before imported recipes
+        c.execute("ALTER TABLE meals ADD COLUMN servings REAL")
+    migrate_meal_items(c)
+    c.execute("CREATE INDEX IF NOT EXISTS meal_items_meal ON meal_items(meal_id, position)")
     if "use_last" not in {r[1] for r in c.execute("PRAGMA table_info(settings)")}:  # databases made before use_last
         c.execute("ALTER TABLE settings ADD COLUMN use_last INTEGER NOT NULL DEFAULT 1")
     cols = {r[1] for r in c.execute("PRAGMA table_info(settings)")}
@@ -804,16 +834,43 @@ def parse_items(c, raw) -> list[tuple[dict, float, str]]:
     return out
 
 
+SRC_KEYS = ("text", "amount", "unit", "name", "note")
+
+
+def item_dict(c, it) -> dict:
+    """One recipe ingredient. Unmatched rows have food null and null nutrients; skipped rows count for nothing."""
+    src = {k: it["src_" + k] for k in SRC_KEYS} if it["src_text"] is not None or it["src_name"] is not None else None
+    base = {"id": it["id"], "food_id": it["food_id"], "amount": it["amount"], "unit": it["unit"],
+            "src": src, "skipped": bool(it["skipped"]), "matched": it["food_id"] is not None}
+    if it["food_id"] is None:
+        return {**base, "food": None, "servings": None, "estimated": False, **{k: None for k in (*MACROS, *MICROS)}}
+    food = need_food(c, it["food_id"])
+    return {**base, "food": food, **macros(food, it["amount"], it["unit"])}
+
+
+def recipe_totals(items: list) -> dict:
+    """Sums over matched, not skipped rows. A micronutrient is null when no counted row knows it."""
+    counted = [i for i in items if i["matched"] and not i["skipped"]]
+    out = {k: r2(sum(i[k] for i in counted)) for k in MACROS}
+    for k in MICROS:
+        known = [i[k] for i in counted if i[k] is not None]
+        out[k] = r2(sum(known)) if known else None
+    return out
+
+
 def meal_dict(c, row) -> dict:
-    items = []
-    for it in c.execute("SELECT * FROM meal_items WHERE meal_id=? ORDER BY position, id", (row["id"],)):
-        food = need_food(c, it["food_id"])
-        items.append({"food_id": food["id"], "food": food, "amount": it["amount"], "unit": it["unit"],
-                      **macros(food, it["amount"], it["unit"])})
+    items = [item_dict(c, it) for it in c.execute("SELECT * FROM meal_items WHERE meal_id=? ORDER BY position, id", (row["id"],))]
     tags = clean_tags([r["meal"] for r in c.execute("SELECT meal FROM recipe_tags WHERE meal_id=?", (row["id"],))])
     counts = {r["meal"]: r["n"] for r in c.execute("SELECT meal, COUNT(*) n FROM recipe_logs WHERE meal_id=? GROUP BY meal", (row["id"],))}
+    totals = recipe_totals(items)
+    servings = row["servings"] or 1
+    needed = [i for i in items if not i["skipped"]]
+    matched = sum(1 for i in needed if i["matched"])
     return {"id": row["id"], "name": row["name"], "meal": tags[0] if tags else None, "meals": tags, "counts": counts,
-            "items": items, "kcal": r1(sum(i["kcal"] for i in items))}
+            "items": items, "kcal": r1(totals["kcal"]), "servings": servings, "totals": totals,
+            "per_serving": {k: None if v is None else r2(v / servings) for k, v in totals.items()},
+            "matched": matched, "needed": len(needed), "skipped": len(items) - len(needed),
+            "complete": bool(needed) and matched == len(needed)}
 
 
 def save_meal(c, uid: int, name, items: list, meal: str | list | None = None) -> dict:
@@ -892,15 +949,21 @@ def meal_from_meal(user: CurrentUser, body: dict = Body(...)):
 @router.patch("/meals/{meal_id}")
 def patch_meal(meal_id: int, user: CurrentUser, body: dict = Body(...)):
     """Rename, retag (meals), or replace the items list (amounts, units, removed items)."""
-    if not {"name", "meals", "items"} & body.keys():
-        raise bad("Nothing to update: send name, meals or items")
+    if not {"name", "meals", "items", "servings"} & body.keys():
+        raise bad("Nothing to update: send name, meals, items or servings")
     name = meal_name(body) if "name" in body else None
     tags = clean_tags(body["meals"]) if "meals" in body else None
+    servings = recipe_servings(body["servings"]) if "servings" in body else None
     with db.conn() as c:
         own_meal(c, user["id"], meal_id)
         items = parse_items(c, body["items"]) if "items" in body else None
+        if items is not None and c.execute("SELECT 1 FROM meal_items WHERE meal_id=? AND (food_id IS NULL OR skipped=1)",
+                                           (meal_id,)).fetchone():
+            raise HTTPException(409, "This recipe still has unmatched or skipped ingredients. Finish them on the Match Ingredients screen first.")
         if name:
             c.execute("UPDATE meals SET name=? WHERE id=?", (name, meal_id))
+        if "servings" in body:
+            c.execute("UPDATE meals SET servings=? WHERE id=?", (servings, meal_id))
         if tags is not None:
             c.execute("DELETE FROM recipe_tags WHERE meal_id=?", (meal_id,))
             c.executemany("INSERT INTO recipe_tags(meal_id, meal) VALUES(?,?)", [(meal_id, m) for m in tags])
@@ -921,17 +984,132 @@ def delete_meal(meal_id: int, user: CurrentUser):
     return {"deleted": meal_id}
 
 
+def need_complete(c, row) -> None:
+    """Loggability rule: every ingredient must be matched to a food or skipped, and at least one must be matched."""
+    left = c.execute("SELECT COUNT(*) FROM meal_items WHERE meal_id=? AND food_id IS NULL AND skipped=0", (row["id"],)).fetchone()[0]
+    if left:
+        raise HTTPException(409, f"This recipe has {left} ingredient{'s' if left != 1 else ''} still to match. "
+                                 "Match or skip them before logging it.")
+    if not c.execute("SELECT 1 FROM meal_items WHERE meal_id=? AND food_id IS NOT NULL AND skipped=0", (row["id"],)).fetchone():
+        raise HTTPException(409, "This recipe has no matched ingredients to log.")
+
+
+def recipe_servings(v):
+    """Servings the whole recipe makes: null (one), or a number above 0 and at most 1000."""
+    if v is None:
+        return None
+    x = number(v, "servings", positive=True)
+    if x > 1000:
+        raise bad("servings must be 1000 or fewer")
+    return x
+
+
+def short_text(v, name: str, limit: int, required: bool = False):
+    if v is None or (isinstance(v, str) and not v.strip() and not required):
+        if required:
+            raise bad(f"{name} is required")
+        return None
+    if not isinstance(v, str):
+        raise bad(f"{name} must be text")
+    v = " ".join(v.split())
+    if required and not v:
+        raise bad(f"{name} is required")
+    if len(v) > limit:
+        raise bad(f"{name} must be {limit} characters or fewer")
+    return v
+
+
+MAX_IMPORT_ROWS = 100
+
+
+def import_row(raw) -> tuple:
+    """(text, amount, unit, name, note) of one imported ingredient line, validated."""
+    if not isinstance(raw, dict) or set(raw) - set(SRC_KEYS):
+        raise bad("must be an object with text, amount, unit, name and note")
+    name = short_text(raw.get("name"), "name", 200, required=True)
+    amount = number(raw.get("amount"), "amount", optional=True)
+    unit = short_text(raw.get("unit"), "unit", 40)
+    note = short_text(raw.get("note"), "note", 300)
+    text = short_text(raw.get("text"), "text", 300) or " ".join(str(x) for x in (
+        None if amount is None else f"{amount:g}", unit, name) if x) + (f", {note}" if note else "")
+    return text, amount, unit, name, note
+
+
+@router.post("/meals/import")
+def import_meal(user: CurrentUser, body: dict = Body(...)):
+    """Save an imported recipe at once with every ingredient unmatched. Matching happens afterwards, row by row."""
+    name = meal_name(body)
+    if len(name) > 200:
+        raise bad("name must be 200 characters or fewer")
+    tags = clean_tags(body.get("meals") or [])
+    servings = recipe_servings(body.get("servings"))
+    raw = body.get("ingredients")
+    if not isinstance(raw, list) or not raw:
+        raise bad("ingredients must be a non-empty list")
+    if len(raw) > MAX_IMPORT_ROWS:
+        raise bad(f"A recipe can have at most {MAX_IMPORT_ROWS} ingredients")
+    rows = []
+    for i, it in enumerate(raw, 1):
+        try:
+            rows.append(import_row(it))
+        except HTTPException as e:
+            raise HTTPException(400, f"ingredient {i}: {e.detail}")
+    with db.conn() as c:
+        cur = c.execute("INSERT INTO meals(user_id, name, meal, servings) VALUES(?,?,?,?)", (user["id"], name, tags[0] if tags else None, servings))
+        c.executemany("INSERT INTO recipe_tags(meal_id, meal) VALUES(?,?)", [(cur.lastrowid, m) for m in tags])
+        c.executemany("INSERT INTO meal_items(meal_id, position, src_text, src_amount, src_unit, src_name, src_note) VALUES(?,?,?,?,?,?,?)",
+                      [(cur.lastrowid, i, *r) for i, r in enumerate(rows)])
+        return meal_dict(c, own_meal(c, user["id"], cur.lastrowid))
+
+
+@router.get("/meals/{meal_id}")
+def get_meal(meal_id: int, user: CurrentUser):
+    with db.conn() as c:
+        return meal_dict(c, own_meal(c, user["id"], meal_id))
+
+
+def own_item(c, meal_id: int, item_id: int):
+    row = c.execute("SELECT * FROM meal_items WHERE id=? AND meal_id=?", (item_id, meal_id)).fetchone()
+    if not row:
+        raise HTTPException(404, "Ingredient not found")
+    return row
+
+
+@router.patch("/meals/{meal_id}/items/{item_id}")
+def patch_meal_item(meal_id: int, item_id: int, user: CurrentUser, body: dict = Body(...)):
+    """Match one ingredient ({food_id, amount, unit}), unmatch it ({food_id: null}), or skip it ({skipped: bool})."""
+    if not isinstance(body, dict) or not body or set(body) - {"food_id", "amount", "unit", "skipped"}:
+        raise bad("Send food_id with amount and unit, food_id null, or skipped")
+    if "skipped" in body and not isinstance(body["skipped"], bool):
+        raise bad("skipped must be true or false")
+    with db.conn() as c:
+        own_meal(c, user["id"], meal_id)
+        own_item(c, meal_id, item_id)
+        if "food_id" in body and body["food_id"] is None:
+            c.execute("UPDATE meal_items SET food_id=NULL, amount=NULL, unit=NULL WHERE id=?", (item_id,))
+        elif "food_id" in body:
+            food = need_food(c, whole_id(body["food_id"], "food_id"))
+            amount, unit = check_amount_unit(food, body.get("amount"), body.get("unit"))
+            c.execute("UPDATE meal_items SET food_id=?, amount=?, unit=?, skipped=0 WHERE id=?", (food["id"], amount, unit, item_id))
+        elif {"amount", "unit"} & body.keys():
+            raise bad("Send food_id together with amount and unit")
+        if "skipped" in body and not ("food_id" in body and body["food_id"] is not None):
+            c.execute("UPDATE meal_items SET skipped=? WHERE id=?", (int(body["skipped"]), item_id))
+        return meal_dict(c, own_meal(c, user["id"], meal_id))
+
+
 @router.post("/meals/{meal_id}/log")
 def log_meal(meal_id: int, user: CurrentUser, body: dict | None = Body(None)):
     body = body or {}
     day, meal = day_str(body.get("day")), pick(body.get("meal"), MEALS, "meal", nullable=True)
     with db.conn() as c:
         row = own_meal(c, user["id"], meal_id)
+        need_complete(c, row)
         if body.get("items") is not None:  # the client's checklist replaces the saved items
             items = parse_items(c, body["items"])
         else:
             items = [(need_food(c, i["food_id"]), i["amount"], i["unit"]) for i in
-                     c.execute("SELECT * FROM meal_items WHERE meal_id=? ORDER BY position, id", (row["id"],))]
+                     c.execute("SELECT * FROM meal_items WHERE meal_id=? AND skipped=0 ORDER BY position, id", (row["id"],))]
         if meal:  # logging a recipe with a meal tags the recipe and counts toward that meal
             c.execute("INSERT OR IGNORE INTO recipe_tags(meal_id, meal) VALUES(?,?)", (meal_id, meal))
             c.execute("INSERT INTO recipe_logs(meal_id, meal) VALUES(?,?)", (meal_id, meal))
