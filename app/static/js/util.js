@@ -64,19 +64,35 @@ export const PCT = 'pct';
 const SERVING_UNIT = SERVING;
 const PCT_UNIT = PCT;
 
-// Fraction text for common amounts: 0.5 -> "1/2", 1.5 -> "1 1/2", 2 -> "2". null when it is not a tidy fraction.
-export function fractionText(n) {
+// Friendly cooking fractions, as numerators over denominators. Thirds, quarters and eighths only: no fifths or sixths.
+const BASE_FRACTIONS = [[0, 1], [1, 8], [1, 4], [1, 3], [1, 2], [2, 3], [3, 4], [1, 1]];
+const MEASURE_FRACTIONS = [[0, 1], [1, 8], [1, 4], [3, 8], [1, 3], [1, 2], [5, 8], [2, 3], [3, 4], [7, 8], [1, 1]];
+
+// Nearest cooking fraction for any amount: 0.3125 -> "1/3", 1.34 -> "1 1/3", 2.5 -> "2 1/2", 0.05 -> "1/8" (never 0 for a positive
+// amount). measure adds 3/8, 5/8 and 7/8 for cup, tbsp, tsp and fl oz. null only for negatives and non-numbers.
+export function fractionText(n, measure = false) {
   if (!Number.isFinite(n) || n < 0) return null;
-  const whole = Math.floor(n + 1e-9);
-  const rest = n - whole;
-  if (rest < 1e-6 || 1 - rest < 1e-6) return String(Math.round(n));
-  for (const d of [2, 3, 4, 8]) {
-    const k = Math.round(rest * d);
-    if (k > 0 && k < d && Math.abs(rest - k / d) < 0.0015) {
-      return (whole ? whole + ' ' : '') + k + '/' + d;  // smaller denominators come first, so this is already reduced
-    }
-  }
-  return null;
+  if (n === 0) return '0';
+  const set = measure ? MEASURE_FRACTIONS : BASE_FRACTIONS;
+  let whole = Math.floor(n + 1e-9);
+  const rest = Math.max(0, n - whole);
+  let best = set[0];
+  for (const f of set) if (Math.abs(rest - f[0] / f[1]) < Math.abs(rest - best[0] / best[1]) - 1e-12) best = f;
+  if (best[0] === best[1]) { whole += 1; best = set[0]; }
+  if (best[0] === 0) return whole ? String(whole) : '1/8';
+  return (whole ? whole + ' ' : '') + best[0] + '/' + best[1];
+}
+
+// Useful decimal for a cooking amount: at most 2 places, 1 when that is close enough (0.313 -> "0.3", 0.25 -> "0.25", 0.33 -> "0.33",
+// 1.5 -> "1.5"), 1 place from 10 up, never "0" for a positive amount (0.001 -> "0.01").
+export function decimalText(n) {
+  if (!Number.isFinite(n)) return '';
+  if (n === 0) return '0';
+  if (n < 0) return fmtNum(n, 2);
+  if (n >= 10) return fmtNum(n, 1);
+  const one = roundTo(n, 1);
+  if (one > 0 && Math.abs(n - one) <= 0.015) return fmtNum(one, 1);
+  return fmtNum(Math.max(roundTo(n, 2), 0.01), 2);
 }
 
 // How amounts are shown: 'fraction' (1/4, 1 1/2) or 'decimal' (0.25, 1.5). Set from the user's setting.
@@ -109,15 +125,19 @@ export function canonUnit(unit) {
 // Units that always show decimals: metric, weights (oz is a weight) and percent. Everything else, servings, cups, spoons,
 // fl oz and counts (slice, clove, no unit at all) reads as a tidy fraction in fraction mode.
 export const DECIMAL_UNITS = ['g', 'kg', 'mg', 'mcg', 'ml', 'l', 'oz', 'lb', PCT_UNIT];
+const MEASURE_UNITS = ['cup', 'tbsp', 'tsp', 'floz'];
 export function fractionUnit(unit) { return DECIMAL_UNITS.indexOf(canonUnit(unit)) < 0; }
 
-// The one place an amount becomes text: "1 1/2" or "1.5" for a cup, "30" for grams. Not tidy (0.4 cup) stays a decimal.
+// The one place an amount becomes text: "1 1/2" or "1.5" for a cup, "30" for grams. In fraction mode a cooking amount always
+// rounds to the nearest friendly fraction (0.313 cup shows 1/3); in decimal mode to a short decimal (0.3); weights and metric keep
+// their existing rounding.
 // Calories and nutrients never come here; they use fmtNum.
 export function qtyText(n, unit, format = amountFormat) {
   const x = Number(n);
   if (n == null || !Number.isFinite(x)) return '';
-  if (format === 'decimal' || !fractionUnit(unit)) return fmtAmount(x);
-  return fractionText(x) || fmtAmount(x);
+  if (!fractionUnit(unit)) return fmtAmount(x);
+  if (format === 'decimal') return decimalText(x);
+  return fractionText(x, MEASURE_UNITS.indexOf(canonUnit(unit)) >= 0) || fmtAmount(x);
 }
 
 // A serving count as text in the chosen format (or the one passed in).

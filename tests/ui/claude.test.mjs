@@ -19,7 +19,7 @@ test('decimal mode shows servings as decimals', () => {
     assert.deepEqual([0.25, 0.5, 0.75, 1, 1.25, 1.5, 10].map((v) => amountLabel('serving', v)), ['0.25', '0.5', '0.75', '1', '1.25', '1.5', '10']);
     assert.equal(amountText(0.5, 'serving'), '0.5 serving');
     assert.equal(amountText(1.25, 'serving'), '1.25 servings');
-    assert.equal(servingText(0.125), '0.125');
+    assert.equal(servingText(0.125), '0.13');
   } finally { setAmountFormat('fraction'); }
 });
 

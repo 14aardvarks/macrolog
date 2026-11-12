@@ -423,8 +423,9 @@ Screens: Login, Today, Add, Recipes, Picker, Claude fallback, Settings. Bottom n
 - Add: Search, Scan and the Meal selector sit above the Favorites/Yesterday/Recipes tabs and list. Lists show 20 items with a Show More button.
 - Amounts (util.js `qtyText`, the one place an amount becomes text; amountText, amountLabel, rowAmountText use it): the per user
   setting amount_format (Settings, Show amounts as) picks fractions or decimals. In fraction mode servings, cooking measures (cup,
-  tbsp, tsp, fl oz) and counts (slice, clove, no unit) show tidy fractions (1/8, 1/4, 1/3, 1/2, 2/3, 3/4, eighths, mixed like 1 1/2;
-  anything else stays decimal); g, kg, mg, ml, l, oz, lb and percent always show decimals. Decimal mode shows decimals everywhere.
+  tbsp, tsp, fl oz) and counts (slice, clove, no unit) always round to the nearest friendly fraction, never a decimal (1/8, 1/4, 1/3, 1/2, 2/3, 3/4, whole
+  and mixed like 1 1/2; cup, tbsp, tsp and fl oz also get 3/8, 5/8 and 7/8; 0.3125 shows 1/3, 1.34 shows 1 1/3, anything above 0 but under 1/8 shows 1/8,
+  never 0; util.js `fractionText`); g, kg, mg, ml, l, oz, lb and percent always show decimals. Decimal mode shows cooking amounts as short decimals (at most 2 places, 1 when close: 0.313 shows 0.3, 1/3 shows 0.33, never 0 for a positive amount; util.js `decimalText`); weights and metric keep their 3 place rounding. Every displayed amount goes through qtyText.
   Typing accepts both. Calories, nutrients and recipe servings inputs stay decimal; the food form keeps decimals.
 - Cooking View (js/cooking.js, pure helpers `cook*` in js/util.js): a Cooking button on the recipe screen (below Log) opens screen `cooking`
   (params mealId, marks the Recipes tab; Back returns to the recipe). Large text for phone and desktop, light and dark. A servings stepper (minus and
@@ -630,7 +631,7 @@ POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log i
   (Mine, Shared With Me, All) between search and the Meal filter, saved at once as recipe_owner. Cards show the owner line. The recipe screen shows the
   owner line; with can_edit it adds a Sharing section (switch "Share With Other Users", hint stating it is off by default) and a Duplicate section,
   otherwise only Steps (read only) and Make It Yours with Duplicate. Add, Recipes lists mine and shared (owner in the sub line, delete only on mine).
-  Shell cache macrolog-shell-v54.
+  Shell cache macrolog-shell-v55 (v55, issue #30: fraction mode always rounds to the nearest cooking fraction).
 
 ## Auto-Match After Import
 

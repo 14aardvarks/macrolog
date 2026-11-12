@@ -8,8 +8,27 @@ import {
 test('qtyText: tidy fractions for cooking units and counts in fraction mode', () => {
   const cases = [[0.125, 'cup', '1/8'], [0.25, 'tbsp', '1/4'], [1 / 3, 'tsp', '1/3'], [0.5, 'cup', '1/2'], [2 / 3, 'cup', '2/3'],
     [0.75, 'tsp', '3/4'], [1.5, 'cup', '1 1/2'], [2, 'cup', '2'], [2.5, 'slice', '2 1/2'], [1.5, null, '1 1/2'], [0.5, 'floz', '1/2'],
-    [1.5, 'clove', '1 1/2'], [0.5, 'serving', '1/2'], [0.4, 'cup', '0.4'], [1.1, 'tbsp', '1.1']];
+    [1.5, 'clove', '1 1/2'], [0.5, 'serving', '1/2'], [0.4, 'cup', '3/8'], [1.1, 'tbsp', '1 1/8']];
   for (const [n, u, want] of cases) assert.equal(qtyText(n, u, 'fraction'), want, n + ' ' + u);
+});
+
+test('qtyText: always the nearest friendly fraction in fraction mode', () => {
+  const cases = [[0.3125, 'cup', '1/3'], [0.31, 'cup', '1/3'], [0.313, 'tsp', '1/3'], [1.34, 'cup', '1 1/3'], [2.5, 'cup', '2 1/2'],
+    [0.05, 'tsp', '1/8'], [0.001, 'tbsp', '1/8'], [0.05, null, '1/8'], [0.99, 'cup', '1'], [1.96, 'tbsp', '2'], [0.62, 'cup', '5/8'],
+    [0.62, 'slice', '2/3'], [0.4, 'serving', '1/3'], [0.4, 'clove', '1/3'], [0.88, 'cup', '7/8'], [0.88, 'egg', '1'], [3.7, 'tsp', '3 2/3'],
+    [0.6667, 'cup', '2/3'], [10.3, 'cup', '10 1/3'], [0, 'cup', '0']];
+  for (const [n, u, want] of cases) assert.equal(qtyText(n, u, 'fraction'), want, n + ' ' + u);
+  for (const [n, u, want] of [[12, 'g', '12'], [0.05, 'g', '0.05'], [0.313, 'ml', '0.313']]) {
+    assert.equal(qtyText(n, u, 'fraction'), want, n + ' ' + u);
+  }
+});
+
+test('qtyText: decimal mode gives short useful decimals for cooking amounts', () => {
+  const cases = [[0.313, 'cup', '0.3'], [0.3125, 'cup', '0.3'], [1 / 3, 'cup', '0.33'], [0.25, 'cup', '0.25'], [0.5, 'tbsp', '0.5'],
+    [0.75, 'tsp', '0.75'], [1.5, 'cup', '1.5'], [1.34, 'cup', '1.34'], [1.3333, 'serving', '1.33'], [1.31, 'cup', '1.3'], [2 / 3, 'cup', '0.67'], [0.125, 'cup', '0.13'],
+    [0.05, 'tsp', '0.05'], [0.001, 'tsp', '0.01'], [2, 'cup', '2'], [10.34, 'cup', '10.3'], [12.5, 'slice', '12.5'], [0.4, null, '0.4'], [0, 'cup', '0']];
+  for (const [n, u, want] of cases) assert.equal(qtyText(n, u, 'decimal'), want, n + ' ' + u);
+  for (const [n, u, want] of [[12, 'g', '12'], [0.3125, 'g', '0.313'], [28.35, 'oz', '28.35']]) assert.equal(qtyText(n, u, 'decimal'), want, n + ' ' + u);
 });
 
 test('qtyText: metric, weights and percent stay decimal; decimal mode is unchanged', () => {
@@ -18,7 +37,7 @@ test('qtyText: metric, weights and percent stay decimal; decimal mode is unchang
     assert.equal(fractionUnit(u), false, u);
   }
   assert.equal(qtyText(1.5, 'cup', 'decimal'), '1.5');
-  assert.equal(qtyText(0.125, 'tsp', 'decimal'), '0.125');
+  assert.equal(qtyText(0.125, 'tsp', 'decimal'), '0.13');
   assert.equal(qtyText(null, 'cup'), '');
   assert.equal(qtyText(NaN, 'cup'), '');
 });

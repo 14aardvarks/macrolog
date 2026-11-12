@@ -197,7 +197,7 @@ The cap is a request count, not a money limit. `AI_MONTHLY_REQUEST_CAP` applies 
 
 Before each Claude request the app shows a notice with what will be sent, how many of the monthly requests it uses, and the estimated cost. Nothing is sent until you tap Continue. Each person can turn the notice off in Settings with "Confirm before using Claude". The estimate assumes about 1,600 input tokens per photo, 700 for the instructions and 400 output tokens. For a text description it assumes 650 input tokens plus one per 4 characters, and 400 output tokens. The monthly cost in Settings is computed from the real token counts stored in `ai_usage`.
 
-Settings also has "Show amounts as", which switches amounts between fractions (1/2) and decimals (0.5). Fractions apply to servings, cups, tablespoons, teaspoons, fluid ounces and counts (slices, cloves, eggs). Grams, kilograms, millilitres, litres, ounces, pounds and percent always show decimals. Typing accepts both.
+Settings also has "Show amounts as", which switches amounts between fractions (1/2) and decimals (0.5). In fraction mode a scaled amount always rounds to the nearest cooking fraction (1/8, 1/4, 1/3, 1/2, 2/3, 3/4, or whole and mixed like 1 1/2, plus 3/8, 5/8 and 7/8 for cups and spoons), so 0.313 cup shows as 1/3. Fractions apply to servings, cups, tablespoons, teaspoons, fluid ounces and counts (slices, cloves, eggs). With decimals on, amounts show as short decimals (0.3, 0.33, 1.5). Grams, kilograms, millilitres, litres, ounces, pounds and percent always show decimals. Typing accepts both.
 
 ## Administration
 

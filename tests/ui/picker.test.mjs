@@ -73,10 +73,10 @@ test('amountLabel shows servings as fractions', () => {
   assert.equal(amountLabel('serving', 1), '1');
   assert.equal(amountLabel('serving', 1.25), '1 1/4');
   assert.equal(amountLabel('serving', 1.5), '1 1/2');
-  assert.equal(amountLabel('serving', 0.4), '0.4');
+  assert.equal(amountLabel('serving', 0.4), '1/3');
   assert.equal(amountLabel('g', 0.5), '0.5');
   assert.equal(amountLabel('cup', 0.125), '1/8');
-  assert.equal(amountLabel('cup', 0.125, 'decimal'), '0.125');
+  assert.equal(amountLabel('cup', 0.125, 'decimal'), '0.13');
   assert.equal(amountLabel('pct', 50), '50');
 });
 

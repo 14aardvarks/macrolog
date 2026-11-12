@@ -8,7 +8,7 @@ import { toJpeg } from './ai.js';
 import { confirmClaude } from './notice.js';
 import { chips } from './saved.js';
 import { stepsEditor } from './steps.js';
-import { fmtNum, fmtAmount, centsText, sentence, parseAmount, rowAmountText, matchedAmountText, MICROS, microValue, aiFeature, aiFeatureOff } from './util.js';
+import { fmtNum, fmtAmount, servingText, centsText, sentence, parseAmount, rowAmountText, matchedAmountText, MICROS, microValue, aiFeature, aiFeatureOff } from './util.js';
 import {
   parseIngredientText, parseIngredientLine, reviewDraft, reviewBody, blankRow, matchState, matchCountText, toggleAll, toggleId,
   proposalText, matchWhat, importWhat, matchSnapshot, restoreBody, changedSince, nextUnmatched, pendingProposals,
@@ -548,8 +548,8 @@ export async function renderMatch(root, params, ctx) {
   function paintTotals() {
     show(totals, h('div', null,
       h('h2', null, 'Per Serving'),
-      h('p', { class: 'sub' }, meal.complete ? 'For 1 of ' + fmtAmount(meal.servings) + ' servings.'
-        : 'For 1 of ' + fmtAmount(meal.servings) + ' servings, counting matched ingredients only.'
+      h('p', { class: 'sub' }, meal.complete ? 'For 1 of ' + servingText(meal.servings) + ' servings.'
+        : 'For 1 of ' + servingText(meal.servings) + ' servings, counting matched ingredients only.'
           + (meal.checks ? ' Rows marked Check Amount count once you confirm their amount.' : '')),
       totalsTable(meal)));
   }

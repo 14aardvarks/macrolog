@@ -99,9 +99,11 @@ test('parseAmount rejects bad input', () => {
 
 test('fractionText', () => {
   const cases = [[0.5, '1/2'], [0.25, '1/4'], [0.75, '3/4'], [1, '1'], [1.5, '1 1/2'], [2, '2'], [1 / 3, '1/3'], [2 / 3, '2/3'],
-    [0.125, '1/8'], [2.25, '2 1/4'], [0.375, '3/8']];
+    [0.125, '1/8'], [2.25, '2 1/4'], [0.3125, '1/3'], [0.05, '1/8'], [0, '0']];
   for (const [n, want] of cases) assert.equal(fractionText(n), want, String(n));
-  assert.equal(fractionText(0.4), null);
+  assert.equal(fractionText(0.375), '1/3');
+  assert.equal(fractionText(0.375, true), '3/8');
+  assert.equal(fractionText(0.4), '1/3');
   assert.equal(fractionText(-1), null);
   assert.equal(fractionText(NaN), null);
 });
@@ -111,7 +113,7 @@ test('amountText for serving, pct and other units', () => {
   assert.equal(amountText(1, 'serving'), '1 serving');
   assert.equal(amountText(1.5, 'serving'), '1 1/2 servings');
   assert.equal(amountText(2, 'serving'), '2 servings');
-  assert.equal(amountText(0.4, 'serving'), '0.4 serving');
+  assert.equal(amountText(0.4, 'serving'), '1/3 serving');
   assert.equal(amountText(25, 'pct'), '25% of a serving');
   assert.equal(amountText(150, 'pct'), '150% of a serving');
   assert.equal(amountText(2, 'slice'), '2 slice');
