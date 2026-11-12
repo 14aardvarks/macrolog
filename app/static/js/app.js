@@ -319,9 +319,8 @@ async function todayScreen(root) {
   };
   const quickRow = (g) => h('div', { class: 'quick-row', role: 'group', 'aria-label': 'Add to ' + g.label },
     h('button', { class: 'btn', type: 'button', 'aria-label': quickLabel('add', g.meal), onclick: quick('add', g.meal) }, 'Add'),
-    h('button', { class: 'btn', type: 'button', 'aria-label': quickLabel('scan', g.meal), onclick: quick('scan', g.meal) }, cameraIcon(), 'Scan'),
-    h('button', { class: 'btn', type: 'button', 'aria-label': quickLabel('search', g.meal), onclick: quick('search', g.meal) }, 'Search'));
-  const groups = () => mealGroupsAll(d.entries).map((g) => h('div', null,
+    h('button', { class: 'btn', type: 'button', 'aria-label': quickLabel('scan', g.meal), onclick: quick('scan', g.meal) }, cameraIcon(), 'Scan'));
+  const groups = () => groupByMeal(d.entries).map((g) => h('div', null,
     h('h2', { class: 'group' }, g.label, h('span', null, fmtNum(g.kcal, 0) + ' kcal')),
     g.entries.length ? h('ul', { class: 'list' }, g.entries.map((e) => entryRow(e, root))) : null,
     g.meal ? quickRow(g) : null, g.entries.length ? saveMealBox(g, status) : null));
