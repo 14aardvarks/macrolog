@@ -1,8 +1,9 @@
 import { api } from './api.js';
 import { sentence } from './util.js';
-import { h, clear, field, message, show } from './dom.js';
+import { h, clear, field, message, show, extLink } from './dom.js';
 import {
   sourceLabel, userName, userBadges, initialValue, buildChanges, SIGNIN_SPECS, CLAUDE_SPECS, FOOD_SPECS, envRows, testLine, logLine, setupError,
+  PRICING_URL, PRICING_LINK_TEXT,
 } from './adminutil.js';
 
 const bool = (v) => !!v;
@@ -54,7 +55,7 @@ function configField(spec, item, extra) {
   } else {
     const num = spec.kind === 'int' || spec.kind === 'price';
     control = h('input', { type: 'text', id, value: st.value, autocomplete: 'off', autocapitalize: 'none', spellcheck: 'false',
-      inputmode: num ? 'decimal' : null, 'aria-describedby': id + '-src' });
+      inputmode: num ? 'decimal' : null, placeholder: spec.placeholder, 'aria-describedby': id + '-src' });
     control.addEventListener('input', () => { st.value = control.value; });
     el = h('div', { class: 'field' }, h('label', { for: id }, h('span', null, spec.label)), control);
   }
@@ -62,7 +63,8 @@ function configField(spec, item, extra) {
   paintHint();
   el.appendChild(h('div', { class: 'src-row' }, hint, useDefault, undo));
   if (spec.hint) {  // the defaults and what the setting does, read out with the control
-    el.appendChild(h('p', { class: 'sub', id: id + '-hint' }, spec.hint));
+    el.appendChild(h('p', { class: 'sub', id: id + '-hint' }, spec.hint,
+      spec.link ? [' See the ', extLink(PRICING_URL, PRICING_LINK_TEXT), '.'] : null));
     control.setAttribute('aria-describedby', id + '-src ' + id + '-hint');
   }
   if (extra) el.appendChild(extra);

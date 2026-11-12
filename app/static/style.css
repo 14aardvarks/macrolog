@@ -440,6 +440,7 @@ textarea { font: inherit; color: inherit; width: 100%; min-height: 160px; paddin
 .hinted { margin: 0 0 12px; }
 .hinted > .field { margin-bottom: 4px; }
 .hinted > .field-hint { margin-top: 0; }
+.sub a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
 .display-sec > .field { margin-top: 16px; }
 /* Recipe steps */
 .steps-edit { list-style: none; padding: 0; margin: 0 0 8px; }

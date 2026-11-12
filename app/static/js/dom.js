@@ -92,3 +92,8 @@ export function sourceLine(source) {
   const b = sourceBadge(source);
   return b ? h('p', { class: 'sub src-line' }, 'Source ', b, isEstimate(source) ? ' ' + sourceNote(source) : null) : null;
 }
+
+// Link to a page outside the app, opened in a new tab.
+export function extLink(href, text) {
+  return h('a', { href, target: '_blank', rel: 'noopener noreferrer' }, text);
+}

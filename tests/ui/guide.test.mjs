@@ -52,3 +52,10 @@ test('sentence adds a period to real sentences only', () => {
   assert.equal(sentence('Not found'), 'Not found');
   assert.equal(sentence(null), '');
 });
+
+test('Your Claude Key bullets explain the price unit and sample, each at most 16 words', () => {
+  const g = GUIDE.find((x) => x.heading === 'Your Claude Key');
+  assert.ok(g.bullets.some((b) => /USD per million tokens/.test(b) && /no cost is shown/.test(b)));
+  assert.ok(g.bullets.some((b) => /0\.10/.test(b) && /0\.50/.test(b)));
+  for (const b of g.bullets) assert.ok(b.split(/\s+/).length <= 16, b);
+});

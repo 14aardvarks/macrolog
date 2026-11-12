@@ -1,10 +1,20 @@
 // Pure helpers for the setup, Claude key and Admin screens. No DOM here so node can test them.
 
+import { sentence } from './util.js';
+
 export const MIN_PASSWORD = 8;
 export const PERSONAL_CAP_MAX = 10000;
 export const PERSONAL_CAP_DEFAULT = 100;  // same as ai.DEFAULT_PERSONAL_CAP
 export const DEFAULT_MODEL = 'claude-haiku-5-5';  // same as ai.DEFAULT_MODEL
 export const PRICE_MAX = 10000;  // same limit as the admin price fields
+export const PRICING_URL = 'https://platform.claude.com/docs/en/about-claude/pricing';
+export const PRICING_LINK_TEXT = 'Anthropic Pricing Page';
+export const PRICE_SAMPLE = { in: '0.10', out: '0.50' };  // sample for DEFAULT_MODEL, shown as placeholders and in hints
+
+// Hint for a price box. Cost needs both prices (ai.prices), so an empty box means no cost is shown.
+function priceHint(which) {
+  return sentence('USD per million tokens. Sample for ' + DEFAULT_MODEL + ' is ' + PRICE_SAMPLE[which] + '. Empty by default, so no cost is shown unless both prices are set');
+}
 
 const SOURCE_LABELS = { database: 'Saved here', environment: 'From environment', default: 'Default' };
 export function sourceLabel(source) { return SOURCE_LABELS[source] || ''; }
@@ -96,8 +106,8 @@ export function personalHints(ai) {
   return {
     cap: 'The most requests your own key can make per calendar month, from 1 to ' + PERSONAL_CAP_MAX + '. ' + cap + ' by default.',
     model: 'The Claude model your own key uses. Empty by default, which uses the server\'s model, ' + server + '.',
-    priceIn: 'What Anthropic charges for input tokens on your model, in USD. Empty by default, so no cost is shown.',
-    priceOut: 'What Anthropic charges for output tokens on your model, in USD. Empty by default, so no cost is shown.',
+    priceIn: priceHint('in'),
+    priceOut: priceHint('out'),
   };
 }
 
@@ -174,10 +184,10 @@ export const CLAUDE_SPECS = [
     hint: 'The Claude model used for label reading, typed lookups and recipe parsing. Empty by default, which uses ' + DEFAULT_MODEL + ', the cheapest option and fine for these jobs.' },
   { key: 'ai_monthly_cap', kind: 'int', label: 'Monthly request limit',
     hint: 'The most Claude requests everyone on the shared key can make per calendar month. 100 by default. Set 0 to turn shared use off.' },
-  { key: 'ai_price_in_per_mtok', kind: 'price', label: 'Input price per million tokens',
-    hint: 'What Anthropic charges for input tokens on your model, in USD. Empty by default, so no cost is shown. Fill in from Anthropic\'s pricing page to see the cost of each request.' },
-  { key: 'ai_price_out_per_mtok', kind: 'price', label: 'Output price per million tokens',
-    hint: 'What Anthropic charges for output tokens on your model, in USD. Empty by default, so no cost is shown. Fill in from Anthropic\'s pricing page to see the cost of each request.' },
+  { key: 'ai_price_in_per_mtok', kind: 'price', label: 'Input Price (USD per Million Tokens)', placeholder: PRICE_SAMPLE.in, link: true,
+    hint: priceHint('in') },
+  { key: 'ai_price_out_per_mtok', kind: 'price', label: 'Output Price (USD per Million Tokens)', placeholder: PRICE_SAMPLE.out, link: true,
+    hint: priceHint('out') },
   { key: 'ai_allow_label', kind: 'bool', label: 'Allow Claude Photo Label Reading',
     hint: 'On by default. Turn off to hide Ask Claude for nutrition label photos and refuse those requests for everyone.' },
   { key: 'ai_allow_lookup', kind: 'bool', label: 'Allow Claude Typed Search',

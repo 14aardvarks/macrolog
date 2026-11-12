@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  CLAUDE_SPECS, personalBody, personalHints, parsePrice, buildChanges, PERSONAL_CAP_DEFAULT, DEFAULT_MODEL,
+  CLAUDE_SPECS, personalBody, personalHints, parsePrice, buildChanges, PERSONAL_CAP_DEFAULT, DEFAULT_MODEL, PRICING_URL, PRICE_SAMPLE,
 } from '../../app/static/js/adminutil.js';
 import { aiFeature, aiFeatureOff, searchSources, startSource, sentence } from '../../app/static/js/util.js';
 
@@ -21,8 +21,12 @@ test('every Claude admin field has a hint with its default, written as sentences
   assert.match(by.ai_model.hint, new RegExp('uses ' + DEFAULT_MODEL));
   assert.match(by.ai_monthly_cap.hint, /100 by default\. Set 0 to turn shared use off\./);
   assert.match(by.ai_global_key.hint, /console\.anthropic\.com/);
-  assert.match(by.ai_price_in_per_mtok.hint, /input tokens/);
-  assert.match(by.ai_price_out_per_mtok.hint, /output tokens/);
+  assert.match(by.ai_price_in_per_mtok.hint, /USD per million tokens.*0\.10/);
+  assert.match(by.ai_price_out_per_mtok.hint, /USD per million tokens.*0\.50/);
+  assert.equal(by.ai_price_in_per_mtok.placeholder, '0.10');
+  assert.equal(by.ai_price_out_per_mtok.placeholder, '0.50');
+  assert.equal(by.ai_price_in_per_mtok.label, 'Input Price (USD per Million Tokens)');
+  assert.ok(by.ai_price_in_per_mtok.link && by.ai_price_out_per_mtok.link);
   assert.equal(by.ai_allow_label.label, 'Allow Claude Photo Label Reading');
   assert.equal(by.ai_allow_lookup.label, 'Allow Claude Typed Search');
   assert.equal(by.ai_allow_recipe.label, 'Allow Claude Recipe Import');
@@ -60,8 +64,11 @@ test('personal hints state the defaults', () => {
   const h = personalHints(AI);
   assert.match(h.cap, /100 by default\.$/);
   assert.match(h.model, /Empty by default, which uses the server's model, claude-haiku-5-5\.$/);
-  assert.match(h.priceIn, /input tokens.*no cost is shown\.$/);
-  assert.match(h.priceOut, /output tokens.*no cost is shown\.$/);
+  assert.match(h.priceIn, /^USD per million tokens\. Sample for claude-haiku-5-5 is 0\.10\..*no cost is shown unless both prices are set\.$/);
+  assert.match(h.priceOut, /^USD per million tokens\. Sample for claude-haiku-5-5 is 0\.50\..*no cost is shown unless both prices are set\.$/);
+  assert.ok(!/—|–/.test(h.priceIn + h.priceOut));
+  assert.equal(PRICING_URL, 'https://platform.claude.com/docs/en/about-claude/pricing');
+  assert.deepEqual(PRICE_SAMPLE, { in: '0.10', out: '0.50' });
   assert.match(personalHints({ ...AI, server_model: 'claude-other' }).model, /claude-other/);
   assert.match(personalHints(null).cap, new RegExp(PERSONAL_CAP_DEFAULT + ' by default'));
   for (const t of Object.values(h)) assert.equal(sentence(t), t);

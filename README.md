@@ -65,7 +65,7 @@ The same guide is in Settings under "How to Use Macrolog".
 - Settings, Display turns the Macro Nutrients bars, the Micro Nutrients section, the Calorie Split chart and the macro balance bar on foods on or off, picks which micronutrients are shown, and sets the Today View (List or Table), and sets Auto-Match After Import (Search, Claude, Search Then Claude or Off). Changes are saved and applied at once. The picker shows the chosen micronutrients under the macros in the same collapsible section.
 - When entering a food by hand or checking what Claude read, the optional micronutrients are in the collapsed "More Nutrients" section. Leave a box empty when the label does not show it. Barcode lookups fill them from Open Food Facts (sodium is worked out from salt when only salt is given) or USDA.
 - Each user has their own log, goals and settings. Foods are shared.
-- Settings also holds your own Claude key, limit, model and prices, and Connect SSO when the server offers it. Administrators see an Admin page there for users, sign-in, Claude and USDA keys, and recent activity.
+- Settings also holds your own Claude key, limit, model and prices (USD per million tokens, with a sample and a link to the Anthropic pricing page), and Connect SSO when the server offers it. Administrators see an Admin page there for users, sign-in, Claude and USDA keys, and recent activity.
 
 ## Quick start
 

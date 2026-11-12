@@ -1,14 +1,14 @@
 import { api } from './api.js';
-import { h, clear, field, message, show } from './dom.js';
-import { claudeStatusLines, personalBody, personalHints, ssoView } from './adminutil.js';
+import { h, clear, field, message, show, extLink } from './dom.js';
+import { claudeStatusLines, personalBody, personalHints, ssoView, PRICING_URL, PRICING_LINK_TEXT, PRICE_SAMPLE } from './adminutil.js';
 import { dollarText } from './util.js';
 
 let seq = 0;
 // A labelled box with its hint read out by screen readers.
-function hinted(label, attrs, hint) {
+function hinted(label, attrs, hint, link) {
   const id = 'ck-' + (++seq);
   const f = field(label, { ...attrs, 'aria-describedby': id });
-  const box = h('div', { class: 'hinted' }, f, h('p', { class: 'sub field-hint', id }, hint));
+  const box = h('div', { class: 'hinted' }, f, h('p', { class: 'sub field-hint', id }, hint, link ? [' See the ', extLink(PRICING_URL, PRICING_LINK_TEXT), '.'] : null));
   box.input = f.input;
   return box;
 }
@@ -28,9 +28,9 @@ export function renderClaudeSection(ai0, useGlobal) {
     const hint = personalHints(ai);
     const cap = hinted('Your monthly request limit', { inputmode: 'numeric', value: String(ai.personal_cap) }, hint.cap);
     const model = hinted('Model', { autocomplete: 'off', autocapitalize: 'none', spellcheck: 'false', value: ai.personal_model || '', maxlength: '100' }, hint.model);
-    const price = (label, v, text) => hinted(label, { inputmode: 'decimal', autocomplete: 'off', value: v == null ? '' : String(v) }, text);
-    const priceIn = price('Input price per million tokens', ai.personal_price_in, hint.priceIn);
-    const priceOut = price('Output price per million tokens', ai.personal_price_out, hint.priceOut);
+    const price = (label, v, text, sample) => hinted(label, { inputmode: 'decimal', autocomplete: 'off', value: v == null ? '' : String(v), placeholder: sample }, text, true);
+    const priceIn = price('Input Price (USD per Million Tokens)', ai.personal_price_in, hint.priceIn, PRICE_SAMPLE.in);
+    const priceOut = price('Output Price (USD per Million Tokens)', ai.personal_price_out, hint.priceOut, PRICE_SAMPLE.out);
     const save = async (e) => {
       e.preventDefault();
       const r = personalBody({ key: key.input.value, cap: cap.input.value, model: model.input.value,

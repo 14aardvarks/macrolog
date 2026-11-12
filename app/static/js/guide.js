@@ -147,7 +147,8 @@ export const GUIDE = [
     'The key is never shown again after you save it.',
     'Your own model and prices apply only while your key is in use.',
     'Leave the model empty to use the server\'s model.',
-    'Leave the prices empty and no cost is shown.',
+    'Prices are USD per million tokens. Leave either empty and no cost is shown.',
+    'Sample for claude-haiku-5-5 is 0.10 input and 0.50 output.',
   ] },
   { heading: 'Single Sign-On (SSO)', bullets: [
     'If your server offers it, tap Connect SSO in Settings.',
