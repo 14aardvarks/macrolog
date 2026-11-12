@@ -475,3 +475,4 @@ textarea { font: inherit; color: inherit; width: 100%; min-height: 160px; paddin
 .update-banner { position: sticky; top: 0; z-index: 40; display: flex; align-items: center; justify-content: center; gap: 12px; padding: 6px 12px;
   background: var(--card); border-bottom: 1px solid var(--accent); font-size: .9rem; }
 .update-banner .btn { min-height: 36px; padding: 4px 14px; border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.quick-row.top { margin: 4px 0 10px; }

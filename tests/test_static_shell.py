@@ -45,5 +45,5 @@ def test_service_worker_waits_for_the_update_banner():
     install = re.search(r"addEventListener\('install'.*?\n\}\);", sw, re.S).group(0)
     assert "skipWaiting" not in install
     assert "SKIP_WAITING" in sw and "self.skipWaiting()" in sw
-    assert "macrolog-shell-v48" in sw and "'/js/update.js'" in sw
+    assert "macrolog-shell-v49" in sw and "'/js/update.js'" in sw
     assert (STATIC / "js" / "update.js").is_file()

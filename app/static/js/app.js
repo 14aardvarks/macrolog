@@ -311,19 +311,10 @@ async function todayScreen(root) {
       h('div', { class: 'bar-left' }, remainingText(d.remaining[k], unit)));
   });
   const status = h('div', { 'aria-live': 'polite' });
-  // Opens Add, Scan or Search with this meal chosen. Scan and a barcode lookup keep it through to the picker.
-  const quick = (kind, meal) => () => {
-    state.quickMeal = meal;
-    if (kind === 'scan') return go('scan', { autostart: true });
-    return go('add', kind === 'search' ? { focus: true } : {});
-  };
-  const quickRow = (g) => h('div', { class: 'quick-row', role: 'group', 'aria-label': 'Add to ' + g.label },
-    h('button', { class: 'btn', type: 'button', 'aria-label': quickLabel('add', g.meal), onclick: quick('add', g.meal) }, 'Add'),
-    h('button', { class: 'btn', type: 'button', 'aria-label': quickLabel('scan', g.meal), onclick: quick('scan', g.meal) }, cameraIcon(), 'Scan'));
   const groups = () => groupByMeal(d.entries).map((g) => h('div', null,
     h('h2', { class: 'group' }, g.label, h('span', null, fmtNum(g.kcal, 0) + ' kcal')),
     g.entries.length ? h('ul', { class: 'list' }, g.entries.map((e) => entryRow(e, root))) : null,
-    g.meal ? quickRow(g) : null, g.entries.length ? saveMealBox(g, status) : null));
+    g.entries.length ? saveMealBox(g, status) : null));
   const removeEntry = async (e) => {
     try { await api.deleteEntry(e.id); await go('today', {}, true); } catch (err) { show(status, message(err.message, 'error')); }
   };
@@ -346,7 +337,9 @@ async function todayScreen(root) {
   const view = disp.show_table === false ? 'list' : todayView(disp);
   paint(view);
   grid.append(h('div', { class: 'col-a' }, disp.show_split !== false ? h('div', { class: 'split-box' }, h('h2', null, 'Calorie Split'), splitChart(d)) : null, nutrients),
-    h('div', { class: 'col-b' }, h('button', { class: 'btn primary add-food', type: 'button', onclick: () => go('add', {}) }, 'Add Food'),
+    h('div', { class: 'col-b' }, h('div', { class: 'quick-row top', role: 'group', 'aria-label': 'Add food' },
+      h('button', { class: 'btn primary', type: 'button', onclick: () => go('add', {}) }, 'Add'),
+      h('button', { class: 'btn', type: 'button', onclick: () => go('scan', { autostart: true }) }, cameraIcon(), 'Scan')),
       d.entries.length && disp.show_table !== false ? viewToggle(view, (v) => { paint(v); ctx.saveDisplay({ today_view: v }).catch(() => {}); }) : null, body, status));
   root.appendChild(h('section', { class: 'screen wide' }, h('h1', null, 'Today'), grid));
 }
