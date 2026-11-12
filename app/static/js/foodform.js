@@ -1,7 +1,7 @@
 import { api } from './api.js';
 import { h, field, message, show, select, sourceLine } from './dom.js';
 import { refreshControl } from './refresh.js';
-import { DELETE_FOOD_CONFIRM, sentence, canLookUp, parseDecimal, fmtAmount, MEALS, MEAL_LABELS, guessMeal, MICROS } from './util.js';
+import { DELETE_FOOD_CONFIRM, sentence, canLookUp, aiMicrosText, parseDecimal, fmtAmount, MEALS, MEAL_LABELS, guessMeal, MICROS } from './util.js';
 
 const NUM = [
   ['serving_amount', 'Serving amount', true, 'e.g. 2'],
@@ -60,6 +60,7 @@ export function renderFoodForm(root, opts, ctx) {
     h('details', { class: 'more', open: MORE.some((k) => draft[k] != null) },
       h('summary', null, 'More Nutrients'),
       h('p', { class: 'sub' }, 'Optional. Leave a box empty when the label does not show it.'),
+      edit && aiMicrosText(edit) ? h('p', { class: 'sub' }, aiMicrosText(edit)) : null,
       h('div', { class: 'grid2' }, MORE.map((k) => f[k]))),
     f.barcode,
     edit ? (canLookUp(edit) ? refreshControl(edit, fillBlanks).el

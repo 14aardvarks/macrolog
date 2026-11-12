@@ -4,7 +4,7 @@ import {
   MEALS, MEAL_LABELS, parseDecimal, parseAmount, amountText, servingText, qtyText, amountMemo, setAmountFormat, unitLabel, fmtNum, fmtAmount, groupByMeal, mealGroupsAll, quickLabel, checkedItems, canSaveRecipe, rowAmountText, applyRowPick, draftFits, localDate, progressText, remainingText,
   sentence, matchAmount, newRecipeDraft, recipeAddRow, recipeSetRow, stepsBack, barWidth, debounce, digitsOnly, guessMeal, pctTotal, latestGuard, MEAL_FILTERS, MEAL_FILTER_LABELS, filterByMeal, filterSaved, pageOf, PAGE_SIZE, emptyText,
   entryKey, todayHold, holdFresh, holdTarget, DEFAULT_DISPLAY, searchSource, searchAction, searchHint, DESCRIPTION_TEXT, aiFeature, aiFeatureOff, searchSources, startSource,
-  ownerText, groupRecipesByMeal, pageGroups,
+  ownerText, groupRecipesByMeal, pageGroups, MAX_AI_TEXT, CLAUDE_CAP_NOTE, FALLBACK_TEXT, FALLBACK_FAILED,
 } from './util.js';
 import { microSection, displaySection, microTargets } from './micros.js';
 import { viewToggle, dayTable } from './daytable.js';
@@ -12,7 +12,7 @@ import { todayView } from './tablemodel.js';
 import { renderPicker } from './picker.js';
 import { renderScan } from './scan.js';
 import { renderAi } from './ai.js';
-import { confirmClaude } from './notice.js';
+import { confirmClaude, autoClaude } from './notice.js';
 import { renderFoodForm } from './foodform.js';
 import { splitChart, macroBar } from './chart.js';
 import { renderGuide } from './guide-view.js';
@@ -26,14 +26,14 @@ import { renderImport, renderReview, renderMatch } from './recipeflow.js';
 import { recipeSubText, notCounted, notCountedText, portionUnits, portionFraction, portionItems, portionNote, portionAmount, autoMatchOn,
   isRecipeLog, recipeAmountText, saveRecipeRows, tickedIds, REMOVE_RECIPE_CONFIRM } from './recipeimport.js';
 import { renderRecipeLog } from './recipelog.js';
-import { renderClaudeSection, renderSignIn } from './claudekey.js';
-import { refreshLoggedControl } from './refresh.js';
+import { renderClaudeSection, renderSignIn, renderFullClaude } from './claudekey.js';
+import { refreshLoggedControl, useSettings } from './refresh.js';
 import { startUpdates } from './update.js';
 import { tabOf, routeUrl, formatRoute, startRoute } from './routes.js';
 
 const main = document.getElementById('main');
 const nav = document.getElementById('nav');
-const state = { user: null, settings: { start_screen: 'today', default_meal: null, use_last: true, confirm_ai: true, amount_format: 'fraction' }, display: DEFAULT_DISPLAY, cleanup: null, depth: 0, tab: 'favorites', addMeal: null, quickMeal: null, draft: null, recipe: null, source: null, aiSt: null, claude: null,
+const state = { user: null, settings: { start_screen: 'today', default_meal: null, use_last: true, confirm_ai: true, amount_format: 'fraction', full_claude: false }, display: DEFAULT_DISPLAY, cleanup: null, depth: 0, tab: 'favorites', addMeal: null, quickMeal: null, draft: null, recipe: null, source: null, aiSt: null, claude: null, fallback: null,
   importInput: null, importDraft: null, importBase: 0, proposals: {}, selections: {}, matchFocus: null, matchBase: {}, matchMethod: 'search', autoMatch: null, hold: null };  // Import Recipe and Match Ingredients  // addMeal, source (null = the Default Search Source setting), aiSt (last /api/ai/status) and claude (last Claude estimate) live for the session only
 const FINDER = ['add', 'picker', 'scan', 'lookup', 'manual', 'ai'];  // screens New Recipe and Match Ingredients borrow from Add
 
@@ -403,7 +403,7 @@ async function todayScreen(root) {
   const nutrients = disp.show_macros !== false || micros ? h('div', { class: 'nutrients' },
     disp.show_macros !== false ? [h('h2', null, 'Macro Nutrients'), h('div', { class: 'bars' }, bars)] : null, micros,
     micros ? refreshLoggedControl({ scope: 'day:' + d.day, label: 'Refresh Nutrients', quiet: true,
-      load: () => api.missingNutrients(d.day), onFinish: () => refreshToday() }).el : null) : null;
+      load: (claude) => api.missingNutrients(d.day, claude), onFinish: () => refreshToday() }).el : null) : null;
   const body = h('div', { class: 'entries-body' });
   const grid = h('div', { class: 'two-col today' });
   const paint = (view) => {
@@ -553,12 +553,17 @@ function addScreen(root, params) {
     if (act.kind === 'barcode') { ctx.lookup(act.code); return; }
     if (act.kind === 'claude') { askClaude(act.text, mine); return; }
     if (act.kind !== 'search') { show(listBox, message(searchHint(state.source, act.kind), act.kind === 'long' ? 'error' : undefined)); return; }
+    const fb = state.fallback;
+    if (remote && fb && fb.text === text && fb.source === act.source) { showClaude(fb, true); return; }  // back from the draft: no second request
     if (remote) show(listBox, message('Searching...'));
     try {
       const r = (await api.search(text, remote, act.source)).results;
       if (mine !== searchSeq) return;
       const manual = h('button', { class: 'btn', type: 'button', onclick: () => go('manual', {}) }, 'Enter Manually');
       const empty = message(searchHint(act.source, remote ? 'none' : 'press'));
+      if (!r.length && remote && state.settings.full_claude === true && text.length <= MAX_AI_TEXT) {
+        if (await claudeFallback(text, act.source, mine, h('div', null, empty, manual))) return;
+      }
       show(listBox, h('div', null, r.length ? h('ul', { class: 'list' }, r.map((f) => foodRow(foodTitle(f),
         (f.label_text || unitText(f.serving_amount, f.serving_unit)) + ' - ' + fmtNum(f.kcal, 0) + ' kcal',
         () => go('picker', { foodId: f.id }), null, f, f.source))) : empty, r.length ? null : manual));
@@ -580,14 +585,41 @@ function addScreen(root, params) {
     } catch (e) { if (mine === searchSeq) show(listBox, message(e.message, 'error')); }
   }
 
-  function showClaude({ r }) {
+  // Full Claude Use: a database search with no result asks Claude for an estimate of the typed text, when the lookup switch and a
+  // key allow it (else nothing changes). The usual confirm with the cost when Confirm before using Claude is on; at the monthly cap
+  // one quiet note and nothing is sent. Returns true when it painted the list.
+  async function claudeFallback(text, source, mine, none) {
+    let st = null;
+    try { st = await api.aiStatus(null, text.length); } catch (e) { return false; }
+    if (mine !== searchSeq) return true;
+    const plan = await autoClaude(state.settings, st, 'lookup', { what: DESCRIPTION_TEXT, chars: text.length });
+    if (mine !== searchSeq) return true;
+    if (!plan.go) {
+      if (!plan.note) return false;
+      show(listBox, h('div', null, none, h('p', { class: 'sub', role: 'status' }, plan.note)));
+      return true;
+    }
+    show(listBox, message('Nothing found in the databases. Asking Claude...'));
+    try {
+      const r = await api.aiLookup(text);
+      state.fallback = { text, source, r };
+      if (mine === searchSeq) showClaude(state.fallback, true);
+    } catch (e) {
+      if (mine === searchSeq) show(listBox, h('div', null, none, h('p', { class: 'sub', role: 'status' }, e.status === 429 ? CLAUDE_CAP_NOTE : FALLBACK_FAILED)));
+    }
+    return true;
+  }
+
+  // fallback: the estimate came from Full Claude Use after a search found nothing, so it says so and keeps Enter Manually.
+  function showClaude({ r }, fallback) {
     const d = r.draft;
     const kcal = d.kcal == null ? '' : ' - ' + fmtNum(d.kcal, 0) + ' kcal';
     const open = () => go('ai', { draft: d, warnings: r.warnings, cost: r.cost });
     tabBar.querySelectorAll('button').forEach((b) => b.setAttribute('aria-selected', 'false'));
     show(listBox, h('div', null, h('ul', { class: 'list' }, foodRow(foodTitle({ name: d.name || 'Unnamed food', brand: d.brand }),
       (d.label_text || unitText(d.serving_amount, d.serving_unit)) + kcal, open, null, d, 'ai')),
-    h('p', { class: 'sub' }, 'Values are estimates from Claude. Tap the result to check and save it.')));
+    h('p', { class: 'sub' }, fallback ? FALLBACK_TEXT : 'Values are estimates from Claude. Tap the result to check and save it.'),
+    fallback ? h('button', { class: 'btn', type: 'button', onclick: () => go('manual', {}) }, 'Enter Manually') : null));
   }
   const liveSearch = debounce(() => search(false), 400);
   q.addEventListener('input', liveSearch);
@@ -702,7 +734,35 @@ async function lookupScreen(root, params) {
     h('div', { class: 'row wrap' },
       r.can_ask_ai ? h('button', { class: 'btn primary', type: 'button', onclick: () => go('ai', { barcode: params.code }) }, 'Ask Claude') : null,
       h('button', { class: 'btn', type: 'button', onclick: () => go('manual', { barcode: params.code }) }, 'Enter Manually'),
-      h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back'))));
+      h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back')),
+    state.settings.full_claude === true ? await describeOffer(params.code) : null));
+}
+
+// Full Claude Use on Not Found: a barcode alone tells Claude nothing, so it offers a typed Claude lookup instead. Shown only when
+// the lookup switch and a key allow it; at the monthly cap one quiet note instead. The estimate keeps the barcode for saving.
+async function describeOffer(code) {
+  let st = null;
+  try { st = await api.aiStatus(null, 0); } catch (e) { return null; }
+  if (!aiFeature(st, 'lookup')) return null;
+  if (!(st.remaining > 0)) return h('p', { class: 'sub', role: 'status' }, CLAUDE_CAP_NOTE);
+  const what = field('Describe the food for Claude', { autocomplete: 'off', maxlength: String(MAX_AI_TEXT), placeholder: 'e.g. chocolate chip granola bar' });
+  const status = h('div', { 'aria-live': 'polite' });
+  const btn = h('button', { class: 'btn', type: 'submit' }, 'Ask Claude for an Estimate');
+  async function send(e) {
+    e.preventDefault();
+    const text = what.input.value.trim();
+    if (!text) { show(status, message('Describe the food first.', 'error')); return; }
+    btn.disabled = true;
+    try {
+      if (!(await confirmClaude(state.settings, { what: DESCRIPTION_TEXT, chars: text.length }))) return;
+      show(status, message('Asking Claude...'));
+      const r = await api.aiLookup(text);
+      await go('ai', { draft: { ...r.draft, barcode: code }, warnings: r.warnings, cost: r.cost, barcode: code });
+    } catch (err) { show(status, message(err.status === 429 ? CLAUDE_CAP_NOTE : err.message, 'error')); } finally { btn.disabled = false; }
+  }
+  return h('form', { class: 'describe', onsubmit: send }, h('h2', null, 'Claude Estimate'),
+    h('p', { class: 'sub' }, 'Full Claude Use is on. Describe the product and Claude estimates one serving. Values are estimates.'),
+    what, h('div', { class: 'row wrap' }, btn), status);
 }
 
 // The log checklist of a recipe. How much of the recipe (params.amount and params.unit: servings, % of the recipe or a
@@ -870,11 +930,13 @@ async function settingsScreen(root) {
     displaySection(disp, searchSources(ai), async (patch) => {
       try { const d = await ctx.saveDisplay(patch); clear(dispStatus); return d; } catch (err) { show(dispStatus, message(err.message, 'error')); throw err; }
     }), dispStatus,
-    h('h2', null, 'Claude'), ai ? renderClaudeSection(ai, me.use_global_ai) : h('p', { class: 'sub' }, 'Claude status is not available.'),
+    h('h2', null, 'Claude'),
+    renderFullClaude(s, ai, async (on) => { state.settings = { ...state.settings, ...(await api.saveSettings({ full_claude: on })) }; }),
+    ai ? renderClaudeSection(ai, me.use_global_ai) : h('p', { class: 'sub' }, 'Claude status is not available.'),
     h('h2', null, 'Saved'), h('p', { class: 'sub' }, 'Favorites, recipes and your own foods, with meal tags.'),
     h('button', { class: 'btn', type: 'button', onclick: () => go('saved') }, 'Open Saved'),
     h('p', { class: 'sub' }, 'Fill blank nutrients of every food you have logged from where it came from. It never changes values that are already there.'),
-    refreshLoggedControl({ scope: 'all', label: 'Refresh All Logged Foods', load: () => api.missingNutrients() }).el,
+    refreshLoggedControl({ scope: 'all', label: 'Refresh All Logged Foods', load: (claude) => api.missingNutrients(null, claude) }).el,
     renderSignIn(cfg, me),
     me.is_admin ? h('div', null, h('h2', null, 'Admin'), h('p', { class: 'sub' }, 'Users, sign-in, Claude and server settings.'),
       h('button', { class: 'btn', type: 'button', onclick: () => go('admin') }, 'Open Admin')) : null,
@@ -921,4 +983,5 @@ function hideSplash() {
   hideSplash();
 })();
 
+useSettings(() => state.settings);  // Refresh Nutrients reads Full Claude Use and Confirm before using Claude
 startUpdates();

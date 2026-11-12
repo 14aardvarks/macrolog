@@ -8,7 +8,7 @@ import { toJpeg } from './ai.js';
 import { confirmClaude } from './notice.js';
 import { chips } from './saved.js';
 import { stepsEditor } from './steps.js';
-import { fmtNum, fmtAmount, servingText, centsText, sentence, amountMemo, rowAmountText, matchedAmountText, MICROS, microValue, aiFeature, aiFeatureOff } from './util.js';
+import { fmtNum, fmtAmount, servingText, centsText, sentence, amountMemo, rowAmountText, matchedAmountText, MICROS, microValue, aiFeature, aiFeatureOff, effectiveAutoMatch, CLAUDE_CAP_NOTE, recipeTextCostLine } from './util.js';
 import {
   parseIngredientText, parseIngredientLine, reviewDraft, reviewBody, blankRow, matchState, matchCountText, toggleAll, toggleId,
   proposalText, matchWhat, importWhat, matchSnapshot, restoreBody, changedSince, nextUnmatched, pendingProposals,
@@ -29,6 +29,10 @@ export async function renderImport(root, ctx) {
   let st = null;
   try { st = await api.aiStatus(); } catch (e) { st = { enabled: false }; }
   const aiOn = aiFeature(st, 'recipe');
+  // Full Claude Use: Read With Claude on pasted text runs without the extra confirm. The cost shows here before the tap instead,
+  // and at the monthly cap the button is off with one quiet note.
+  const direct = aiOn && ctx.settings.full_claude === true;
+  const capped = direct && !(st.remaining > 0);
   const status = h('div', { 'aria-live': 'polite' });
   const panel = h('div');
   const tabs = h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Recipe source' }, [['text', 'Paste Text'], ['photos', 'Photos']].map(([k, label]) =>
@@ -44,7 +48,8 @@ export async function renderImport(root, ctx) {
   const photoNote = h('div', { 'aria-live': 'polite' });
   let chosen = [];
 
-  const readText = h('button', { class: 'btn primary', type: 'button', onclick: sendText }, 'Read With Claude');
+  const readText = h('button', { class: 'btn primary', type: 'button', onclick: sendText, disabled: capped, 'aria-describedby': direct ? 'import-direct' : null }, 'Read With Claude');
+  const directNote = direct ? h('p', { class: 'sub', id: 'import-direct' }, capped ? CLAUDE_CAP_NOTE : recipeTextCostLine(st)) : null;
   const splitText = h('button', { class: 'btn', type: 'button', onclick: splitLocal }, 'Split Lines Without Claude');
   const readPhotos = h('button', { class: 'btn primary', type: 'button', disabled: true, onclick: sendPhotos }, 'Read With Claude');
   const noAi = aiOn ? null : message((aiFeatureOff(st, 'recipe') ? 'Claude recipe import is turned off on this server' : 'Claude is not set up for you')
@@ -61,7 +66,7 @@ export async function renderImport(root, ctx) {
       show(panel, h('div', null,
         h('label', { class: 'field' }, h('span', null, 'Recipe text'), area),
         h('p', { class: 'sub' }, 'Split Lines Without Claude reads one ingredient per line and costs nothing. Claude copes with whole pages.'),
-        aiOn ? note : noAi, h('div', { class: 'row wrap' }, aiOn ? readText : null, splitText)));
+        aiOn ? note : noAi, h('div', { class: 'row wrap' }, aiOn ? readText : null, splitText), directNote));
     }
   }
   function onFiles() {
@@ -82,11 +87,11 @@ export async function renderImport(root, ctx) {
     if (!text.trim()) { show(status, message('Paste the recipe text first.', 'error')); return; }
     readText.disabled = true;
     try {
-      if (!(await confirmClaude(ctx.settings, { what: importWhat('text', text.length), query: { recipe_chars: text.length } }))) return;
+      if (!direct && !(await confirmClaude(ctx.settings, { what: importWhat('text', text.length), query: { recipe_chars: text.length } }))) return;
       show(status, message('Claude is reading the recipe...'));
       const r = await api.recipeFromText(text, note.input.value.trim());
       done(r.recipe, { warnings: r.warnings, cost: r.cost });
-    } catch (e) { show(status, message(e.message, 'error')); } finally { readText.disabled = false; }
+    } catch (e) { show(status, message(e.message, 'error')); } finally { readText.disabled = capped; }
   }
   async function sendPhotos() {
     readPhotos.disabled = true;
@@ -277,7 +282,9 @@ export async function renderMatch(root, params, ctx) {
   // cost as Match Selected With Claude), Search Then Claude asks Claude only about rows Search left without a proposal. It never
   // blocks: the page is already usable, and a failure or a cancel only leaves the rows unmatched (and ticked) with a quiet note.
   async function autoRun() {
-    const plan = autoMatchPlan(ctx.display.auto_match, aiOn);
+    // Full Claude Use turns the Search setting into Search Then Claude; without Claude that falls back to Search silently.
+    const eff = effectiveAutoMatch(ctx.display.auto_match, ctx.settings.full_claude === true);
+    const plan = autoMatchPlan(eff.forced && !aiOn ? 'search' : eff.value, aiOn);
     if (!plan.search && !plan.claude) return;
     busy = true;
     status.setAttribute('aria-busy', 'true');
@@ -306,7 +313,11 @@ export async function renderMatch(root, params, ctx) {
       }
       if (plan.claude) {
         const b = autoClaudeBatch(meal.items, props);
-        if (b.send.length) {
+        let left = null;  // the monthly cap: automatic Claude steps stop there with one quiet note, nothing is sent
+        if (b.send.length) { try { left = (await api.aiStatus()).remaining; } catch (e) { left = null; } }
+        if (b.send.length && left != null && left <= 0) {
+          text = [text, CLAUDE_CAP_NOTE].filter(Boolean).join(' ');
+        } else if (b.send.length) {
           if (!(await confirmClaude(ctx.settings, { what: matchWhat(b.send.length), query: { match_rows: b.send.length } }))) {
             text = [text, AUTO_CLAUDE_CANCELLED].filter(Boolean).join(' ');
           } else {

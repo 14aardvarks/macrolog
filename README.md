@@ -32,6 +32,7 @@ Dark mode follows the device setting, and the layout also works on desktop.
 - Light and dark themes follow the system setting.
 - Each food shows where it came from (Open Food Facts, USDA, Custom or Claude). Claude values are marked as estimates.
 - Optional: Claude reads a nutrition label from one to three photos. You check the draft before anything is saved.
+- Optional: Full Claude Use (Settings, off by default) lets Claude help on its own: matching after a recipe import, an estimate when a search finds nothing, filling missing micronutrients and reading pasted recipe text, always inside the monthly limit.
 - Sign in with a local password, with optional single sign-on through OpenID Connect (authentik), set up entirely from the Admin page.
 - An Admin page for users, sign-in, Claude and food database settings, with lockout safeguards and an audit log.
 
@@ -199,6 +200,30 @@ The cap is a request count, not a money limit. `AI_MONTHLY_REQUEST_CAP` applies 
 Before each Claude request the app shows a notice with what will be sent, how many of the monthly requests it uses, and the estimated cost. Nothing is sent until you tap Continue. Each person can turn the notice off in Settings with "Confirm before using Claude". The estimate assumes about 1,600 input tokens per photo, 700 for the instructions and 400 output tokens. For a text description it assumes 650 input tokens plus one per 4 characters, and 400 output tokens. The monthly cost in Settings is computed from the real token counts stored in `ai_usage`.
 
 Settings also has "Show amounts as", which switches amounts between fractions (1/2) and decimals (0.5). In fraction mode a scaled amount always rounds to the nearest cooking fraction (1/8, 1/4, 1/3, 1/2, 2/3, 3/4, or whole and mixed like 1 1/2, plus 3/8, 5/8 and 7/8 for cups and spoons), so 0.313 cup shows as 1/3. Fractions apply to servings, cups, tablespoons, teaspoons, fluid ounces and counts (slices, cloves, eggs). With decimals on, amounts show as short decimals (0.3, 0.33, 1.5). Grams, kilograms, millilitres, litres, ounces, pounds and percent always show decimals. Typing accepts both. Reopening a saved amount and saving without touching the box keeps the exact stored value (0.4 cup shows 3/8 but stays 0.4); it only changes if you edit the text.
+
+### Full Claude Use
+
+Settings, Claude has a Full Claude Use checkbox, off by default. When it is on, Claude runs on its own in four places, each only when the administrator allows that feature and a Claude key is available (otherwise nothing changes and nothing is said):
+
+- Auto-Match After Import set to Search runs as Search Then Claude. A choice of Claude, Search Then Claude or Off is never changed.
+- A search on Add that finds nothing asks Claude for one estimate of the typed text, marked Claude Estimate. A barcode that is not found offers a typed Claude estimate instead, since a barcode alone tells Claude nothing.
+- Refresh Nutrients lets Claude estimate the micronutrients the source left blank (or all blanks of a food with no source). Values already there are never changed. Claude values are named as estimates in the picker and the food form.
+- Read With Claude on pasted recipe text sends without the confirm notice. The cost and the requests left show under the button first.
+
+Confirm before using Claude stays a separate setting: when it is on, the automatic steps show the usual notice with the estimated cost first. The monthly request limit always applies. At the limit the automatic steps stop and show one short note.
+
+The setting's description shows these estimates, computed from the token sizes the app uses for its cost notice with your model prices, or the Haiku 5.5 sample prices (0.10 USD input and 0.50 USD output per million tokens) when no price is set:
+
+| Action (estimates, sample prices) | Tokens in / out | Cost |
+|---|---|---|
+| Label photo | 2300 / 400 | about 0.04 cents |
+| Claude lookup | 700 / 400 | about 0.03 cents |
+| Recipe import from text (8000 characters) | 2900 / 1700 | about 0.11 cents |
+| Claude match of 15 ingredients | 7650 / 2400 | about 0.2 cents |
+| Missing nutrients for one food | 600 / 150 | about 0.01 cents |
+| Heavy month (86 requests) | | about 0.04 USD |
+
+A heavy month here is 30 lookups, 30 nutrient fills, 10 label photos, 8 recipe imports and 8 Claude matches. At 1 and 5 USD per million tokens the same month is about 0.41 USD.
 
 ## Administration
 

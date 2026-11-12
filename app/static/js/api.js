@@ -93,8 +93,9 @@ export const api = {
   removeFromLists: (id) => send('POST', '/api/saved/favorites/' + id + '/remove'),
   patchMeal: (id, body) => send('PATCH', '/api/meals/' + id, body),
   patchFood: (id, body) => send('PATCH', '/api/foods/' + id, body),
-  refreshNutrients: (id) => send('POST', '/api/foods/' + id + '/refresh-nutrients'),
-  missingNutrients: (d) => get('/api/foods/missing-nutrients', d ? { date: d } : undefined),
+  // claude: Full Claude Use may let Claude fill what the source left blank (the server checks the setting, switch, key and cap).
+  refreshNutrients: (id, claude) => send('POST', '/api/foods/' + id + '/refresh-nutrients' + (claude ? '?claude=1' : '')),
+  missingNutrients: (d, claude) => get('/api/foods/missing-nutrients', d || claude ? { ...(d ? { date: d } : {}), ...(claude ? { claude: 1 } : {}) } : undefined),
   deleteFood: (id) => request('DELETE', '/api/foods/' + id),
   aiStatus: (images, chars, extra) => get('/api/ai/status', images || chars != null || extra ? { images, chars, ...(extra || {}) } : undefined),
   aiLabel: (form) => request('POST', '/api/ai/label', { form }),

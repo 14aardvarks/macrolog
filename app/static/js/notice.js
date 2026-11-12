@@ -1,16 +1,16 @@
 import { api } from './api.js';
 import { h } from './dom.js';
-import { noticeLines } from './util.js';
+import { noticeLines, autoClaudePlan, CLAUDE_CAP_NOTE } from './util.js';
 
 // Ask before anything goes to Claude. Resolves true to go ahead, false to cancel.
 // opts: { what: "1 photo of a label", images: 1 } for a label read, or { what, chars: text length } for a text lookup. With "Confirm before using Claude" off it resolves true at once.
-// opts.query: extra status parameters for the estimate (recipe_chars, recipe_images or match_rows).
+// opts.query: extra status parameters for the estimate (recipe_chars, recipe_images, match_rows or micros). opts.requests: requests it may use.
 // Built in the page (no window.confirm). Reuse it for any other Claude action.
 export async function confirmClaude(settings, opts) {
   if (settings && settings.confirm_ai === false) return true;
   let st = null;
   try { st = await api.aiStatus(opts.chars != null ? null : opts.images || 1, opts.chars, opts.query); } catch (e) { st = null; }
-  const info = st ? noticeLines(st, opts.what) : { blocked: false, lines: ['Sends ' + opts.what + ' to Claude.', 'Cost not available.'], warn: '' };
+  const info = st ? noticeLines(st, opts.what, opts.requests) : { blocked: false, lines: ['Sends ' + opts.what + ' to Claude.', 'Cost not available.'], warn: '' };
   return new Promise((resolve) => {
     const previous = document.activeElement;
     const done = (ok) => {
@@ -39,4 +39,15 @@ export async function confirmClaude(settings, opts) {
     document.body.appendChild(overlay);
     (go || cancel).focus();
   });
+}
+
+// An automatic Claude step of Full Claude Use. st: a fresh /api/ai/status. Resolves { go, note }: go false and no note when
+// Full Claude Use, the switch or the key is missing (silent fallback); the cap gives one quiet note and nothing is sent;
+// otherwise the usual confirm with the estimated cost when Confirm before using Claude is on, or nothing when it is off.
+export async function autoClaude(settings, st, feature, opts) {
+  const plan = autoClaudePlan(settings, st, feature);
+  if (plan === 'off') return { go: false, note: '' };
+  if (plan === 'cap') return { go: false, note: CLAUDE_CAP_NOTE };
+  if (plan === 'run') return { go: true, note: '' };
+  return { go: await confirmClaude(settings, opts), note: '' };
 }

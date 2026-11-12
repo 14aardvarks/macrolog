@@ -617,7 +617,8 @@ def test_goals_validation(a, patch):
 
 
 def test_settings_default_put_validate_and_isolation(a, b):
-    d = {"start_screen": "today", "default_meal": None, "use_last": True, "confirm_ai": True, "amount_format": "fraction"}
+    d = {"start_screen": "today", "default_meal": None, "use_last": True, "confirm_ai": True, "amount_format": "fraction",
+         "full_claude": False}
     assert a.get("/api/settings").json() == d
     r = a.put("/api/settings", json={"start_screen": "scan", "default_meal": "lunch"})
     assert r.json() == d | {"start_screen": "scan", "default_meal": "lunch"}
@@ -639,7 +640,7 @@ def test_use_last_persists_and_is_per_user(a, b):
     # other settings keep their values and the flag survives them
     a.put("/api/settings", json={"start_screen": "search"})
     assert a.get("/api/settings").json() == {"start_screen": "search", "default_meal": None, "use_last": False,
-                                             "confirm_ai": True, "amount_format": "fraction"}
+                                             "confirm_ai": True, "amount_format": "fraction", "full_claude": False}
     assert a.put("/api/settings", json={"use_last": True}).json()["use_last"] is True
     assert a.get("/api/settings").json()["use_last"] is True
 

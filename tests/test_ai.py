@@ -76,7 +76,9 @@ def test_status(env, monkeypatch):
     for k in ("AI_PRICE_IN_PER_MTOK", "AI_PRICE_OUT_PER_MTOK"):
         monkeypatch.delenv(k, raising=False)
     r = env["client"].get("/api/ai/status")
-    assert r.json() == {"enabled": True, "used_this_month": 0, "cap": 100, "remaining": 100, "model": "claude-haiku-5-5",
+    body = r.json()
+    assert body.pop("action_costs")["sample"] is True  # no price set: the Full Claude Use table uses the sample prices
+    assert body == {"enabled": True, "used_this_month": 0, "cap": 100, "remaining": 100, "model": "claude-haiku-5-5",
                         "price_known": False, "est_cost_label": None, "cost_this_month": None,
                         "key_source": "global", "personal_key_set": False, "personal_key_unreadable": False,
                         "can_use_global": True, "personal_cap": 100, "personal_used_this_month": 0,

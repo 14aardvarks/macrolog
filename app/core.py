@@ -162,6 +162,8 @@ def init(c: sqlite3.Connection) -> None:
         c.execute("ALTER TABLE settings ADD COLUMN confirm_ai INTEGER NOT NULL DEFAULT 1")
     if "amount_format" not in cols:  # databases made before fractions or decimals
         c.execute("ALTER TABLE settings ADD COLUMN amount_format TEXT NOT NULL DEFAULT 'fraction'")
+    if "full_claude" not in cols:  # databases made before Full Claude Use (off by default)
+        c.execute("ALTER TABLE settings ADD COLUMN full_claude INTEGER NOT NULL DEFAULT 0")
     for key, default in DISPLAY_FLAGS.items():  # databases made before the Display settings
         if key not in cols:
             c.execute(f"ALTER TABLE settings ADD COLUMN {key} INTEGER NOT NULL DEFAULT {default}")
@@ -180,6 +182,8 @@ def init(c: sqlite3.Connection) -> None:
         for key in NEW_MICROS:
             if key not in have:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN {key} REAL")
+    if "ai_micros" not in {r[1] for r in c.execute("PRAGMA table_info(foods)")}:  # micronutrients Claude estimated (comma list)
+        c.execute("ALTER TABLE foods ADD COLUMN ai_micros TEXT NOT NULL DEFAULT ''")
     if "group_id" not in {r[1] for r in c.execute("PRAGMA table_info(entries)")}:  # databases made before recipe logs were grouped
         c.execute("ALTER TABLE entries ADD COLUMN group_id INTEGER")  # null: a plain entry, or one logged from a recipe before this
     c.execute("CREATE INDEX IF NOT EXISTS entries_group ON entries(group_id)")
@@ -250,7 +254,10 @@ def now() -> str:
 # ---------- foods ----------
 
 def food_dict(row) -> dict:
-    return {k: row[k] for k in FOOD_COLS}
+    out = {k: row[k] for k in FOOD_COLS}
+    if "ai_micros" in row.keys():  # micronutrients Claude estimated on Refresh Nutrients (Full Claude Use)
+        out["ai_micros"] = [k for k in (row["ai_micros"] or "").split(",") if k in MICROS]
+    return out
 
 
 def need_food(c, food_id) -> dict:
@@ -436,10 +443,12 @@ def create_food(user: CurrentUser, body: dict = Body(...)):
 
 
 @router.get("/foods/missing-nutrients")
-def missing_nutrients(user: CurrentUser, date: str | None = None):
+def missing_nutrients(user: CurrentUser, date: str | None = None, claude: bool = False):
     """Ids of the foods I have logged (on `date` when given, else ever) that have a blank micronutrient, can be looked up
-    again and that I may refresh (custom and AI foods only when I created them). Oldest food first."""
+    again and that I may refresh (custom and AI foods only when I created them). Oldest food first.
+    claude: also foods with no source to look up, when Claude may fill them (Full Claude Use, see refresh_nutrients)."""
     uid = user["id"]
+    by_claude = claude and claude_fill_ready(uid)[0] is not None
     where, args = "e.user_id=?", [uid]
     if date not in (None, ""):
         where, args = where + " AND e.day=?", [*args, day_str(date)]
@@ -447,7 +456,8 @@ def missing_nutrients(user: CurrentUser, date: str | None = None):
     with db.conn() as c:
         rows = c.execute(f"SELECT DISTINCT f.* FROM entries e JOIN foods f ON f.id=e.food_id WHERE {where} AND ({blank}) ORDER BY f.id",
                          args).fetchall()
-    ids = [r["id"] for r in rows if (r["source"] not in ("custom", "ai") or r["created_by"] == uid) and lookup.refresh_kind(food_dict(r))]
+    ids = [r["id"] for r in rows if (r["source"] not in ("custom", "ai") or r["created_by"] == uid)
+           and (by_claude or lookup.refresh_kind(food_dict(r)))]
     return {"ids": ids, "total": len(ids)}
 
 
@@ -757,12 +767,19 @@ AMOUNT_FORMATS = ("fraction", "decimal")
 
 
 def read_settings(c, uid: int) -> dict:
-    row = c.execute("SELECT start_screen, default_meal, use_last, confirm_ai, amount_format FROM settings WHERE user_id=?",
+    row = c.execute("SELECT start_screen, default_meal, use_last, confirm_ai, amount_format, full_claude FROM settings WHERE user_id=?",
                     (uid,)).fetchone()
     if not row:
-        return {"start_screen": "today", "default_meal": None, "use_last": True, "confirm_ai": True, "amount_format": "fraction"}
+        return {"start_screen": "today", "default_meal": None, "use_last": True, "confirm_ai": True, "amount_format": "fraction",
+                "full_claude": False}
     return {"start_screen": row["start_screen"], "default_meal": row["default_meal"], "use_last": bool(row["use_last"]),
-            "confirm_ai": bool(row["confirm_ai"]), "amount_format": row["amount_format"]}
+            "confirm_ai": bool(row["confirm_ai"]), "amount_format": row["amount_format"], "full_claude": bool(row["full_claude"])}
+
+
+def full_claude_on(uid: int) -> bool:
+    """Full Claude Use (settings.full_claude, per user, off by default): Claude runs automatically where it helps."""
+    with db.conn() as c:
+        return read_settings(c, uid)["full_claude"]
 
 
 @router.get("/settings")
@@ -779,18 +796,19 @@ def put_settings(user: CurrentUser, body: dict = Body(...)):
             s["start_screen"] = pick(body["start_screen"], SCREENS, "start_screen")
         if "default_meal" in body:
             s["default_meal"] = pick(body["default_meal"], MEALS, "default_meal", nullable=True)
-        for key in ("use_last", "confirm_ai"):
+        for key in ("use_last", "confirm_ai", "full_claude"):
             if key in body:
                 if not isinstance(body[key], bool):
                     raise bad(f"{key} must be true or false")
                 s[key] = body[key]
         if "amount_format" in body:
             s["amount_format"] = pick(body["amount_format"], AMOUNT_FORMATS, "amount_format")
-        c.execute("INSERT INTO settings(user_id,start_screen,default_meal,use_last,confirm_ai,amount_format) VALUES(?,?,?,?,?,?) "
+        c.execute("INSERT INTO settings(user_id,start_screen,default_meal,use_last,confirm_ai,amount_format,full_claude) VALUES(?,?,?,?,?,?,?) "
                   "ON CONFLICT(user_id) DO UPDATE SET start_screen=excluded.start_screen, "
                   "default_meal=excluded.default_meal, use_last=excluded.use_last, confirm_ai=excluded.confirm_ai, "
-                  "amount_format=excluded.amount_format",
-                  (user["id"], s["start_screen"], s["default_meal"], int(s["use_last"]), int(s["confirm_ai"]), s["amount_format"]))
+                  "amount_format=excluded.amount_format, full_claude=excluded.full_claude",
+                  (user["id"], s["start_screen"], s["default_meal"], int(s["use_last"]), int(s["confirm_ai"]), s["amount_format"],
+                   int(s["full_claude"])))
         return s
 
 
@@ -1766,6 +1784,8 @@ def patch_food(food_id: int, user: CurrentUser, body: dict = Body(...)):
                                      "You can still rename it.")
         cols = [k for k in FOOD_EDITABLE]
         c.execute(f"UPDATE foods SET {', '.join(k + '=?' for k in cols)} WHERE id=?", [new[k] for k in cols] + [food_id])
+        estimated = [k for k in (row["ai_micros"] or "").split(",") if k in MICROS and new[k] == old[k]]  # an edited value is mine now
+        c.execute("UPDATE foods SET ai_micros=? WHERE id=?", (",".join(estimated), food_id))
         return need_food(c, food_id)
 
 
@@ -1780,11 +1800,30 @@ def serving_ratio(old: dict, new: dict) -> float | None:
     return None
 
 
+CLAUDE_CAP_NOTE = "Monthly Claude limit reached, so Claude did not fill the rest"
+CLAUDE_FAIL_NOTE = "Claude could not fill the rest just now"
+
+
+def claude_fill_ready(uid: int) -> tuple:
+    """(source, key) when Claude may fill missing micronutrients for this user on its own: Full Claude Use is on, the
+    administrator allows Claude typed lookups (ai_allow_lookup) and a key is usable. (None, "") otherwise (silent fallback)."""
+    if not full_claude_on(uid):
+        return None, ""
+    from . import ai  # lazy: ai is optional
+    return ai.auto_ready(uid, "lookup")
+
+
+def _names(keys) -> str:
+    return ", ".join(MICRO_INFO[k][0].lower() for k in keys)
+
+
 @router.post("/foods/{food_id}/refresh-nutrients")
-async def refresh_nutrients(food_id: int, user: CurrentUser):
+async def refresh_nutrients(food_id: int, user: CurrentUser, claude: bool = False):
     """Look a saved food up again in its source and fill ONLY micronutrients that are null. Existing values,
     calories, macros and the name never change, so this is safe for foods already in logs or recipes.
-    Foods from Open Food Facts or USDA are shared and any user may refresh them; custom and AI foods only by their creator."""
+    Foods from Open Food Facts or USDA are shared and any user may refresh them; custom and AI foods only by their creator.
+    claude=1 (Full Claude Use): when the setting is on, the lookup switch is on and a key is usable, Claude estimates what
+    the source left blank (one request, inside the monthly cap), marked in foods.ai_micros. Otherwise it is ignored."""
     with db.conn() as c:
         row = c.execute("SELECT id, source FROM foods WHERE id=?", (food_id,)).fetchone()
         if not row:
@@ -1792,31 +1831,75 @@ async def refresh_nutrients(food_id: int, user: CurrentUser):
         if row["source"] in ("custom", "ai"):
             own_food(c, user["id"], food_id)
         food = need_food(c, food_id)
-    if lookup.refresh_kind(food) is None:
+    source, key = claude_fill_ready(user["id"]) if claude else (None, "")
+    kind = lookup.refresh_kind(food)
+    if kind is None and source is None:
         raise bad("This food has no source ID or barcode, so there is nothing to look up")
     if all(food[k] is not None for k in MICROS):
         return {"food": food, "filled": [], "message": "This food already has every nutrient"}
-    res = await lookup.refresh(food)
-    if res.get("error") == "rate_limited":
-        raise HTTPException(429, res["note"])
-    if res.get("error"):
-        raise HTTPException(502, res["note"])
-    found = res.get("food")
-    if not found:
-        return {"food": food, "filled": [], "message": res.get("note") or "The source has no more data for this food"}
-    ratio = serving_ratio(food, found)
-    if ratio is None:
-        raise HTTPException(409, "The source lists a different serving size, so its values were not copied")
-    filled = []
+    filled, note = [], ""
+    if kind is not None:
+        res = await lookup.refresh(food)
+        if res.get("error") == "rate_limited":
+            raise HTTPException(429, res["note"])
+        if res.get("error"):
+            raise HTTPException(502, res["note"])
+        found = res.get("food")
+        ratio = serving_ratio(food, found) if found else None
+        if found and ratio is None and source is None:
+            raise HTTPException(409, "The source lists a different serving size, so its values were not copied")
+        if not found:
+            note = res.get("note") or ""
+        with db.conn() as c:
+            for k in MICROS if found and ratio is not None else ():
+                v = found.get(k)
+                if food[k] is None and isinstance(v, (int, float)) and v >= 0:
+                    if c.execute(f"UPDATE foods SET {k}=? WHERE id=? AND {k} IS NULL", (r2(v * ratio), food_id)).rowcount:
+                        filled.append(k)
+            food = need_food(c, food_id)
+    out = {"filled": filled}
+    missing = [k for k in MICROS if food[k] is None]
+    if source is not None and missing:
+        out.update(await claude_fill(user["id"], source, key, food, missing))
     with db.conn() as c:
-        for key in MICROS:
-            v = found.get(key)
-            if food[key] is None and isinstance(v, (int, float)) and v >= 0:
-                if c.execute(f"UPDATE foods SET {key}=? WHERE id=? AND {key} IS NULL", (r2(v * ratio), food_id)).rowcount:
-                    filled.append(key)
         updated = need_food(c, food_id)
-    msg = "Filled " + ", ".join(MICRO_INFO[k][0].lower() for k in filled) if filled else "The source has no more data for this food"
-    return {"food": updated, "filled": filled, "message": msg}
+    by_claude = out.get("claude_filled", [])
+    parts = []
+    if filled:
+        parts.append("Filled " + _names(filled))
+    if by_claude:
+        parts.append("Claude estimated " + _names(by_claude))
+    if parts:
+        msg = ". ".join(parts)
+    elif kind is None:
+        msg = "Claude had no estimate for this food"
+    else:
+        msg = note or "The source has no more data for this food"
+    if out.get("claude_note"):
+        msg += ". " + out["claude_note"]
+    return {"food": updated, **out, "filled": filled + by_claude, "message": msg}
+
+
+async def claude_fill(uid: int, source: str, key: str, food: dict, missing: list[str]) -> dict:
+    """Claude's estimate for the still blank micronutrients, written only where the value is still null and marked in
+    foods.ai_micros. Never raises: the cap gives claude_note CLAUDE_CAP_NOTE, any other failure CLAUDE_FAIL_NOTE."""
+    from . import ai
+    try:
+        r = await ai.fill_micros(uid, source, key, food, missing)
+    except HTTPException as exc:
+        return {"claude_filled": [], "claude_note": CLAUDE_CAP_NOTE if exc.status_code == 429 else CLAUDE_FAIL_NOTE,
+                "claude_capped": exc.status_code == 429}
+    done = []
+    with db.conn() as c:
+        for k, v in r["values"].items():
+            if c.execute(f"UPDATE foods SET {k}=? WHERE id=? AND {k} IS NULL", (r2(v), food["id"])).rowcount:
+                done.append(k)
+        if done:
+            row = c.execute("SELECT ai_micros FROM foods WHERE id=?", (food["id"],)).fetchone()
+            have = [k for k in (row["ai_micros"] or "").split(",") if k in MICROS]
+            c.execute("UPDATE foods SET ai_micros=? WHERE id=?", (",".join(k for k in MICROS if k in have or k in done), food["id"]))
+    return {"claude_filled": done, "claude_note": None, "claude_capped": False, "cost": r.get("cost"),
+            "used_this_month": r.get("used_this_month"), "cap": r.get("cap")}
 
 
 @router.delete("/foods/{food_id}")

@@ -96,7 +96,7 @@ export function displaySection(display, sources, save) {
     h('label', { class: 'field', for: 'disp-source' }, h('span', null, 'Default Search Source'), srcSel),
     h('p', { class: 'sub', id: 'disp-source-help' }, 'Where the search on Add looks first. All Sources by default. Changing Source on Add lasts until the app is reloaded.'),
     h('label', { class: 'field', for: 'disp-auto' }, h('span', null, 'Auto-Match After Import'), autoSel),
-    h('p', { class: 'sub', id: 'disp-auto-help' }, sentence('Search is the default') + ' ' + sentence('After an import, Search is free and fills in suggested matches for you to review') + ' ' + sentence('Claude matches the ingredients with Claude, and Search Then Claude asks Claude only about the ingredients Search did not match') + ' ' + sentence('Claude uses Claude requests, shows the cost first when Confirm before using Claude is on, and falls back to Search when it is not set up') + ' ' + sentence('Off leaves every ingredient for you to match')));
+    h('p', { class: 'sub', id: 'disp-auto-help' }, sentence('Search is the default') + ' ' + sentence('After an import, Search is free and fills in suggested matches for you to review') + ' ' + sentence('Claude matches the ingredients with Claude, and Search Then Claude asks Claude only about the ingredients Search did not match') + ' ' + sentence('Claude uses Claude requests, shows the cost first when Confirm before using Claude is on, and falls back to Search when it is not set up') + ' ' + sentence('Off leaves every ingredient for you to match') + ' ' + sentence('With Full Claude Use on, Search runs as Search Then Claude')));
 }
 
 // Settings, Goals: one field per nutrient. read() returns { targets } or { error }.

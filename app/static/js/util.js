@@ -369,9 +369,11 @@ export function planText(plan, cap = REFRESH_CAP) {
   return plan.total > cap ? cap + ' of ' + word(plan.total) + ' will be checked now' : word(plan.total) + ' will be checked';
 }
 // Summary after a Refresh All Missing run. checked foods asked, filled values added, failed errors, stopped says a rate limit ended the run early.
-export function bulkSummary({ checked, filled, failed, left, stopped }) {
+export function bulkSummary({ checked, filled, failed, left, stopped, byClaude, note }) {
   const word = (n, one, many) => n + ' ' + (n === 1 ? one : many);
-  const parts = ['Checked ' + word(checked, 'food', 'foods') + ' and filled ' + word(filled, 'value', 'values')];
+  const parts = ['Checked ' + word(checked, 'food', 'foods') + ' and filled ' + word(filled, 'value', 'values')
+    + (byClaude ? ' (' + byClaude + ' estimated by Claude)' : '')];
+  if (note) parts.push(note);
   if (failed) parts.push(word(failed, 'food', 'foods') + ' could not be refreshed');
   if (stopped) parts.push('Stopped at the rate limit, try again later');
   else if (left) parts.push(word(left, 'food', 'foods') + ' left, tap again to continue');
@@ -660,11 +662,13 @@ export const LOW_REQUESTS = 5;
 
 // Lines for the notice shown before a Claude request. st is the /api/ai/status reply. what is e.g. "1 photo of a label".
 // blocked: nothing can be sent. Cost reads "Cost not available" when the server has no price.
-export function noticeLines(st, what) {
+// requests: how many requests the action may use (Refresh Nutrients with Full Claude Use sends one per food), 1 by default.
+export function noticeLines(st, what, requests) {
   const blocked = st.remaining <= 0;
   if (blocked) return { blocked, lines: ['You have used all ' + st.cap + ' requests this month. Nothing can be sent.'], warn: '' };
   const lines = ['Sends ' + what + ' to Claude.'];
-  lines.push('Uses 1 of your ' + st.cap + ' monthly requests (' + st.remaining + ' left).');
+  const n = requests > 1 ? requests : 1;
+  lines.push((n > 1 ? 'Uses up to ' + n : 'Uses 1') + ' of your ' + st.cap + ' monthly requests (' + st.remaining + ' left).');
   lines.push(st.est_cost_label == null ? 'Cost not available.' : 'Estimated cost about ' + centsText(st.est_cost_label) + '.');
   const warn = st.remaining <= LOW_REQUESTS ? 'Only ' + st.remaining + ' left this month.' : '';
   return { blocked, lines, warn };
@@ -997,3 +1001,70 @@ export function cookToggle(checked, key) {
   if (next.has(key)) next.delete(key); else next.add(key);
   return next;
 }
+
+// ---------- Full Claude Use (issue #26) ----------
+// A per user setting (settings.full_claude, off by default). When on, Claude runs on its own where it helps, each step only
+// when the administrator's switch and a usable key allow it, inside the monthly cap and its cost reservation.
+
+export const CLAUDE_CAP_NOTE = sentence('Monthly Claude limit reached, so Claude was not used');
+
+// Auto-Match After Import with Full Claude Use: Search (the default) becomes Search Then Claude. An explicit Claude, Search Then
+// Claude or Off is never changed. forced: Full Claude Use made the change, so a missing Claude falls back to Search silently.
+export function effectiveAutoMatch(setting, full) {
+  const s = autoMatch(setting);
+  return full && s === 'search' ? { value: 'search_claude', forced: true } : { value: s, forced: false };
+}
+
+// Whether an automatic Claude step runs. st: /api/ai/status, feature: label, lookup or recipe.
+// off: Full Claude Use is off, the switch is off or there is no key (silent). cap: no requests left (one quiet note).
+// confirm: ask first with the cost (Confirm before using Claude is on). run: go ahead quietly.
+export function autoClaudePlan(settings, st, feature) {
+  if (!settings || settings.full_claude !== true || !aiFeature(st, feature)) return 'off';
+  if (!(st.remaining > 0)) return 'cap';
+  return settings.confirm_ai === false ? 'run' : 'confirm';
+}
+
+// The Full Claude Use description: approximate cost per action and for a heavy month, from /api/ai/status action_costs
+// (computed on the server from the real token sizes, with your prices, else the Haiku 5.5 sample prices).
+export const FULL_CLAUDE_ACTIONS = [
+  ['lookup', 'Claude lookup when a search finds nothing'], ['micros', 'Missing nutrients for one food'],
+  ['label', 'Label photo'], ['recipe_text', 'Recipe import from text'], ['match', 'Claude match of 15 ingredients'],
+];
+export function fullClaudeRows(costs) {
+  if (!costs) return [];
+  const rows = FULL_CLAUDE_ACTIONS.filter(([k]) => Number.isFinite(costs[k])).map(([k, label]) => ({ label, text: 'about ' + centsText(costs[k]) }));
+  if (Number.isFinite(costs.heavy_month)) {
+    rows.push({ label: 'Heavy month (' + costs.heavy_requests + ' requests)', text: 'about ' + (costs.heavy_month < 0.01 ? centsText(costs.heavy_month) : dollarText(costs.heavy_month)) });
+  }
+  return rows;
+}
+export function fullClaudePriceNote(costs) {
+  if (!costs) return sentence('Cost estimates are not available');
+  return costs.sample
+    ? sentence('Estimates at the Haiku 5.5 sample prices of 0.10 USD input and 0.50 USD output per million tokens, because no price is set')
+    : sentence('Estimates at your model prices');
+}
+
+// "Claude estimated sodium and iron." for a food whose blank micronutrients Claude filled, else ''.
+export function aiMicrosText(food) {
+  const keys = (food && Array.isArray(food.ai_micros) ? food.ai_micros : []);
+  const names = MICROS.filter((m) => keys.includes(m.key)).map((m) => m.label.toLowerCase());
+  if (!names.length) return '';
+  const list = names.length === 1 ? names[0] : names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1];
+  return 'Claude estimated ' + list + '. These are estimates.';
+}
+
+// What the Refresh Nutrients notice says is sent: the food facts, never anything else.
+export function microsWhat(n) { return 'the name, serving and macros of ' + (n === 1 ? '1 food' : 'up to ' + n + ' foods') + ' to estimate missing nutrients'; }
+
+// Import Recipe with Full Claude Use: the line under Read With Claude, since the tap sends at once. st: /api/ai/status.
+export function recipeTextCostLine(st) {
+  const c = st && st.action_costs;
+  const cost = c && Number.isFinite(c.recipe_text) ? 'Up to about ' + centsText(c.recipe_text) + ' per import' + (c.sample ? ' at sample prices' : '') + '. ' : '';
+  const left = st && Number.isFinite(st.remaining) ? st.remaining + ' of ' + st.cap + ' Claude requests left this month.' : '';
+  return ('Full Claude Use is on, so Read With Claude sends the text at once. ' + cost + left).trim();
+}
+
+// Full Claude Use on Add: a database search found nothing, so Claude estimated the typed text.
+export const FALLBACK_TEXT = sentence('Nothing was found in the databases, so this is a Claude Estimate. Tap it to check the values and save it');
+export const FALLBACK_FAILED = sentence('Claude could not estimate it just now');

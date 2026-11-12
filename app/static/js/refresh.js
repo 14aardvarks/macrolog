@@ -1,7 +1,22 @@
 // Refresh Nutrients: fills blank micronutrients from the food's original source. Never changes existing values.
 import { api } from './api.js';
 import { h, message, show } from './dom.js';
-import { missingMicros, refreshTargets, bulkSummary, pendingPlan } from './util.js';
+import { missingMicros, refreshTargets, bulkSummary, pendingPlan, microsWhat, sentence, CLAUDE_CAP_NOTE } from './util.js';
+import { autoClaude } from './notice.js';
+
+// Full Claude Use: app.js hands over the signed-in user's settings, so Refresh Nutrients can let Claude fill what the source left.
+let settingsOf = () => null;
+export function useSettings(get) { settingsOf = get; }
+const fullOn = () => { const s = settingsOf(); return !!(s && s.full_claude === true); };
+
+// Whether Claude may fill blanks for the next n foods: nothing when Full Claude Use is off, the switch or the key is missing;
+// a quiet note at the cap; else the usual confirm with the cost (Confirm before using Claude on) or nothing (off).
+async function claudeGo(n) {
+  if (!fullOn() || !n) return { go: false, note: '' };
+  let st = null;
+  try { st = await api.aiStatus(null, null, { micros: Math.min(10, n) }); } catch (e) { return { go: false, note: '' }; }
+  return autoClaude(settingsOf(), st, 'lookup', { what: microsWhat(n), requests: n, query: { micros: Math.min(10, n) } });
+}
 
 // food is updated in place. onDone(result) runs after a successful call. Returns { el } with a button and a status line.
 export function refreshControl(food, onDone) {
@@ -10,9 +25,10 @@ export function refreshControl(food, onDone) {
   async function run() {
     btn.disabled = true;
     try {
-      const res = await api.refreshNutrients(food.id);
+      const ai = await claudeGo(1);
+      const res = await api.refreshNutrients(food.id, ai.go);
       Object.assign(food, res.food);
-      show(status, message(res.message, res.filled.length ? 'ok' : ''));
+      show(status, message(ai.note ? sentence(res.message) + ' ' + ai.note : res.message, res.filled.length ? 'ok' : ''));
       if (!missingMicros(food).length) btn.hidden = true;
       if (onDone) onDone(res);
     } catch (e) {
@@ -25,13 +41,17 @@ export function refreshControl(food, onDone) {
 
 // Refreshes the foods one after another and stops at a rate limit (429). left is how many more wait after this batch.
 // Returns { checked, filled, failed, left, stopped, checkedIds }. The food that hit the limit is not counted as checked.
-async function refreshBatch(todo, left) {
-  const sum = { checked: 0, filled: 0, failed: 0, left, stopped: false, checkedIds: [] };
+// claude: Full Claude Use was cleared for this batch; it stops for the rest of the batch at the monthly cap, with one note.
+async function refreshBatch(todo, left, claude) {
+  const sum = { checked: 0, filled: 0, failed: 0, left, stopped: false, checkedIds: [], byClaude: 0, note: claude && claude.note };
+  let ask = !!(claude && claude.go);
   for (const food of todo) {
     const id = typeof food === 'object' ? food.id : food;
     try {
-      const res = await api.refreshNutrients(id);
+      const res = await api.refreshNutrients(id, ask);
       sum.filled += res.filled.length;
+      sum.byClaude += (res.claude_filled || []).length;
+      if (res.claude_capped) { ask = false; sum.note = CLAUDE_CAP_NOTE; }
     } catch (e) {
       sum.failed++;
       if (e.status === 429) { sum.stopped = true; sum.left += todo.length - sum.checked; break; }
@@ -52,7 +72,7 @@ export function refreshAllControl(getFoods, reload) {
   async function run() {
     const { todo, left } = refreshTargets(getFoods());
     btn.disabled = true;
-    const sum = await refreshBatch(todo, left);
+    const sum = await refreshBatch(todo, left, await claudeGo(todo.length));
     try { await reload(); } catch (e) { /* the summary below still applies */ }
     show(status, message(bulkSummary(sum), sum.failed ? 'error' : ''));
     btn.disabled = false;
@@ -69,8 +89,8 @@ function scopeState(key) {
   return scopes.get(key);
 }
 
-// Refresh the foods the user has logged. scope names the set ("day:YYYY-MM-DD" or "all"), load() returns { ids } from
-// the server, label is the button text. quiet hides the whole control when nothing needs a refresh (Today).
+// Refresh the foods the user has logged. scope names the set ("day:YYYY-MM-DD" or "all"), load(claude) returns { ids } from
+// the server (claude true: with Full Claude Use, foods only Claude can fill count too), label is the button text. quiet hides the whole control when nothing needs a refresh (Today).
 // onFinish() runs after a batch (Today repaints the day); without it the control updates itself.
 export function refreshLoggedControl({ scope, load, label, quiet, onFinish }) {
   const st = scopeState(scope);
@@ -80,7 +100,7 @@ export function refreshLoggedControl({ scope, load, label, quiet, onFinish }) {
   el.hidden = !!quiet;  // starts hidden when quiet, so a repaint of Today does not shift the page when the control turns out unneeded
   async function paint() {
     try {
-      const plan = pendingPlan((await load()).ids, st.done);
+      const plan = pendingPlan((await load(fullOn())).ids, st.done);
       btn.hidden = !plan.todo.length;
       el.hidden = !!quiet && !plan.total && !st.note;
       if (st.note && Date.now() >= st.note.until) st.note = null;
@@ -94,8 +114,10 @@ export function refreshLoggedControl({ scope, load, label, quiet, onFinish }) {
   async function run() {
     btn.disabled = true;
     try {
-      const plan = pendingPlan((await load()).ids, st.done);
-      const sum = await refreshBatch(plan.todo, plan.left);
+      let plan = pendingPlan((await load(fullOn())).ids, st.done);
+      const ai = await claudeGo(plan.todo.length);
+      if (fullOn() && !ai.go) plan = pendingPlan((await load(false)).ids, st.done);  // without Claude only foods with a source
+      const sum = await refreshBatch(plan.todo, plan.left, ai);
       sum.checkedIds.forEach((id) => st.done.add(id));
       st.note = { text: bulkSummary(sum), kind: sum.failed ? 'error' : '', until: Date.now() + NOTE_MS };
     } catch (e) {

@@ -506,3 +506,14 @@ textarea { font: inherit; color: inherit; width: 100%; min-height: 160px; paddin
 /* Shared recipes: the owner line on cards and on the recipe screen ("Shared by Ann", or "Shared" on my own shared recipe). */
 .owner-line { display: block; color: var(--muted); font-size: .875rem; font-weight: 600; margin: 0 0 4px; }
 .recipe-view > .owner-line { font-size: 1rem; }
+/* Full Claude Use cost estimates (Settings) */
+.cost-table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: .875rem; background: var(--card); border: 1px solid var(--line); border-radius: 10px; }
+.cost-table caption { text-align: left; font-weight: 600; padding: 0 0 4px; }
+.cost-table th, .cost-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+.cost-table td { white-space: nowrap; text-align: right; }
+.cost-table thead th { color: var(--muted); font-weight: 400; }
+.cost-table thead th:last-child { text-align: right; }
+.cost-table tbody th { font-weight: 400; }
+.cost-table tr:last-child th, .cost-table tr:last-child td { border-bottom: 0; }
+.full-claude .sub { margin-bottom: 4px; }
+.describe { margin-top: 16px; }

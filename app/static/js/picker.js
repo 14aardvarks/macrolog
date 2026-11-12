@@ -5,7 +5,7 @@ import { microGrid } from './micros.js';
 import { refreshControl } from './refresh.js';
 import {
   MEALS, MEAL_LABELS, canRefresh, parseAmount, fmtNum, fmtAmount, indexFromScroll, debounce, guessMeal,
-  initialPick, startPreset, convertAmount, gramsFor, SERVING, PCT, amountText, amountLabel, amountValues, withValue, rowAmountText, qtyText, amountMemo, roundTo,
+  initialPick, startPreset, convertAmount, gramsFor, SERVING, PCT, amountText, amountLabel, amountValues, withValue, rowAmountText, qtyText, amountMemo, roundTo, aiMicrosText,
 } from './util.js';
 
 const ROW = 44;
@@ -121,7 +121,7 @@ export async function renderPicker(root, params, ctx) {
     h('div', { class: 'kcal-big' }, kcal, ' kcal'),
     h('div', { class: 'macros' }, macroCell('Carbs g', 'pv-carbs'), macroCell('Protein g', 'pv-protein'),
       macroCell('Fat g', 'pv-fat'), macroCell('Fiber g', 'pv-fiber')),
-    showBar ? mbar : null, micros.el, canRefresh(food) ? refreshControl(food, () => runPreview()).el : null, h('div', { class: 'badge-slot' }, estBadge),
+    showBar ? mbar : null, micros.el, aiMicrosText(food) ? h('p', { class: 'sub' }, aiMicrosText(food)) : null, canRefresh(food) ? refreshControl(food, () => runPreview()).el : null, h('div', { class: 'badge-slot' }, estBadge),
     adjust != null ? null : h('label', { class: 'field' }, h('span', null, 'Meal'), mealSel),
     status, logBtn,
     edit ? h('button', { class: 'btn danger', type: 'button', onclick: remove }, 'Remove Entry') : null));

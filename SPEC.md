@@ -199,7 +199,7 @@ POST /api/foods/{id}/refresh-nutrients -> {"food","filled":[nutrient...],"messag
         # changes name, calories or macros, so it works on foods already in logs or recipes. Empty filled means the source had no more data.
         # 400 no source id or barcode, 403 custom or ai food of someone else (off and fdc foods are shared), 404, 409 serving cannot be compared,
         # 429 source rate limit (USDA included), 502 source unreachable. lookup.refresh(food) and lookup.refresh_kind(food) do the network part.
-GET  /api/foods/missing-nutrients?date=YYYY-MM-DD -> {"ids":[food id...],"total"}
+GET  /api/foods/missing-nutrients?date=YYYY-MM-DD&claude=1 -> {"ids":[food id...],"total"}   # claude=1: see Full Claude Use
         # my logged foods (that day, or ever without date) with a null micronutrient, a lookup source (lookup.refresh_kind) and that I may refresh
         # (custom or ai foods only when I created them); distinct, oldest food first; 400 on a bad date. The client refreshes them one by one.
 DELETE /api/foods/{id} -> {"deleted": id, "everyone": bool}   # soft delete, never a 409: any food, including one in a log entry or a recipe
@@ -257,7 +257,8 @@ DELETE /api/meals/{id}/uncounted -> meal   # Save Without Them: removes every un
 PATCH /api/meals/{id} also takes "servings" (null = 1), "yield" ({"amount","unit"} or null) and "steps" (any time); "items" replaces only the counted rows (matched, not skipped, confirmed); the other rows stay after them as reference lines
 GET/PUT /api/goals   {"kcal","carb_pct","protein_pct","fat_pct"}  pcts total 100. Default 3000 and 50/30/20 (carbs/protein/fat).
         targets: carbs g = kcal*pct/4, protein same, fat g = kcal*pct/9. Goals are per user.
-GET/PUT /api/settings {"start_screen": "today"|"scan"|"search"|"ai", "default_meal": ...}   # per user, validated
+GET/PUT /api/settings {"start_screen": "today"|"scan"|"search"|"ai", "default_meal": ..., "use_last", "confirm_ai", "full_claude": bool, "amount_format"}   # per user, validated
+        # full_claude is Full Claude Use (column settings.full_claude INTEGER NOT NULL DEFAULT 0, added in place; true or false only, else 400). See "Full Claude Use" below
 GET/PUT /api/settings/display {"show_macros","show_micros","show_split","show_macro_bar","show_table","group_recipes","micros_open": bool, "micros_shown": [nutrient...], "today_view": "list"|"table", "search_source": "all"|"off"|"fdc"|"ai", "auto_match": "search"|"claude"|"search_claude"|"off", "recipe_owner": "mine"|"shared"|"all"}
         # per user, stored in the settings table (micros_hidden comma list). PUT takes any subset, booleans only (today_view is the string list or table), 400 otherwise.
         # today_view is the Today tab's view, column settings.today_view TEXT NOT NULL DEFAULT 'list', added in place by core.init.
@@ -331,7 +332,8 @@ POST /api/recipes/{meal_id}/match {"item_ids": [1..15 ids of my recipe]} -> {"pr
      # (Accept then sends check, so the row becomes Check Amount)
      # candidates per row: up to 3 local foods, 3 USDA and 3 Open Food Facts results; only a chosen remote candidate is saved.
      # The client applies a proposal only on Accept (POST /api/foods first for an estimate, then PATCH the item).
-GET /api/ai/status?recipe_chars=N | recipe_images=N | match_rows=N   # cost estimates for those requests
+GET /api/ai/status?recipe_chars=N | recipe_images=N | match_rows=N | micros=N (1..10)   # cost estimates for those requests
+     # every status also carries action_costs (Full Claude Use table, see below)
 ```
 A URL source is not built (no server side fetching). It would be one more import route here feeding the text path.
 
@@ -680,3 +682,48 @@ POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log i
 - The URL waiting for sign-in is kept in sessionStorage (`macrolog-route`) so single sign-on, which leaves the page, comes back to it. Sign Out
   clears the URL and that key, so the next sign-in opens the Start Screen.
 - Today keeps its place (v51) and the Update Available reload are unchanged; a reload after an update reopens the same screen.
+
+## Full Claude Use (v59, issue #26)
+
+- Per user setting `full_claude` in GET/PUT /api/settings (settings.full_claude, default off, booleans only). Settings, Claude has a checkbox
+  Full Claude Use right above the key section (claudekey.js `renderFullClaude`, saved at once) with the hint "Off by default. ..." (`FULL_CLAUDE_HELP`)
+  and a cost table. Confirm before using Claude stays a separate setting.
+- When on, Claude runs on its own in four places. Each step needs the admin switch named and a usable key, else it is skipped silently; each
+  uses the normal reservation and the monthly cap (never exceeded: at the cap nothing is sent and one quiet note says "Monthly Claude limit
+  reached, so Claude was not used.", util.js `CLAUDE_CAP_NOTE`); with Confirm before using Claude on the usual notice with the estimated cost
+  comes first, with it off it runs quietly (util.js `autoClaudePlan` gives off, cap, confirm or run; notice.js `autoClaude`).
+  1. Auto-Match After Import (ai_allow_recipe): util.js `effectiveAutoMatch` turns Search (or an unset or bad value) into Search Then Claude;
+     an explicit Claude, Search Then Claude or Off is never changed. Without Claude the forced choice runs Search with no note.
+  2. A search on Add with no result (remote search, text up to 200 characters, ai_allow_lookup) asks POST /api/ai/lookup for one estimate,
+     shown with the Claude badge, Estimate and "Nothing was found in the databases, so this is a Claude Estimate." plus Enter Manually; kept for
+     the session (state.fallback) so Back asks nothing again. A barcode Not Found screen cannot describe the food, so it offers a typed lookup
+     instead ("Claude Estimate", Describe the food for Claude, Ask Claude for an Estimate); the draft keeps the barcode.
+  3. Refresh Nutrients (ai_allow_lookup): POST /api/foods/{id}/refresh-nutrients?claude=1 first fills from the source as before, then, when
+     the setting, switch and key allow it, one Claude request (ai.fill_micros, tool record_micros, max 400 tokens, the food's name, brand,
+     serving and macros in <food> tags as data) estimates the still blank micronutrients. Only null values are written, never an existing one;
+     values out of range or not asked are dropped. They are marked in foods.ai_micros (comma list, added in place, returned as the list
+     `ai_micros`; editing a value drops its mark) and named "Claude estimated ... These are estimates." in the picker and the food form.
+     The answer adds `claude_filled`, `claude_note` (cap or failure, never an error) and `claude_capped`; `filled` includes both.
+     Without a source (no id or barcode) and with Claude allowed the food is still refreshed by Claude, and
+     GET /api/foods/missing-nutrients?claude=1 then lists such foods too. Today's and Settings' bulk buttons ask once per batch
+     ("Uses up to 10 of your ... requests", status micros=N) and stop asking Claude for the rest of a batch at the cap.
+     A source rate limit or outage still answers 429 or 502 as before. Off, the claude flag is ignored.
+  4. Import Recipe, Paste Text, Read With Claude (ai_allow_recipe) sends at once without the confirm notice. The line under the
+     buttons shows the cost beforehand ("Up to about 0.11 cents per import ... N of M Claude requests left this month."); at the cap the
+     button is disabled with the cap note. Photos keep the confirm.
+- Cost estimates (GET /api/ai/status `action_costs`, ai.action_costs, from the same token figures as the cost notice, conservative: text at
+  its longest typical size, outputs at the notice's upper estimate). Prices are the user's active prices when set (personal prices on a
+  personal key, else the admin prices), otherwise the Haiku 5.5 sample prices 0.10 USD input and 0.50 USD output per million tokens
+  (`sample: true`, said under the table). These are estimates, not bills; the real cost is in Settings from ai_usage.
+
+  | Action (estimates) | Tokens in / out | Sample prices |
+  |---|---|---|
+  | Label photo (1 photo) | 2300 / 400 | about 0.04 cents |
+  | Claude lookup (typed, 200 characters) | 700 / 400 | about 0.03 cents |
+  | Recipe import from text (8000 characters) | 2900 / 1700 | about 0.11 cents |
+  | Claude match, 15 ingredients | 7650 / 2400 | about 0.2 cents |
+  | Missing nutrients, one food | 600 / 150 | about 0.01 cents |
+  | Heavy month: 30 lookups, 30 nutrient fills, 10 label photos, 8 recipe imports, 8 matches (86 requests) | | about 0.04 USD |
+
+  The issue's older figures (0.3 to 2 cents per action, about 1 USD a month) assumed 1 and 5 USD per million tokens; at those prices the
+  same heavy month is about 0.41 USD.

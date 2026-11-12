@@ -163,6 +163,18 @@ export const GUIDE = [
     'Requests are capped each month for the whole household.',
     'You can turn the question off in Settings.',
   ] },
+  { heading: 'Full Claude Use', bullets: [
+    'Settings, Claude, Full Claude Use lets Claude help on its own. It is off by default.',
+    'Auto-Match After Import set to Search then runs as Search Then Claude.',
+    'A search with no result asks Claude, marked Claude Estimate.',
+    'A barcode not found offers a typed Claude estimate.',
+    'Refresh Nutrients lets Claude fill blanks the source left. It never overwrites values.',
+    'Read With Claude on pasted recipe text sends without asking.',
+    'Each step needs a key and the feature allowed by the administrator.',
+    'The monthly limit always applies. At the limit Claude stops with a short note.',
+    'Confirm before using Claude still shows the cost first when it is on.',
+    'Its description lists the estimated cost per action and for a heavy month.',
+  ] },
   { heading: 'Your Claude Key', bullets: [
     'In Settings you can add your own Claude key and monthly limit.',
     'It bills your Anthropic account and is used instead of the shared key.',
