@@ -1,4 +1,4 @@
-"""Imported recipes: unmatched ingredients, matching row by row, skipping, totals and the loggability rule."""
+"""Imported recipes: unmatched ingredients, matching row by row, skipping, totals and partial recipes that log."""
 import sqlite3
 
 import pytest
@@ -41,12 +41,13 @@ def test_import_validation(a, body):
     assert a.post("/api/meals/import", json=body).status_code == 400
 
 
-def test_match_skip_totals_and_logging_rule(a, b):
+def test_match_skip_totals_and_partial_logging(a, b):
     m = imported(a)
     bread, pb = food(a), food(a, PB)
     ids = [i["id"] for i in m["items"]]
     url = f"/api/meals/{m['id']}"
-    assert a.post(url + "/log", json={}).status_code == 409
+    r = a.post(url + "/log", json={})
+    assert r.status_code == 400 and r.json()["detail"] == "Match at least one ingredient to log this recipe."
     r = a.patch(f"{url}/items/{ids[0]}", json={"food_id": bread["id"], "amount": 2, "unit": "slice"}).json()
     assert (r["matched"], r["needed"], r["kcal"]) == (1, 3, 180)
     assert r["items"][0]["food"]["name"] == "Bread" and r["items"][0]["src"]["text"] == "2 slices bread"
@@ -60,26 +61,27 @@ def test_match_skip_totals_and_logging_rule(a, b):
     r = a.patch(f"{url}/items/{ids[1]}", json={"food_id": pb["id"], "amount": 4, "unit": "tbsp"}).json()
     assert (r["matched"], r["complete"], r["kcal"]) == (2, False, 560)
     assert r["per_serving"]["kcal"] == 280 and r["totals"]["fiber"] == 10
-    assert a.post(url + "/log", json={}).status_code == 409  # salt is still open
+    assert a.post(url + "/log", json={}).status_code == 200  # salt is still open, and that is fine
     r = a.patch(f"{url}/items/{ids[2]}", json={"skipped": True}).json()
     assert (r["matched"], r["needed"], r["skipped"], r["complete"]) == (2, 2, 1, True)
     logged = a.post(url + "/log", json={"meal": "lunch"}).json()["entries"]
     assert [e["name"] for e in logged] == ["Bread", "Peanut Butter"]
-    # unmatch makes it unloggable again; matching a skipped row un-skips it
+    # unmatching one of two matched rows still logs the other; matching a skipped row un-skips it
     r = a.patch(f"{url}/items/{ids[0]}", json={"food_id": None}).json()
     assert r["items"][0]["food"] is None and r["items"][0]["amount"] is None and not r["complete"]
     r = a.patch(f"{url}/items/{ids[2]}", json={"food_id": bread["id"], "amount": 1, "unit": "slice"}).json()
     assert r["items"][2]["skipped"] is False
 
 
-def test_all_skipped_cannot_be_logged_and_items_replace_waits(a):
+def test_all_skipped_cannot_be_logged_and_items_replace_keeps_reference_lines(a):
     m = imported(a, rows=[{"name": "water"}])
     url = f"/api/meals/{m['id']}"
     a.patch(f"{url}/items/{m['items'][0]['id']}", json={"skipped": True})
-    assert a.post(url + "/log", json={}).status_code == 409
+    assert a.post(url + "/log", json={}).status_code == 400
     f = food(a)
     r = a.patch(url, json={"items": [{"food_id": f["id"], "amount": 1, "unit": "slice"}]})
-    assert r.status_code == 409
+    assert r.status_code == 200
+    assert [(i["src"]["name"] if i["src"] else None, i["skipped"], i["food_id"]) for i in r.json()["items"]] == [(None, False, f["id"]), ("water", True, None)]
     assert a.patch(url, json={"servings": 4}).json()["servings"] == 4
     assert a.patch(url, json={"servings": None}).json()["servings"] == 1
     assert a.patch(url, json={"servings": -1}).status_code == 400
@@ -182,8 +184,7 @@ def test_check_amount_rows_count_for_nothing_until_confirmed(a):
     row = r["items"][1]
     assert row["check"] is True and row["matched"] is False and row["food"]["name"] == "Peanut Butter" and row["kcal"] == 190
     assert (r["matched"], r["needed"], r["checks"], r["complete"], r["kcal"]) == (1, 2, 1, False, 180)
-    assert a.post(url + "/log", json={}).status_code == 409
-    assert a.patch(url, json={"items": [{"food_id": bread["id"], "amount": 1, "unit": "slice"}]}).status_code == 409
+    assert a.post(url + "/log", json={}).status_code == 200  # the unconfirmed row is simply not logged
     # confirming is a plain match without check
     r = a.patch(f"{url}/items/{ids[1]}", json={"food_id": pb["id"], "amount": 4, "unit": "tbsp"}).json()
     assert (r["items"][1]["check"], r["matched"], r["checks"], r["complete"], r["kcal"]) == (False, 2, 0, True, 560)
@@ -303,3 +304,88 @@ def test_a_removed_row_can_be_put_back_where_it_was(a):
     a.delete(f"{url}/{ids[0]}")
     r = a.post(url, json={"food_id": bread["id"], "amount": 2, "unit": "slice", "position": 0}).json()
     assert [i["food_id"] for i in r["items"]] == [bread["id"], pb["id"]] and r["kcal"] == 560 and r["complete"]
+
+
+def test_partial_recipe_logs_only_matched_rows(a):
+    m = imported(a, rows=[*ROWS, {"name": "pepper"}, {"name": "cumin"}])
+    bread, pb = food(a), food(a, PB)
+    ids = [i["id"] for i in m["items"]]
+    url = f"/api/meals/{m['id']}"
+    a.patch(f"{url}/items/{ids[0]}", json={"food_id": bread["id"], "amount": 2, "unit": "slice"})
+    a.patch(f"{url}/items/{ids[1]}", json={"food_id": pb["id"], "amount": 2, "unit": "tbsp", "check": True})  # never confirmed
+    a.patch(f"{url}/items/{ids[2]}", json={"skipped": True})
+    r = a.get(url).json()
+    assert (r["matched"], r["needed"], r["skipped"], r["checks"], r["complete"]) == (1, 4, 1, 1, False)
+    assert r["kcal"] == 180 and r["totals"]["fiber"] == 6 and r["per_serving"]["kcal"] == 90
+    logged = a.post(url + "/log", json={"meal": "lunch"}).json()["entries"]
+    assert [e["name"] for e in logged] == ["Bread"] and logged[0]["kcal"] == 180
+    # a share of the recipe scales the matched rows only
+    half = a.post(url + "/log", json={"amount": 1, "unit": "serving"}).json()["entries"]
+    assert [e["name"] for e in half] == ["Bread"] and half[0]["kcal"] == 90
+    # the checklist can still replace amounts; unmatched, skipped and check lines survive with no nutrition
+    r = a.post(url + "/log", json={"items": [{"food_id": bread["id"], "amount": 1, "unit": "slice"}]})
+    assert r.status_code == 200 and r.json()["entries"][0]["kcal"] == 90
+    r = a.get(url).json()
+    assert [i["src"]["text"] for i in r["items"]] == ["2 slices bread", "4 tbsp peanut butter, smooth", "salt, to taste", "pepper", "cumin"]
+    assert [i["matched"] for i in r["items"]] == [True, False, False, False, False]
+    assert r["items"][3]["food"] is None and r["items"][3]["kcal"] is None and r["kcal"] == 180
+    # editing the matched row's amount leaves the reference lines alone
+    r = a.patch(url, json={"items": [{"food_id": bread["id"], "amount": 4, "unit": "slice"}]}).json()
+    assert [i["src"]["text"] if i["src"] else None for i in r["items"]] == [None, "4 tbsp peanut butter, smooth", "salt, to taste", "pepper", "cumin"]
+    assert r["kcal"] == 360
+
+
+def test_unmatched_rows_change_nothing_about_totals(a):
+    full = imported(a, rows=ROWS[:1])
+    part = imported(a, rows=[*ROWS[:1], {"name": "water"}, {"name": "x"}])
+    bread = food(a)
+    for m in (full, part):
+        a.patch(f"/api/meals/{m['id']}/items/{m['items'][0]['id']}", json={"food_id": bread["id"], "amount": 2, "unit": "slice"})
+    f, p = (a.get(f"/api/meals/{m['id']}").json() for m in (full, part))
+    assert f["totals"] == p["totals"] and f["per_serving"] == p["per_serving"] and not p["complete"]
+    assert len(a.post(f"/api/meals/{part['id']}/log", json={}).json()["entries"]) == 1
+
+
+def test_save_without_them_removes_uncounted_rows_and_keep_leaves_them(a):
+    rows = [*ROWS, {"name": "pepper"}]
+    kept, dropped = imported(a, rows=rows), imported(a, rows=rows)
+    bread, pb = food(a), food(a, PB)
+    for m in (kept, dropped):
+        u = f"/api/meals/{m['id']}"
+        ids = [i["id"] for i in m["items"]]
+        a.patch(f"{u}/items/{ids[0]}", json={"food_id": bread["id"], "amount": 2, "unit": "slice"})
+        a.patch(f"{u}/items/{ids[1]}", json={"food_id": pb["id"], "amount": 2, "unit": "tbsp", "check": True})
+        a.patch(f"{u}/items/{ids[2]}", json={"skipped": True})
+    r = a.delete(f"/api/meals/{dropped['id']}/uncounted")
+    assert r.status_code == 200
+    d = r.json()
+    assert [i["src"]["name"] for i in d["items"]] == ["bread"] and (d["matched"], d["needed"], d["complete"]) == (1, 1, True)
+    k = a.get(f"/api/meals/{kept['id']}").json()
+    assert len(k["items"]) == 4 and (k["matched"], k["needed"], k["complete"]) == (1, 3, False)
+    assert k["totals"] == d["totals"] and k["per_serving"] == d["per_serving"]
+    for m in (kept, dropped):
+        e = a.post(f"/api/meals/{m['id']}/log", json={"meal": "lunch"}).json()["entries"]
+        assert [x["name"] for x in e] == ["Bread"] and e[0]["kcal"] == 180
+    assert a.delete(f"/api/meals/{dropped['id']}/uncounted").status_code == 200  # nothing left to remove
+
+
+def test_save_without_them_needs_one_matched_row(a, b):
+    m = imported(a)
+    assert a.delete(f"/api/meals/{m['id']}/uncounted").status_code == 400
+    assert len(a.get(f"/api/meals/{m['id']}").json()["items"]) == 3
+    bread = food(a)
+    a.patch(f"/api/meals/{m['id']}/items/{m['items'][0]['id']}", json={"food_id": bread["id"], "amount": 1, "unit": "slice", "check": True})
+    assert a.delete(f"/api/meals/{m['id']}/uncounted").status_code == 400  # an unconfirmed Check Amount row does not count
+    assert b.delete(f"/api/meals/{m['id']}/uncounted").status_code == 404
+
+
+def test_estimated_unit_row_counts_and_is_flagged_not_checked(a):
+    m = imported(a, rows=[{"text": "1 cup oats", "amount": 1, "unit": "cup", "name": "oats"}])
+    oats = a.post("/api/foods", json={"name": "Oats", "serving_amount": 40, "serving_unit": "g", "kcal": 150, "carbs": 27, "protein": 5, "fat": 3}).json()
+    pick = core.units.match_amount(oats, 1, "cup")
+    assert pick == {"amount": 1, "unit": "cup", "check": False, "estimated": True}
+    r = a.patch(f"/api/meals/{m['id']}/items/{m['items'][0]['id']}", json={"food_id": oats["id"], "amount": pick["amount"], "unit": pick["unit"]}).json()
+    row = r["items"][0]
+    assert row["estimated"] is True and row["check"] is False and row["matched"] is True and r["complete"]
+    assert r["kcal"] == round(150 * 236.588 / 40, 1)  # counted with the picker's 1 g per ml math
+    assert len(a.post(f"/api/meals/{m['id']}/log", json={}).json()["entries"]) == 1

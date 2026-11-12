@@ -21,7 +21,7 @@ import { renderSaved } from './saved.js';
 import { renderRecipe } from './recipe.js';
 import { renderRecipes, renderRecipeView } from './recipes.js';
 import { renderImport, renderReview, renderMatch } from './recipeflow.js';
-import { recipeSubText, portionUnits, portionFraction, portionItems, portionNote, portionAmount } from './recipeimport.js';
+import { recipeSubText, notCounted, notCountedText, portionUnits, portionFraction, portionItems, portionNote, portionAmount } from './recipeimport.js';
 import { renderClaudeSection, renderSignIn } from './claudekey.js';
 import { refreshLoggedControl } from './refresh.js';
 import { startUpdates } from './update.js';
@@ -560,7 +560,7 @@ async function recipesList(meal) {
       if (!window.confirm('Delete the recipe "' + m.name + '"?')) return;
       try { await api.deleteMeal(m.id); await go('add', {}, true); } catch (e) { del.parentNode.appendChild(message(e.message, 'error')); }
     } }, '×');
-    const open = m.complete ? () => go('meal', { mealId: m.id, meal: chosenMeal() }) : () => go('match', { mealId: m.id });  // partial: resume matching
+    const open = () => go('meal', { mealId: m.id, meal: chosenMeal() });
     return foodRow(m.name, recipeSubText(m, fmtNum(m.kcal, 0)), open, del);
   })));
 }
@@ -585,7 +585,6 @@ async function lookupScreen(root, params) {
 async function mealScreen(root, params) {
   const found = (await api.meals()).meals.find((m) => m.id === params.mealId);
   if (!found) throw new Error('Recipe not found');
-  if (!found.complete) { await go('match', { mealId: found.id }, true); return; }  // not loggable until matched
   const units = portionUnits(found);
   const draft = draftFits(state.draft, found.id, state.depth, portionItems(found, 1).length) ? state.draft : null;
   state.draft = null;
@@ -655,6 +654,7 @@ async function mealScreen(root, params) {
     h('div', { class: 'grid2 recipe-log' }, amountBox, h('label', { class: 'field' }, h('span', null, 'Of the recipe'), unitSel)),
     note,
     h('ul', { class: 'list' }, rows.map((r) => r.el)),
+    notCounted(found) ? h('p', { class: 'sub not-counted' }, notCountedText(notCounted(found))) : null,
     h('label', { class: 'field' }, h('span', null, 'Meal'), mealSel), status,
     h('button', { class: 'btn primary', type: 'button', onclick: log }, 'Log')));
 }

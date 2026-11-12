@@ -180,11 +180,13 @@ PLAIN_COUNTS = ("piece", "each", "whole", "unit", "item", "large", "medium", "sm
 def match_amount(food, amount, unit):
     """Amount and unit for a recipe line ("1 cup", "2 tbsp", "2" eggs) matched to food, without asking the user.
 
-    Returns {"amount", "unit", "check"} or None when the line has no amount (salt to taste).
-    - The line's own unit when the food reaches it without an estimate: same unit, weight to weight, volume to volume,
-      and weight to volume through the food's own density (serving_g and serving_ml) or label count word.
+    Returns {"amount", "unit", "check"} (plus "estimated": True when only the 1 g per ml guess reaches the unit) or None when
+    the line has no amount (salt to taste).
+    - The line's own unit when the food reaches it at all, as the picker offers it: same unit, weight to weight, volume to
+      volume, and weight to volume through the food's own density (serving_g and serving_ml) or label count word. A unit
+      reachable only through the 1 g per ml guess is used too, with "estimated": True (the same math the picker uses).
     - A plain count (no unit, piece, each) uses the label's count word when it has one, else label servings.
-    - Anything else (a cup of a food known only by weight, a can of something sold by the cup) cannot be worked out:
+    - Anything else (a can of something sold by the cup, a pinch of a food sold by the tablespoon) is unreachable:
       one label serving with check True, so the user confirms the amount."""
     a = _pos(amount)
     if a is None:
@@ -196,8 +198,8 @@ def match_amount(food, amount, unit):
         u = None
     if u is not None and u not in PLAIN_COUNTS:
         for entry in available_units(food):
-            if entry["unit"] == u and not entry["estimated"]:
-                return {"amount": a, "unit": u, "check": False}
+            if entry["unit"] == u:
+                return {"amount": a, "unit": u, "check": False, **({"estimated": True} if entry["estimated"] else {})}
     elif label_unit not in MASS and label_unit not in VOLUME and label_unit not in PSEUDO:
         return {"amount": a, "unit": label_unit, "check": False}
     else:

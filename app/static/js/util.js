@@ -471,19 +471,20 @@ const PLAIN_COUNTS = ['piece', 'each', 'whole', 'unit', 'item', 'large', 'medium
 
 // Amount and unit for a recipe line matched to a food without the picker. Mirrors units.match_amount on the server.
 // units: food.units from GET /api/foods/{id} (first entry is the label unit, estimated marks a 1 g per ml guess).
-// Returns { amount, unit, check } or null when the line has no amount (salt to taste).
-// - The line's own unit when the food reaches it without an estimate: same unit, weight to weight (g, oz, lb, kg),
-//   volume to volume (ml, l, tsp, tbsp, cup, fl oz), and between the two through the food's own density.
+// Returns { amount, unit, check } (plus estimated: true when only the 1 g per ml guess reaches the unit) or null when the line
+// has no amount (salt to taste).
+// - The line's own unit when the food reaches it at all, as the picker offers it (an estimated one is flagged estimated): same unit, weight to weight (g, oz, lb, kg),
+//   volume to volume (ml, l, tsp, tbsp, cup, fl oz), and between the two through the food's own density or the 1 g per ml guess.
 // - A plain count (no unit, piece, each) uses the label's count word when it has one ("2 eggs" -> 2 egg), else servings.
-// - Otherwise it cannot be worked out: one label serving with check true, so the row asks the user to confirm.
+// - Otherwise the unit is unreachable: one label serving with check true, so the row asks the user to confirm.
 export function matchAmount(units, amount, unit) {
   const a = typeof amount === 'number' ? amount : parseAmount(amount);
   if (a == null || !(a > 0) || !units || !units.length) return null;
   const label = units[0];
   const u = canonUnit(unit);
   if (u && PLAIN_COUNTS.indexOf(u) < 0) {
-    const hit = units.find((x) => x.unit === u && !x.estimated);
-    return hit ? { amount: a, unit: u, check: false } : { amount: label.default_amount, unit: label.unit, check: true };
+    const hit = units.find((x) => x.unit === u);
+    return hit ? { amount: a, unit: u, check: false, ...(hit.estimated ? { estimated: true } : {}) } : { amount: label.default_amount, unit: label.unit, check: true };
   }
   const count = MASS_UNITS.indexOf(label.unit) < 0 && VOLUME_UNITS.indexOf(label.unit) < 0 && label.unit !== SERVING && label.unit !== PCT;
   return { amount: a, unit: count ? label.unit : SERVING, check: false };

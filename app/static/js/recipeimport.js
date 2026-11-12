@@ -146,7 +146,7 @@ export function matchCountText(meal) {
   return meal.skipped ? base + ', ' + meal.skipped + ' skipped' : base;
 }
 
-// What a recipe row on Add or Saved says under its name.
+// What a recipe row on Add, Saved or the Recipes tab says under its name. A partial recipe keeps its "3 of 8 matched" badge.
 export function recipeSubText(meal, kcalText) {
   if (!meal.complete) return matchCountText(meal);
   const n = meal.needed != null ? meal.needed : meal.items.length;
@@ -298,12 +298,26 @@ export function changedSince(base, meal) {
   return r.items.length > 0 || r.meal != null || r.remove.length > 0 || r.add.length > 0;
 }
 
-// Next moves to the next unmatched or Check Amount row. When no other row is left it becomes Done (save and leave).
-export function nextStep(items, current) {
-  const open = items.map((it, i) => [matchState(it), i]).filter(([s, i]) => (s === 'unmatched' || s === 'check') && i !== current);
-  if (!open.length) return { done: true, index: -1 };
-  return { done: false, index: nextUnmatched(items, current < 0 ? null : current) };
+// Rows that do not count: unmatched, skipped and Check Amount rows (the server counts them for nothing).
+export const notCounted = (meal) => Math.max(0, (meal.items || []).length - (meal.matched || 0));
+
+// "5 ingredients are not matched." for the Save Recipe choice, "5 ingredients are not counted." as the quiet note when logging.
+const ingredientsText = (n, what) => n + (n === 1 ? ' ingredient is not ' : ' ingredients are not ') + what;
+export const notMatchedText = (n) => sentence(ingredientsText(n, 'matched.'));
+export const notCountedText = (n) => sentence(ingredientsText(n, 'counted.'));
+
+// Save on Match Ingredients: what has to be asked. { ask: false } when every row is matched, else { ask: true, n }.
+export function saveChoice(meal) {
+  const n = notCounted(meal);
+  return n > 0 ? { ask: true, n } : { ask: false, n: 0 };
 }
+
+// Save Without Them needs at least one matched row to leave a recipe.
+export const canSaveWithout = (meal) => (meal.matched || 0) > 0;
+export const SAVE_WITHOUT_NONE = 'A recipe needs at least one ingredient. Match one, or keep the others to finish later.';
+
+// Pre-ticked rows when the page opens: every unmatched row.
+export const unmatchedIds = (items) => items.filter((i) => matchState(i) === 'unmatched').map((i) => i.id);
 
 // Claude suggestions that Accept All would apply: a food was proposed and the row is not skipped.
 export function pendingProposals(items, props) {
@@ -311,9 +325,6 @@ export function pendingProposals(items, props) {
 }
 
 export function acceptAllText(n) { return 'Accept ' + n + (n === 1 ? ' Suggested Match' : ' Suggested Matches'); }
-
-// Rows Skip All marks skipped: the unmatched ones (Check Amount rows already have a food).
-export function skipAllIds(items) { return items.filter((it) => matchState(it) === 'unmatched').map((it) => it.id); }
 
 // ---------- serving size and logging part of a recipe ----------
 
@@ -354,7 +365,7 @@ export function portionFraction(meal, amount, unit) {
 
 // Matched, not skipped rows scaled to a share of the whole recipe, for the log checklist.
 export function portionItems(meal, fraction) {
-  return (meal.items || []).filter((it) => it.food && !it.skipped && it.food_id != null)
+  return (meal.items || []).filter((it) => it.food && !it.skipped && !it.check && it.food_id != null)
     .map((it) => ({ ...it, amount: Math.round(it.amount * fraction * 10000) / 10000 }));
 }
 

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  matchSnapshot, restoreBody, changedSince, nextStep, pendingProposals, acceptAllText, skipAllIds, servingSizeBody, yieldText,
+  matchSnapshot, restoreBody, changedSince, nextUnmatched, notCounted, notMatchedText, notCountedText, saveChoice, canSaveWithout, unmatchedIds, pendingProposals, acceptAllText, servingSizeBody, yieldText,
   portionUnits, portionFraction, portionItems, portionNote, portionAmount, photoPick, PHOTOS_TEXT, MAX_PHOTOS,
 } from '../../app/static/js/recipeimport.js';
 import { setAmountFormat } from '../../app/static/js/util.js';
@@ -34,14 +34,28 @@ test('the snapshot is a copy, and a Check Amount row restores with check', () =>
   assert.deepEqual(restoreBody(base, m), { remove: [], add: [], items: [{ id: 1, food_id: 9, amount: 2, unit: 'cup', check: true, skipped: false }], meal: { yield: { amount: 1, unit: 'l' } } });
 });
 
-test('nextStep moves to the next open row and is Done on the last one', () => {
-  const items = [ok(1), un(2), ok(3, { check: true }), un(4, ), ok(5)];
-  items[3].skipped = true;
-  assert.deepEqual(nextStep(items, -1), { done: false, index: 1 });
-  assert.deepEqual(nextStep(items, 1), { done: false, index: 2 });
-  assert.deepEqual(nextStep(items, 2), { done: false, index: 1 });
-  assert.deepEqual(nextStep([ok(1), un(2)], 1), { done: true, index: -1 });
-  assert.deepEqual(nextStep([ok(1), ok(2)], -1), { done: true, index: -1 });
+test('nextUnmatched wraps round and finds unmatched and Check Amount rows', () => {
+  const items = [ok(1), un(2), ok(3, { check: true }), { ...un(4), skipped: true }, ok(5)];
+  assert.equal(nextUnmatched(items, -1), 1);
+  assert.equal(nextUnmatched(items, 1), 2);
+  assert.equal(nextUnmatched(items, 2), 1);
+  assert.equal(nextUnmatched([ok(1), ok(2)], -1), -1);
+});
+
+test('Save asks only while rows are not matched, and the texts are sentences', () => {
+  const m = meal([ok(1), un(2), { ...un(3), skipped: true }, ok(4, { check: true })], { matched: 1 });
+  assert.equal(notCounted(m), 3);
+  assert.deepEqual(saveChoice(m), { ask: true, n: 3 });
+  assert.deepEqual(saveChoice(meal([ok(1), ok(2)], { matched: 2 })), { ask: false, n: 0 });
+  assert.equal(notMatchedText(3), '3 ingredients are not matched.');
+  assert.equal(notMatchedText(1), '1 ingredient is not matched.');
+  assert.equal(notCountedText(5), '5 ingredients are not counted.');
+  assert.equal(canSaveWithout(m), true);
+  assert.equal(canSaveWithout(meal([un(1)], { matched: 0 })), false);
+});
+
+test('only unmatched rows are pre-ticked', () => {
+  assert.deepEqual(unmatchedIds([un(1), ok(2), ok(3, { check: true }), { ...un(4), skipped: true }, un(5)]), [1, 5]);
 });
 
 test('Accept All counts proposals with a food on rows that are not skipped', () => {
@@ -50,10 +64,6 @@ test('Accept All counts proposals with a food on rows that are not skipped', () 
   assert.deepEqual(pendingProposals(items, props).map((x) => x.item.id), [1, 4]);
   assert.equal(acceptAllText(6), 'Accept 6 Suggested Matches');
   assert.equal(acceptAllText(1), 'Accept 1 Suggested Match');
-});
-
-test('Skip All takes only unmatched rows', () => {
-  assert.deepEqual(skipAllIds([un(1), ok(2), ok(3, { check: true }), { ...un(4), skipped: true }, un(5)]), [1, 5]);
 });
 
 test('servingSizeBody validates servings and the optional yield', () => {
@@ -76,7 +86,7 @@ test('yieldText', () => {
 const PORTIONS = [{ unit: 'serving', label: 'servings', whole: 4 }, { unit: 'pct', label: '% of recipe', whole: 100 },
   { unit: 'g', label: 'g', whole: 1200 }, { unit: 'oz', label: 'oz', whole: 42.328789 }];
 const logMeal = (over) => ({ servings: 4, portions: PORTIONS, items: [ok(1, { amount: 2, unit: 'cup' }), ok(2, { amount: 100, unit: 'g', skipped: true }),
-  ok(3, { amount: 300, unit: 'g' }), un(4)], ...over });
+  ok(3, { amount: 300, unit: 'g' }), un(4), ok(5, { check: true })], ...over });
 
 test('portionFraction turns servings, percent and yield units into a share of the recipe', () => {
   assert.equal(portionFraction(logMeal(), '1', 'serving').fraction, 0.25);
@@ -90,7 +100,7 @@ test('portionFraction turns servings, percent and yield units into a share of th
   assert.deepEqual(portionUnits({ servings: null }).map((p) => [p.unit, p.whole]), [['serving', 1], ['pct', 100]]);
 });
 
-test('portionItems scales matched, not skipped rows', () => {
+test('portionItems scales matched rows, not skipped or Check Amount ones', () => {
   assert.deepEqual(portionItems(logMeal(), 0.25).map((i) => [i.id, i.amount]), [[1, 0.5], [3, 75]]);
   assert.deepEqual(portionItems(logMeal(), 1 / 3).map((i) => i.amount), [0.6667, 100]);
 });

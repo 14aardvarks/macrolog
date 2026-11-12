@@ -425,6 +425,12 @@ textarea { font: inherit; color: inherit; width: 100%; min-height: 160px; paddin
 .match-totals td { text-align: right; font-variant-numeric: tabular-nums; }
 .match-foot { margin-top: 12px; }
 .match-foot > .btn { flex: 1 1 0; }
+.match-jump { margin: 0 0 4px; }
+.match-jump .link-btn { padding: 0; }
+.match-hint { margin: 0; font-size: .875rem; }
+.save-choice { margin: 12px 0; padding: 12px; }
+.save-choice h2 { margin-top: 0; }
+.save-choice p { margin: 0 0 8px; }
 /* A field with a hint under it (Settings, Claude): the hint sits close to its box. */
 .hinted { margin: 0 0 12px; }
 .hinted > .field { margin-bottom: 4px; }

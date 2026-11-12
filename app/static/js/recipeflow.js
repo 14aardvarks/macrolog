@@ -1,6 +1,7 @@
 // Import Recipe (step 1: source, then a review draft) and Match Ingredients (step 2). The recipe is saved at the end of
 // step 1 with every ingredient unmatched, so leaving step 2 never loses the recipe. On step 2 each change is written at once,
-// but only Next (or Done) makes it count as saved: Back writes the state of the last save back after asking Discard Changes?.
+// but only Save makes it count as saved: Back writes the state of the last save back after asking Discard Changes?.
+// Matching is optional: Save always saves. Rows still not matched are kept (to finish later) or removed, the user's choice.
 import { api } from './api.js';
 import { h, clear, field, message, show, select, sourceBadge } from './dom.js';
 import { toJpeg } from './ai.js';
@@ -10,8 +11,8 @@ import { stepsEditor } from './steps.js';
 import { fmtNum, fmtAmount, centsText, sentence, parseAmount, rowAmountText, matchedAmountText, MICROS, microValue, aiFeature, aiFeatureOff } from './util.js';
 import {
   parseIngredientText, parseIngredientLine, reviewDraft, reviewBody, blankRow, matchState, matchCountText, toggleAll, toggleId,
-  proposalText, matchWhat, importWhat, matchSnapshot, restoreBody, changedSince, nextStep, pendingProposals,
-  acceptAllText, skipAllIds, photoPick, PHOTOS_TEXT, MATCH_METHODS, matchMethod, matchRunText, methodBatch, matchDoneText, proposalHead,
+  proposalText, matchWhat, importWhat, matchSnapshot, restoreBody, changedSince, nextUnmatched, pendingProposals,
+  acceptAllText, notMatchedText, saveChoice, canSaveWithout, SAVE_WITHOUT_NONE, unmatchedIds, photoPick, PHOTOS_TEXT, MATCH_METHODS, matchMethod, matchRunText, methodBatch, matchDoneText, proposalHead,
 } from './recipeimport.js';
 import { servingSizeEditor } from './servingsize.js';
 
@@ -180,7 +181,8 @@ function totalsTable(meal) {
 function foodLine(it) {
   const f = it.food;
   return h('span', { class: 'item-sub' }, (f.brand ? f.name + ' (' + f.brand + ')' : f.name) + ' ', sourceBadge(f.source, true),
-    ' - ' + matchedAmountText(it.amount, it.unit, it.grams) + (it.check ? '' : ' - ' + fmtNum(it.kcal, 0) + ' kcal'));
+    ' - ' + matchedAmountText(it.amount, it.unit, it.grams) + (it.check ? '' : ' - ' + fmtNum(it.kcal, 0) + ' kcal'),
+    it.estimated && !it.check ? [' ', h('span', { class: 'src-est' }, 'Estimated Conversion')] : null);
 }
 
 // params: { mealId, saved? (just saved by Import, shows Step 2 of 2), edit? (opened to change a finished recipe: the same page,
@@ -190,12 +192,14 @@ export async function renderMatch(root, params, ctx) {
   const visit = ctx.flow.visit(params);
   let meal = await api.meal(params.mealId);
   const base = () => ctx.flow.base(visit) || ctx.flow.setBase(visit, matchSnapshot(meal));
+  const opened = !ctx.flow.base(visit);
   base();
   let st = null;
   try { st = await api.aiStatus(); } catch (e) { st = { enabled: false }; }
   const aiOn = aiFeature(st, 'recipe');
   const props = ctx.flow.proposals(meal.id);  // Claude proposals waiting for Accept, kept while the user searches
-  let selected = ctx.flow.selection(meal.id).filter((id) => meal.items.some((i) => i.id === id && !i.skipped));
+  // Opening the page pre-ticks every unmatched row, so Match Selected works in one tap. A return from the food finder keeps the ticks.
+  let selected = opened ? unmatchedIds(meal.items) : ctx.flow.selection(meal.id).filter((id) => meal.items.some((i) => i.id === id && !i.skipped));
   let current = meal.items.findIndex((i) => i.id === ctx.flow.takeFocus());
   const status = h('div', { 'aria-live': 'polite' });
   const count = h('p', { class: 'match-count', 'aria-live': 'polite' });
@@ -203,7 +207,8 @@ export async function renderMatch(root, params, ctx) {
   const totals = h('div');
   const allBox = h('input', { type: 'checkbox', id: 'match-all', onchange: () => { selected = toggleAll(meal.items, selected); keepSel(); paintRows(); } });
   let method = matchMethod(ctx.flow.method, aiOn);  // Search (default) or Claude; Claude only when it is on for this user
-  const matchBtn = h('button', { class: 'btn', type: 'button', onclick: () => runMatch(selected) }, matchRunText(method));
+  const matchBtn = h('button', { class: 'btn', type: 'button', 'aria-describedby': 'match-hint', onclick: () => runMatch(selected) }, matchRunText(method));
+  const matchHint = h('span', { class: 'sub match-hint', id: 'match-hint' }, 'Tick Ingredients to Match');
   const methodBtns = MATCH_METHODS.map(([k, label]) => h('button', { class: 'seg-btn', type: 'button', 'data-method': k,
     'aria-pressed': k === method ? 'true' : 'false', onclick: () => setMethod(k) }, label));
   const methodSwitch = aiOn ? h('div', { class: 'method-switch', role: 'group', 'aria-label': 'Match With' },
@@ -216,10 +221,10 @@ export async function renderMatch(root, params, ctx) {
   }
   const acceptBtn = h('button', { class: 'btn primary', type: 'button', onclick: acceptAll }, '');
   const acceptRow = h('div', { class: 'row wrap match-bulk' }, acceptBtn);
-  const skipAllBtn = h('button', { class: 'btn', type: 'button', onclick: skipAll }, 'Skip All');
-  const nextBtn = h('button', { class: 'btn primary', type: 'button', onclick: next }, 'Next');
+  const jumpBtn = h('button', { class: 'link-btn', type: 'button', onclick: jump }, 'Jump to Next Unmatched');
+  const saveBtn = h('button', { class: 'btn primary', type: 'button', onclick: save }, 'Save');
   const backBtn = h('button', { class: 'btn', type: 'button', onclick: leave }, 'Back');
-  const lastHint = h('p', { class: 'sub' }, 'Last step. Check the serving size, then tap Done.');
+  const choiceBox = h('div', { 'aria-live': 'polite' });
   const size = servingSizeEditor(meal, { live: true, status, onSaved: (m) => { meal = m; paintTotals(); paintHead(); } });
   const keepSel = () => ctx.flow.setSelection(meal.id, selected);
   const fail = (e) => show(status, message(e.message, 'error'));
@@ -261,20 +266,8 @@ export async function renderMatch(root, params, ctx) {
       setMeal(await api.matchItems(meal.id, rows));
       drop(rows.map((r) => r.id));
       paintAll();
-      show(status, message(rows.length + (rows.length === 1 ? ' suggestion accepted' : ' suggestions accepted') + '. Tap Next to save.'));
+      show(status, message(rows.length + (rows.length === 1 ? ' suggestion accepted.' : ' suggestions accepted.')));
     } catch (e) { fail(e); } finally { acceptBtn.disabled = false; }
-  }
-  async function skipAll() {
-    const ids = skipAllIds(meal.items);
-    if (!ids.length) return;
-    const what = ids.length === 1 ? 'the 1 unmatched ingredient' : 'all ' + ids.length + ' unmatched ingredients';
-    if (!window.confirm('Skip ' + what + '? You can unskip any of them.')) return;
-    skipAllBtn.disabled = true;
-    try {
-      setMeal(await api.matchItems(meal.id, ids.map((id) => ({ id, skipped: true }))));
-      drop(ids);
-      paintAll();
-    } catch (e) { fail(e); } finally { skipAllBtn.disabled = false; }
   }
   // how: the method for this run. The button uses the switch, Ask Claude on a row always uses Claude.
   async function runMatch(ids, how) {
@@ -314,7 +307,7 @@ export async function renderMatch(root, params, ctx) {
       drop([item.id]);
       delete editing[item.id];
       paintAll(m.items.length ? m.items[Math.min(i, m.items.length - 1)].id : null);
-      show(status, message('Removed ' + label + '. Back undoes it until you tap Next.'));
+      show(status, message('Removed ' + label + '. Back undoes it until you tap Save.'));
     } catch (e) { fail(e); }
   }
   // Add Ingredient: one typed line ("1 tbsp olive oil"), split like Import does, added as an unmatched row at the end.
@@ -325,6 +318,8 @@ export async function renderMatch(root, params, ctx) {
       const { added, ...m } = await api.addMealItem(meal.id, { src: { text: row.text.slice(0, 300), amount: row.amount, unit: row.unit, name: row.name.slice(0, 200), note: row.note } });
       keepCurrent(() => setMeal(m));
       show(addBox, null);
+      selected = [...selected, added];  // a new row is unmatched, so it is ticked like the others
+      keepSel();
       paintAll(search ? null : added);
       const item = m.items.find((x) => x.id === added);
       if (search && item) ctx.flow.find(m, item, 'search');
@@ -344,23 +339,45 @@ export async function renderMatch(root, params, ctx) {
   }
   const addBtn = h('button', { class: 'btn', type: 'button', onclick: addForm }, 'Add Ingredient');
 
-  // Next saves: what the screen shows now becomes the state Back returns to. On the last open row it is Done and leaves.
-  function next() {
-    const saved = changedSince(base(), meal);
-    ctx.flow.setBase(visit, matchSnapshot(meal));
-    const step = nextStep(meal.items, current);
-    if (step.done) { ctx.flow.endVisit(visit); ctx.flow.exit(); return; }
-    current = step.index;
+  // Jump to Next Unmatched: scroll to the next unmatched (or Check Amount) row after the current one, and focus it.
+  function jump() {
+    const i = nextUnmatched(meal.items, current);
+    if (i < 0) return;
+    current = i;
     paintRows();
-    show(status, saved ? message('Saved.') : null);
-    const el = document.getElementById('ing-' + meal.items[current].id);
+    const el = document.getElementById('ing-' + meal.items[i].id);
     if (el) { el.scrollIntoView({ block: 'center' }); el.focus({ preventScroll: true }); }
+  }
+  // Save always saves and leaves; every change was written already. Rows still not matched are asked about once, in the page.
+  let choiceNote = null;  // where Save Without Them reports a problem, inside the open choice
+  function finish() { ctx.flow.endVisit(visit); ctx.flow.exit(); }
+  function save() {
+    const c = saveChoice(meal);
+    if (!c.ask) { finish(); return; }
+    const without = h('button', { class: 'btn', type: 'button', onclick: saveWithout }, 'Save Without Them');
+    const keep = h('button', { class: 'btn primary', type: 'button', onclick: finish }, 'Keep Them to Finish Later');
+    const cancel = h('button', { class: 'btn ghost', type: 'button', onclick: () => { show(choiceBox, null); saveBtn.disabled = false; saveBtn.focus(); } }, 'Cancel');
+    const note = h('div', { 'aria-live': 'polite' });
+    choiceNote = note;
+    saveBtn.disabled = true;
+    show(choiceBox, h('div', { class: 'sheet save-choice', role: 'group', 'aria-labelledby': 'save-choice-title' },
+      h('h2', { id: 'save-choice-title' }, 'Save Recipe'),
+      h('p', null, notMatchedText(c.n)),
+      h('p', { class: 'sub' }, 'Save Without Them removes them from the recipe. Keep Them to Finish Later saves them with no nutrition, so you can match them later.'),
+      note,
+      h('div', { class: 'row wrap' }, without, keep, cancel)));
+    keep.focus();
+  }
+  async function saveWithout() {
+    if (!canSaveWithout(meal)) { show(choiceNote, message(SAVE_WITHOUT_NONE, 'error')); return; }
+    try { await api.deleteUncounted(meal.id); } catch (e) { show(choiceNote, message(e.message, 'error')); return; }
+    finish();
   }
   // Back does not save: after Discard Changes? it writes the last saved state back, then leaves.
   async function leave() {
     const r = restoreBody(base(), meal);
     if (r.items.length || r.meal || r.remove.length || r.add.length) {
-      if (!window.confirm('Discard Changes? Matches, amounts, skips, added or removed ingredients and serving size changes since you last tapped Next are undone.')) return;
+      if (!window.confirm('Discard Changes? Matches, amounts, skips, added or removed ingredients and serving size changes since you opened this page are undone.')) return;
       backBtn.disabled = true;
       try {
         for (const id of r.remove) await api.deleteMealItem(meal.id, id);  // rows added since, then rows removed since, back in place
@@ -458,13 +475,11 @@ export async function renderMatch(root, params, ctx) {
     const open = meal.items.filter((i) => matchState(i) === 'unmatched').map((i) => i.id);
     allBox.checked = open.length > 0 && open.every((id) => selected.indexOf(id) >= 0);
     matchBtn.disabled = !selected.length;
+    matchHint.hidden = selected.length > 0;
+    jumpBtn.hidden = nextUnmatched(meal.items, current) < 0;
     const pending = pendingProposals(meal.items, props).length;
     acceptRow.hidden = !pending;
     acceptBtn.textContent = acceptAllText(pending);
-    skipAllBtn.hidden = !skipAllIds(meal.items).length;
-    const done = nextStep(meal.items, current).done;
-    nextBtn.textContent = done ? 'Done' : 'Next';
-    lastHint.hidden = !done;
   }
   function paintRows() {
     clear(list);
@@ -477,8 +492,7 @@ export async function renderMatch(root, params, ctx) {
       h('p', { class: 'sub' }, meal.complete ? 'For 1 of ' + fmtAmount(meal.servings) + ' servings.'
         : 'For 1 of ' + fmtAmount(meal.servings) + ' servings, counting matched ingredients only.'
           + (meal.checks ? ' Rows marked Check Amount count once you confirm their amount.' : '')),
-      totalsTable(meal),
-      meal.complete ? message('Every ingredient is matched or skipped. Tap Done to save, then log the recipe from the Recipes tab.') : null));
+      totalsTable(meal)));
   }
   function paintAll(focusId) {
     paintRows();
@@ -493,18 +507,19 @@ export async function renderMatch(root, params, ctx) {
     h('h1', null, 'Match Ingredients'),
     params.saved ? h('p', { class: 'saved-note', role: 'status' }, h('span', { class: 'saved-tag' }, 'Saved'), h('span', null, 'Step 2 of 2')) : null,
     h('p', { class: 'sub' }, params.edit
-      ? 'Change any ingredient: search again, scan a barcode, edit the amount, skip it or remove it, or add a new one. Tap Next to save and move on. Back leaves without the changes made since the last Next.'
-      : 'The recipe is saved. Match each ingredient to a food, then tap Next to save and move on. Back leaves without the changes made since the last Next.'),
+      ? 'Change any ingredient: search again, scan a barcode, edit the amount, skip it or remove it, or add a new one. Matching is optional. Tap Save when you are done. Back leaves without the changes made since you opened this page.'
+      : 'The recipe is saved. Match the ingredients you want counted, or leave some for later. Tap Save when you are done. Back leaves without the changes made since you opened this page.'),
     h('h2', null, meal.name), count,
+    h('div', { class: 'match-jump' }, jumpBtn),
     acceptRow,
-    h('div', { class: 'row wrap match-bulk' }, h('label', { class: 'check', for: 'match-all' }, allBox, ' Select All'), skipAllBtn),
-    h('div', { class: 'row wrap match-run' }, methodSwitch, matchBtn),
+    h('div', { class: 'row wrap match-bulk' }, h('label', { class: 'check', for: 'match-all' }, allBox, ' Select All')),
+    h('div', { class: 'row wrap match-run' }, methodSwitch, matchBtn, matchHint),
     aiOn ? null : noAi,
     status, list,
     addBtn, addBox,
-    h('h2', null, 'Serving Size'), lastHint, size.el,
-    totals,
-    h('div', { class: 'row wrap match-foot' }, backBtn, nextBtn)));
+    h('h2', null, 'Serving Size'), size.el,
+    totals, choiceBox,
+    h('div', { class: 'row wrap match-foot' }, backBtn, saveBtn)));
   paintRows();
   paintTotals();
   if (current >= 0) {

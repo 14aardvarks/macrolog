@@ -1098,9 +1098,6 @@ def patch_meal(meal_id: int, user: CurrentUser, body: dict = Body(...)):
     with db.conn() as c:
         own_meal(c, user["id"], meal_id)
         items = parse_items(c, body["items"]) if "items" in body else None
-        if items is not None and c.execute("SELECT 1 FROM meal_items WHERE meal_id=? AND (food_id IS NULL OR skipped=1 OR needs_check=1)",
-                                           (meal_id,)).fetchone():
-            raise HTTPException(409, "This recipe still has unmatched or skipped ingredients. Finish them on the Match Ingredients screen first.")
         if name:
             c.execute("UPDATE meals SET name=? WHERE id=?", (name, meal_id))
         if "servings" in body:
@@ -1114,7 +1111,9 @@ def patch_meal(meal_id: int, user: CurrentUser, body: dict = Body(...)):
             c.execute("DELETE FROM recipe_tags WHERE meal_id=?", (meal_id,))
             c.executemany("INSERT INTO recipe_tags(meal_id, meal) VALUES(?,?)", [(meal_id, m) for m in tags])
         if items is not None:
-            c.execute("DELETE FROM meal_items WHERE meal_id=?", (meal_id,))
+            # Only the counted rows are replaced. Unmatched, skipped and Check Amount rows stay as reference lines after them.
+            c.execute("DELETE FROM meal_items WHERE meal_id=? AND food_id IS NOT NULL AND skipped=0 AND needs_check=0", (meal_id,))
+            c.execute("UPDATE meal_items SET position=position+? WHERE meal_id=?", (len(items), meal_id))
             c.executemany("INSERT INTO meal_items(meal_id,food_id,amount,unit,position) VALUES(?,?,?,?,?)",
                           [(meal_id, f["id"], a, u, i) for i, (f, a, u) in enumerate(items)])
         return meal_dict(c, own_meal(c, user["id"], meal_id))
@@ -1130,16 +1129,11 @@ def delete_meal(meal_id: int, user: CurrentUser):
     return {"deleted": meal_id}
 
 
-def need_complete(c, row) -> None:
-    """Loggability rule: every ingredient must be matched to a food with a confirmed amount, or skipped, and at least one
-    must be matched."""
-    left = c.execute("SELECT COUNT(*) FROM meal_items WHERE meal_id=? AND (food_id IS NULL OR needs_check=1) AND skipped=0",
-                     (row["id"],)).fetchone()[0]
-    if left:
-        raise HTTPException(409, f"This recipe has {left} ingredient{'s' if left != 1 else ''} still to match. "
-                                 "Match or skip them before logging it.")
+def need_matched(c, row) -> None:
+    """Matching is optional: a recipe logs with any mix of matched, skipped and unmatched rows. The one refusal is a recipe
+    with nothing matched, which would log nothing."""
     if not c.execute("SELECT 1 FROM meal_items WHERE meal_id=? AND food_id IS NOT NULL AND skipped=0 AND needs_check=0", (row["id"],)).fetchone():
-        raise HTTPException(409, "This recipe has no matched ingredients to log.")
+        raise bad("Match at least one ingredient to log this recipe.")
 
 
 def recipe_servings(v):
@@ -1354,20 +1348,33 @@ def delete_meal_item(meal_id: int, item_id: int, user: CurrentUser):
         return meal_dict(c, row)
 
 
+@router.delete("/meals/{meal_id}/uncounted")
+def delete_uncounted_items(meal_id: int, user: CurrentUser):
+    """Save Without Them on Match Ingredients: remove every row that counts for nothing (unmatched, skipped, Check Amount).
+    Nothing is kept for them, no text line either. At least one matched row must be left."""
+    with db.conn() as c:
+        row = own_meal(c, user["id"], meal_id)
+        if not c.execute("SELECT 1 FROM meal_items WHERE meal_id=? AND food_id IS NOT NULL AND skipped=0 AND needs_check=0", (meal_id,)).fetchone():
+            raise bad("A recipe needs at least one ingredient. Match one, or keep the others to finish later.")
+        c.execute("DELETE FROM meal_items WHERE meal_id=? AND NOT (food_id IS NOT NULL AND skipped=0 AND needs_check=0)", (meal_id,))
+        return meal_dict(c, row)
+
+
 @router.post("/meals/{meal_id}/log")
 def log_meal(meal_id: int, user: CurrentUser, body: dict | None = Body(None)):
     body = body or {}
     day, meal = day_str(body.get("day")), pick(body.get("meal"), MEALS, "meal", nullable=True)
     with db.conn() as c:
         row = own_meal(c, user["id"], meal_id)
-        need_complete(c, row)
+        need_matched(c, row)
         if body.get("items") is not None:  # the client's checklist replaces the saved items
             items = parse_items(c, body["items"])
         else:
             # amount and unit: how much of the recipe (servings, pct of the recipe, or a yield unit), as a share of the whole
             frac = recipe_fraction(meal_dict(c, row), body.get("amount"), body.get("unit")) if "amount" in body or "unit" in body else None
             items = [(need_food(c, i["food_id"]), i["amount"] if frac is None else round(i["amount"] * frac, 4), i["unit"]) for i in
-                     c.execute("SELECT * FROM meal_items WHERE meal_id=? AND skipped=0 ORDER BY position, id", (row["id"],))]
+                     c.execute("SELECT * FROM meal_items WHERE meal_id=? AND food_id IS NOT NULL AND skipped=0 AND needs_check=0 "
+                                 "ORDER BY position, id", (row["id"],))]
         if meal:  # logging a recipe with a meal tags the recipe and counts toward that meal
             c.execute("INSERT OR IGNORE INTO recipe_tags(meal_id, meal) VALUES(?,?)", (meal_id, meal))
             c.execute("INSERT INTO recipe_logs(meal_id, meal) VALUES(?,?)", (meal_id, meal))

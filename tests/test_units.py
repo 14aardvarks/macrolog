@@ -347,9 +347,15 @@ def test_match_amount_counts():
     assert units.match_amount(CHEESE, 1, "piece") == {"amount": 1, "unit": "serving", "check": False}
 
 
-def test_match_amount_needs_a_check_when_it_cannot_convert():
-    # a cup of a food known only by weight: the 1 g per ml estimate is not good enough, so one label serving to check
-    assert units.match_amount(FLOUR_G, 1, "cup") == {"amount": 30, "unit": "g", "check": True}
+def test_match_amount_uses_an_estimated_unit_and_says_so():
+    # a cup of a food known only by weight: the picker offers cup (1 g per ml guess), so the line's amount is used, flagged
+    assert units.match_amount(FLOUR_G, 1, "cup") == {"amount": 1, "unit": "cup", "check": False, "estimated": True}
+    assert units.match_amount(FLOUR_G, 2, "tbsp") == {"amount": 2, "unit": "tbsp", "check": False, "estimated": True}
+    assert "estimated" not in units.match_amount(FLOUR_CUP, 1, "cup")  # exact conversions carry no flag
+    assert units.scale(FLOUR_G, 1, "cup")["estimated"] is True  # the same math the picker uses
+
+
+def test_match_amount_needs_a_check_when_the_unit_is_unreachable():
     assert units.match_amount(FLOUR_CUP, 1, "can") == {"amount": 1, "unit": "cup", "check": True}
     assert units.match_amount(BUTTER, 1, "pinch") == {"amount": 1, "unit": "tbsp", "check": True}
 

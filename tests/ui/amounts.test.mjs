@@ -70,10 +70,14 @@ test('matchAmount counts go to the count word or to servings', () => {
   assert.deepEqual(matchAmount(FLOUR_G, 1, 'piece'), { amount: 1, unit: 'serving', check: false });
 });
 
-test('matchAmount flags what it cannot convert and skips lines without an amount', () => {
-  assert.deepEqual(matchAmount(FLOUR_G, 1, 'cup'), { amount: 30, unit: 'g', check: true });  // only a 1 g per ml guess
+test('matchAmount uses an estimated unit and flags it, as the picker offers it', () => {
+  assert.deepEqual(matchAmount(FLOUR_G, 1, 'cup'), { amount: 1, unit: 'cup', check: false, estimated: true });  // only a 1 g per ml guess
+  assert.deepEqual(matchAmount(FLOUR_G, 2, 'tbsp'), { amount: 2, unit: 'tbsp', check: false, estimated: true });
+  assert.equal(matchAmount(MILK, 1, 'cup').estimated, undefined);
+});
+
+test('matchAmount flags what is unreachable and skips lines without an amount', () => {
   assert.deepEqual(matchAmount(BUTTER, 1, 'stick'), { amount: 1, unit: 'tbsp', check: true });
-  assert.deepEqual(matchAmount(FLOUR_G, 2, 'tbsp'), { amount: 30, unit: 'g', check: true });
   assert.deepEqual(matchAmount(MILK, 1, 'can'), { amount: 240, unit: 'ml', check: true });
   assert.equal(matchAmount(MILK, null, 'cup'), null);
   assert.equal(matchAmount(MILK, 0, 'cup'), null);

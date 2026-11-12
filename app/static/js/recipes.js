@@ -1,18 +1,19 @@
 // Recipes tab: New Recipe, Import Recipe and the list of my recipes, plus one recipe's screen with Log and the edit tools
-// from Saved. A partial recipe (unmatched ingredients) opens Match Ingredients instead.
+// from Saved. Matching is optional: a recipe with unmatched ingredients opens and logs like any other.
 import { api } from './api.js';
 import { h, clear, field, message, show, select } from './dom.js';
 import { MEALS, MEAL_LABELS, fmtNum, pageOf, PAGE_SIZE, matchedAmountText, stepsCheck, qtyText } from './util.js';
-import { recipeListSub, servingsText, perServingText, tagsText, portionUnits, portionFraction, portionAmount, yieldText } from './recipeimport.js';
+import { recipeListSub, notCounted, notCountedText, matchState, servingsText, perServingText, tagsText, portionUnits, portionFraction, portionAmount, yieldText } from './recipeimport.js';
 import { servingSizeEditor } from './servingsize.js';
 import { chips, renameRecipe, deleteRecipe } from './saved.js';
 import { stepsList, stepsEditor } from './steps.js';
 
 // The recipe's ingredients as a read only list: "Wheat flour" over "1 1/2 cup, 188 g". Skipped lines keep their own text.
 function ingredientList(meal) {
-  return h('ul', { class: 'list recipe-ings' }, meal.items.map((it) => (it.skipped || !it.food
-    ? h('li', { class: 'item' }, h('div', { class: 'item-main' }, h('span', { class: 'item-title' }, (it.src && it.src.text) || 'Ingredient'),
-      h('span', { class: 'item-sub' }, 'Skipped')))
+  const LABELS = { skipped: 'Skipped', unmatched: 'Unmatched', check: 'Check Amount' };
+  return h('ul', { class: 'list recipe-ings' }, meal.items.map((it) => (matchState(it) !== 'matched'
+    ? h('li', { class: 'item' }, h('div', { class: 'item-main' }, h('span', { class: 'item-title' }, (it.src && it.src.text) || (it.food && it.food.name) || 'Ingredient'),
+      h('span', { class: 'item-sub' }, LABELS[matchState(it)] + ', not counted')))
     : h('li', { class: 'item' }, h('div', { class: 'item-main' },
       h('span', { class: 'item-title' }, it.food.brand ? it.food.name + ' (' + it.food.brand + ')' : it.food.name),
       h('span', { class: 'item-sub' }, matchedAmountText(it.amount, it.unit, it.grams)))))));
@@ -53,7 +54,7 @@ export async function renderRecipes(root, ctx) {
   const all = (await api.meals()).meals;
   const listBox = h('div');
   let shown = PAGE_SIZE;
-  const open = (m) => (m.complete ? ctx.go('recipeview', { mealId: m.id }) : ctx.go('match', { mealId: m.id }));
+  const open = (m) => ctx.go('recipeview', { mealId: m.id });
   const row = (m) => h('li', { class: 'item' },
     h('button', { class: 'item-main', type: 'button', onclick: () => open(m) },
       h('span', { class: 'item-title' }, m.name),
@@ -70,7 +71,7 @@ export async function renderRecipes(root, ctx) {
     h('div', { class: 'row wrap recipes-actions' },
       h('button', { class: 'btn primary', type: 'button', onclick: ctx.newRecipe }, 'New Recipe'),
       h('button', { class: 'btn', type: 'button', onclick: ctx.importRecipe }, 'Import Recipe')),
-    h('p', { class: 'sub' }, 'Tap a recipe to log or edit it. A recipe with unmatched ingredients opens Match Ingredients.'),
+    h('p', { class: 'sub' }, 'Tap a recipe to log or edit it. Ingredients that are not matched are not counted.'),
     listBox));
 }
 
@@ -79,7 +80,6 @@ export async function renderRecipes(root, ctx) {
 // The checklist with Adjust is only for logging a recipe from Add.
 export async function renderRecipeView(root, params, ctx) {
   const meal = await api.meal(params.mealId);
-  if (!meal.complete) { await ctx.go('match', { mealId: meal.id }, true); return; }
   const status = h('div', { 'aria-live': 'polite' });
   const mealSel = select([{ value: 'none', label: MEAL_LABELS.none }, ...MEALS.map((m) => ({ value: m, label: MEAL_LABELS[m] }))],
     ctx.defaultMeal(), { 'aria-label': 'Meal' });
@@ -133,6 +133,7 @@ export async function renderRecipeView(root, params, ctx) {
     h('h2', null, 'Log'),
     h('label', { class: 'field' }, h('span', null, 'Meal'), mealSel),
     h('div', { class: 'grid2 recipe-log' }, amount, h('label', { class: 'field' }, h('span', null, 'Of the recipe'), unitSel)),
+    notCounted(meal) ? h('p', { class: 'sub not-counted' }, notCountedText(notCounted(meal))) : null,
     status,
     h('div', { class: 'row wrap' }, logBtn),
     h('h2', null, 'Ingredients'),
