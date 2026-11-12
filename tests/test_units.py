@@ -71,7 +71,7 @@ def test_bread_other_count_word_unreachable():
 
 def test_count_label_without_grams_is_count_only():
     f = food(1, "cookie")
-    assert [u["unit"] for u in available_units(f)] == ["cookie", "serving", "pct"]
+    assert [u["unit"] for u in available_units(f)] == ["cookie", "serving", "pct", "count", ""]
     assert servings_for(f, 3, "cookies")["servings"] == 3
     for u in ("g", "oz", "ml", "cup"):
         with pytest.raises(ValueError):
@@ -243,7 +243,7 @@ def test_bad_serving_amount():
 
 def test_zero_serving_g_or_ml_treated_as_missing():
     f = food(1, "slice", g=0, ml=0)
-    assert [u["unit"] for u in available_units(f)] == ["slice", "serving", "pct"]
+    assert [u["unit"] for u in available_units(f)] == ["slice", "serving", "pct", "count", ""]
     f = food(1, "cup", g=0)
     assert by_unit(f)["g"]["estimated"] is True
 
@@ -311,7 +311,7 @@ def test_no_duplicates_when_label_unit_is_serving():
     assert len(us) == len(set(us))
     assert servings_for(f, 0.5, "serving")["servings"] == 0.5
     f2 = food(2, "servings")
-    assert [u["unit"] for u in available_units(f2)] == ["serving", "pct"]
+    assert [u["unit"] for u in available_units(f2)] == ["serving", "pct", "count", ""]
     assert servings_for(f2, 1, "serving")["servings"] == 0.5  # label says 2 servings
 
 

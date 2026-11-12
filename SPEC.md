@@ -688,7 +688,7 @@ POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log i
 
 - Per user setting `full_claude` in GET/PUT /api/settings (settings.full_claude, default off, booleans only). Settings, Claude has a checkbox
   Full Claude Use right above the key section (claudekey.js `renderFullClaude`, saved at once) with the hint "Off by default. ..." (`FULL_CLAUDE_HELP`)
-  and a cost table. Confirm before using Claude stays a separate setting.
+  a cost table and a short warning (v61, issue #35: Claude is used on its own, recipe imports and their matching run without asking, costs add up, the monthly request limit applies; `fullClaudeWarning`). Confirm before using Claude stays a separate setting for every other Claude step.
 - When on, Claude runs on its own in four places. Each step needs the admin switch named and a usable key, else it is skipped silently; each
   uses the normal reservation and the monthly cap (never exceeded: at the cap nothing is sent and one quiet note says "Monthly Claude limit
   reached, so Claude was not used.", util.js `CLAUDE_CAP_NOTE`); with Confirm before using Claude on the usual notice with the estimated cost
@@ -709,9 +709,11 @@ POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log i
      GET /api/foods/missing-nutrients?claude=1 then lists such foods too. Today's and Settings' bulk buttons ask once per batch
      ("Uses up to 10 of your ... requests", status micros=N) and stop asking Claude for the rest of a batch at the cap.
      A source rate limit or outage still answers 429 or 502 as before. Off, the claude flag is ignored.
-  4. Import Recipe, Paste Text, Read With Claude (ai_allow_recipe) sends at once without the confirm notice. The line under the
-     buttons shows the cost beforehand ("Up to about 0.11 cents per import ... N of M Claude requests left this month."); at the cap the
-     button is disabled with the cap note. Photos keep the confirm.
+  4. Import Recipe, Read With Claude (ai_allow_recipe), text and photos (v61, issue #35), sends at once without the confirm notice, and
+     the Auto-Match After Import Claude step right after it runs with no confirm and no extra tap. The line under the text button shows
+     the cost beforehand ("Up to about 0.11 cents per import ... N of M Claude requests left this month."); at the cap the buttons are
+     disabled with the cap note, and a 429 shows that note. The label photo, typed lookup, Match Selected With Claude, Ask Claude on a row
+     and the bulk Refresh Nutrients batches keep the Confirm before using Claude behavior.
 - Cost estimates (GET /api/ai/status `action_costs`, ai.action_costs, from the same token figures as the cost notice, conservative: text at
   its longest typical size, outputs at the notice's upper estimate). Prices are the user's active prices when set (personal prices on a
   personal key, else the admin prices), otherwise the Haiku 5.5 sample prices 0.10 USD input and 0.50 USD output per million tokens
@@ -728,3 +730,19 @@ POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log i
 
   The issue's older figures (0.3 to 2 cents per action, about 1 USD a month) assumed 1 and 5 USD per million tokens; at those prices the
   same heavy month is about 0.41 USD.
+
+## Count and a Blank Unit (v61, issue #34)
+
+- units.py: `count` (label "Count") and the blank unit `""` (label "None", also accepted as None, "-" or "none" through `units.unit_or_blank`)
+  are offered by `available_units` for every food (after the other units) and by every unit selector built from it (picker, Match
+  Ingredients amount editor, recipe log). Both are a plain count: `servings_for` gives the label's own count word when the label is one
+  ("3 count" on a "2 slice" label is 1.5 servings), else one label serving per 1. `core.check_amount_unit` accepts them, so entries,
+  previews, recipe rows and matches may use them (an entry unit may be ""). A last used blank unit is kept by the quick lists.
+- `match_amount` (and util.js `matchAmount`): no amount (None, 0, empty) gives None for any unit. Blank, Count and the other PLAIN_COUNTS
+  use the label's count word, else servings, the same as before for piece or each. Nothing is guessed.
+- Recipe lines (meal_items src_*): amount and unit are optional everywhere. POST /api/meals/import and the review screen save a line with
+  neither as plain text ("salt, to taste"); the review unit box is a select (None, Count, weights and volumes, plus any word the recipe
+  used). Claude's import leaves a missing unit null (`recipe_ai.clean_unit`, the tool text says never to guess). The Cooking view and
+  logs show them as text (cookIngredient keeps a line without an amount unchanged when scaling; a blank unit shows the bare amount).
+- Match Ingredients Edit Amount: an empty amount keeps the line as plain text (skips the row) instead of an error.
+- Not changed: the food form serving unit stays free text (count works typed), and the recipe total yield stays weight or volume only.

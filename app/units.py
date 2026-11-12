@@ -15,7 +15,10 @@ COUNT_STEP = 0.5
 SERVING, PCT = "serving", "pct"
 PSEUDO = (SERVING, PCT)
 STEPS.update({SERVING: 0.25, PCT: 5})
-LABELS = {"floz": "fl oz", SERVING: "serving", PCT: "% of serving"}
+# Count is a plain "this many of the thing" unit and BLANK is no unit at all (stored as ""). Both mean one label serving per 1 when the label
+# is not a count word, else one of the label's count word (2 slice per serving on a "2 slice" label). Offered for every food.
+COUNT, BLANK = "count", ""
+LABELS = {"floz": "fl oz", SERVING: "serving", PCT: "% of serving", COUNT: "Count", BLANK: "None"}
 PSEUDO_DEFAULT = {SERVING: 1.0, PCT: 100.0}
 # Display order for the non-label units offered in the picker.
 ORDER = ["g", "oz", "lb", "kg", "ml", "floz", "cup", "tbsp", "tsp", "l"]
@@ -62,6 +65,13 @@ def parse_unit(text):
     if t.replace(" ", "") in _ALIASES:  # "fl oz" written "floz", "f l oz"
         return _ALIASES[t.replace(" ", "")]
     return s
+
+
+def unit_or_blank(text):
+    """Like parse_unit, but no unit at all ("", None, "-", "none") is allowed and comes back as BLANK ("")."""
+    if text is None or str(text).strip().lower() in ("", "-", "none"):
+        return BLANK
+    return parse_unit(text)
 
 
 def _pos(x):
@@ -156,15 +166,22 @@ def _profile(food):
     return unit, amount, g, bool(ge), ml, bool(mle)
 
 
+def _is_measure(label_unit):
+    """True when the label unit is not a count word (a weight, a volume, serving or percent)."""
+    return label_unit in MASS or label_unit in VOLUME or label_unit in PSEUDO
+
+
 def _convert(food, amount, unit):
     """Return (servings, estimated). Raises ValueError for bad amounts or unreachable units."""
     amount = _pos(amount)
     if amount is None:
         raise ValueError("Amount must be greater than zero")
-    unit = parse_unit(unit)
+    unit = unit_or_blank(unit)
     label_unit, label_amount, g, ge, ml, mle = _profile(food)
     if unit == label_unit:
         return amount / label_amount, False
+    if unit in (COUNT, BLANK):  # a plain count: the label's own count word when it has one, else label servings
+        return (amount, False) if _is_measure(label_unit) else (amount / label_amount, False)
     if unit == SERVING:
         return amount, False
     if unit == PCT:
@@ -201,6 +218,9 @@ def available_units(food):
             table = MASS if unit in MASS else VOLUME
             x = per / table[unit]
             out.append(entry(unit, round(x, 2) or float(f"{x:.2g}"), est))
+    for unit in (COUNT, BLANK):
+        if unit != label_unit:
+            out.append(entry(unit, 1.0, False))
     return out
 
 
@@ -236,7 +256,7 @@ def grams(food, amount, unit):
     """Grams in amount of unit, rounded to 0.1, or None when the food's weight is unknown or only estimated,
     or when the amount is already in grams."""
     try:
-        u = parse_unit(unit)
+        u = unit_or_blank(unit)
         servings, estimated = _convert(food, amount, u)
         g, ge = _profile(food)[2:4]
     except ValueError:
@@ -247,14 +267,14 @@ def grams(food, amount, unit):
 
 
 # Line units that only say "this many of the thing", for counts without a unit such as "2 eggs".
-PLAIN_COUNTS = ("piece", "each", "whole", "unit", "item", "large", "medium", "small")
+PLAIN_COUNTS = (COUNT, "piece", "each", "whole", "unit", "item", "large", "medium", "small")
 
 
 def match_amount(food, amount, unit):
     """Amount and unit for a recipe line ("1 cup", "2 tbsp", "2" eggs) matched to food, without asking the user.
 
     Returns {"amount", "unit", "check"} (plus "estimated": True when only the 1 g per ml guess reaches the unit) or None when
-    the line has no amount (salt to taste).
+    the line has no amount (salt to taste). A blank unit or Count is a plain count (see PLAIN_COUNTS).
     - The line's own unit when the food reaches it at all, as the picker offers it: same unit, weight to weight, volume to
       volume, and weight to volume through the food's own density (serving_g and serving_ml) or label count word. A unit
       reachable only through the 1 g per ml guess is used too, with "estimated": True (the same math the picker uses).
@@ -266,14 +286,14 @@ def match_amount(food, amount, unit):
         return None
     label_unit, label_amount = _profile(food)[:2]
     try:
-        u = parse_unit(unit) if unit not in (None, "") else None
+        u = unit_or_blank(unit) or None
     except ValueError:
         u = None
     if u is not None and u not in PLAIN_COUNTS:
         for entry in available_units(food):
             if entry["unit"] == u:
                 return {"amount": a, "unit": u, "check": False, **({"estimated": True} if entry["estimated"] else {})}
-    elif label_unit not in MASS and label_unit not in VOLUME and label_unit not in PSEUDO:
+    elif not _is_measure(label_unit):
         return {"amount": a, "unit": label_unit, "check": False}
     else:
         return {"amount": a, "unit": SERVING, "check": False}

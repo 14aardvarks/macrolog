@@ -153,7 +153,7 @@ export function amountText(amount, unit, format) {
   if (unit === SERVING) {
     return servingText(n, format) + (n > 1 ? ' servings' : ' serving');
   }
-  return qtyText(n, unit, format) + ' ' + unit;
+  return (qtyText(n, unit, format) + ' ' + (unit || '')).trim();  // a blank unit shows the bare amount
 }
 
 // ---------- picker math ----------
@@ -557,7 +557,7 @@ export function gramsFor(units, amount, unit) {
 const MASS_UNITS = ['g', 'kg', 'oz', 'lb'];
 const VOLUME_UNITS = ['ml', 'l', 'floz', 'cup', 'tbsp', 'tsp'];
 // Line units that only say "this many of the thing", like a count without a unit ("2 eggs").
-const PLAIN_COUNTS = ['piece', 'each', 'whole', 'unit', 'item', 'large', 'medium', 'small'];
+const PLAIN_COUNTS = ['count', 'piece', 'each', 'whole', 'unit', 'item', 'large', 'medium', 'small'];
 
 // Amount and unit for a recipe line matched to a food without the picker. Mirrors units.match_amount on the server.
 // units: food.units from GET /api/foods/{id} (first entry is the label unit, estimated marks a 1 g per ml guess).
@@ -1061,6 +1061,12 @@ export function fullClaudePriceNote(costs) {
   return costs.sample
     ? sentence('Estimates at the Haiku 5.5 sample prices of 0.10 USD input and 0.50 USD output per million tokens, because no price is set')
     : sentence('Estimates at your model prices');
+}
+
+// The warning next to the Full Claude Use checkbox. st: /api/ai/status (cap = monthly request limit).
+export function fullClaudeWarning(st) {
+  const cap = st && Number.isFinite(st.cap) ? ' ' + sentence('Your monthly limit is ' + st.cap + ' Claude requests, and it still applies') : '';
+  return sentence('Claude will be used on its own, and recipe imports and their matching run without asking, so costs add up') + cap;
 }
 
 // "Claude estimated sodium and iron." for a food whose blank micronutrients Claude filled, else ''.

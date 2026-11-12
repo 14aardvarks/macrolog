@@ -29,7 +29,7 @@ export function renderFoodForm(root, opts, ctx) {
   const val = (k) => (draft[k] == null ? '' : typeof draft[k] === 'number' ? fmtAmount(draft[k]) : String(draft[k]));
   f.name = field('Name', { value: val('name'), autocomplete: 'off' });
   f.brand = field('Brand (optional)', { value: val('brand'), autocomplete: 'off' });
-  f.serving_unit = field('Serving unit (g, ml, tbsp, cup, slice...)', { value: val('serving_unit'), autocapitalize: 'none', autocomplete: 'off' });
+  f.serving_unit = field('Serving unit (g, ml, tbsp, cup, slice, count...)', { value: val('serving_unit'), autocapitalize: 'none', autocomplete: 'off' });
   f.label_text = field('Label serving text (optional)', { value: val('label_text'), autocomplete: 'off' });
   f.barcode = field('Barcode (optional)', { value: opts.barcode || draft.barcode || '', inputmode: 'numeric' });
   NUM.forEach(([k, label, , ph]) => { f[k] = field(label, { value: val(k), inputmode: 'decimal', placeholder: ph, autocomplete: 'off', disabled: locked }); });

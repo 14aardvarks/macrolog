@@ -100,6 +100,16 @@ export function reviewDraft(recipe, extra) {
   };
 }
 
+// The unit choices of a review row: None (blank) and Count first, then the measures. A word the recipe used (clove, pinch) stays
+// selectable as its own choice so nothing is guessed or lost.
+export const IMPORT_UNITS = [['', 'None'], ['count', 'Count'], ['g', 'g'], ['kg', 'kg'], ['oz', 'oz'], ['lb', 'lb'], ['ml', 'ml'], ['l', 'l'],
+  ['floz', 'fl oz'], ['cup', 'cup'], ['tbsp', 'tbsp'], ['tsp', 'tsp']];
+export function importUnitOptions(unit) {
+  const cur = String(unit == null ? '' : unit).trim();
+  const known = IMPORT_UNITS.some(([v]) => v === cur);
+  return [...IMPORT_UNITS.map(([value, label]) => ({ value, label })), ...(known ? [] : [{ value: cur, label: cur }])];
+}
+
 export const blankRow = () => ({ amount: '', unit: '', name: '', note: '', text: '' });
 
 // A row's amount: the exact number it was filled from while the box text is untouched (shown is the text the box was built with),
@@ -109,7 +119,8 @@ function rowAmount(row) { return amountBoxValue(row.amount, row.shown, row.exact
 // The line as shown and stored. An edited row is rebuilt from its parts, so the stored text never disagrees with them.
 export function rowText(row) {
   const a = rowAmount(row);
-  const head = [a == null ? '' : qtyText(a, row.unit), String(row.unit || '').trim(), String(row.name || '').trim()].filter(Boolean).join(' ');
+  const unit = String(row.unit || '').trim();
+  const head = [a == null ? '' : qtyText(a, row.unit), unit === 'floz' ? 'fl oz' : unit, String(row.name || '').trim()].filter(Boolean).join(' ');
   return head + (String(row.note || '').trim() ? ', ' + row.note.trim() : '');
 }
 

@@ -13,7 +13,7 @@ import {
   parseIngredientText, parseIngredientLine, reviewDraft, reviewBody, blankRow, matchState, matchCountText, toggleAll, toggleId,
   proposalText, matchWhat, importWhat, matchSnapshot, restoreBody, changedSince, nextUnmatched, pendingProposals,
   acceptAllText, notMatchedText, saveChoice, canSaveWithout, SAVE_WITHOUT_NONE, unmatchedIds, photoPick, PHOTOS_TEXT, MATCH_METHODS, matchMethod, matchRunText, methodBatch, matchDoneText, proposalHead,
-  AUTO_MATCH_LOADING, AUTO_MATCH_FAILED, autoMatchIds, autoMatchResult, autoMatchPlan, autoClaudeBatch, AUTO_CLAUDE_FAILED, AUTO_CLAUDE_CANCELLED, rateLimitNote,
+  importUnitOptions, AUTO_MATCH_LOADING, AUTO_MATCH_FAILED, autoMatchIds, autoMatchResult, autoMatchPlan, autoClaudeBatch, AUTO_CLAUDE_FAILED, AUTO_CLAUDE_CANCELLED, rateLimitNote,
 } from './recipeimport.js';
 import { servingSizeEditor } from './servingsize.js';
 
@@ -29,8 +29,9 @@ export async function renderImport(root, ctx) {
   let st = null;
   try { st = await api.aiStatus(); } catch (e) { st = { enabled: false }; }
   const aiOn = aiFeature(st, 'recipe');
-  // Full Claude Use: Read With Claude on pasted text runs without the extra confirm. The cost shows here before the tap instead,
-  // and at the monthly cap the button is off with one quiet note.
+  // Full Claude Use: Read With Claude (text or photos) runs without the extra confirm, and the matching right after the import
+  // uses Claude on its own. The cost is shown where the setting is turned on; the text line shows it again, and at the monthly
+  // cap the buttons are off with one quiet note.
   const direct = aiOn && ctx.settings.full_claude === true;
   const capped = direct && !(st.remaining > 0);
   const status = h('div', { 'aria-live': 'polite' });
@@ -61,7 +62,7 @@ export async function renderImport(root, ctx) {
     if (input.kind === 'photos') {
       show(panel, h('div', null,
         h('p', { class: 'sub' }, PHOTOS_TEXT),
-        aiOn ? [h('label', { class: 'btn' }, 'Choose or Take Photos', files), fileList, photoNote, note, h('div', { class: 'row wrap' }, readPhotos)] : noAi));
+        aiOn ? [h('label', { class: 'btn' }, 'Choose or Take Photos', files), fileList, photoNote, note, h('div', { class: 'row wrap' }, readPhotos), capped ? h('p', { class: 'sub' }, CLAUDE_CAP_NOTE) : null] : noAi));
     } else {
       show(panel, h('div', null,
         h('label', { class: 'field' }, h('span', null, 'Recipe text'), area),
@@ -74,7 +75,7 @@ export async function renderImport(root, ctx) {
     chosen = pick.files;
     show(photoNote, pick.warning ? message(pick.warning, 'error') : null);
     fileList.textContent = chosen.length ? chosen.length + (chosen.length === 1 ? ' photo: ' : ' photos: ') + chosen.map((f) => f.name).join(', ') : 'No photos chosen.';
-    readPhotos.disabled = !chosen.length;
+    readPhotos.disabled = capped || !chosen.length;
   }
   const done = (recipe, extra) => { ctx.flow.draft = reviewDraft(recipe, extra); ctx.go('importreview'); };
   function splitLocal() {
@@ -91,12 +92,12 @@ export async function renderImport(root, ctx) {
       show(status, message('Claude is reading the recipe...'));
       const r = await api.recipeFromText(text, note.input.value.trim());
       done(r.recipe, { warnings: r.warnings, cost: r.cost });
-    } catch (e) { show(status, message(e.message, 'error')); } finally { readText.disabled = capped; }
+    } catch (e) { show(status, message(e.status === 429 && direct ? CLAUDE_CAP_NOTE : e.message, 'error')); } finally { readText.disabled = capped; }
   }
   async function sendPhotos() {
     readPhotos.disabled = true;
     try {
-      if (!(await confirmClaude(ctx.settings, { what: importWhat('photos', chosen.length), query: { recipe_images: chosen.length } }))) return;
+      if (!direct && !(await confirmClaude(ctx.settings, { what: importWhat('photos', chosen.length), query: { recipe_images: chosen.length } }))) return;
       show(status, message('Preparing photos...'));
       const form = new FormData();
       for (let i = 0; i < chosen.length; i++) form.append('images', await toJpeg(chosen[i]), 'recipe' + (i + 1) + '.jpg');
@@ -104,7 +105,7 @@ export async function renderImport(root, ctx) {
       show(status, message('Claude is reading the recipe...'));
       const r = await api.recipeFromPhotos(form);
       done(r.recipe, { warnings: r.warnings, cost: r.cost });
-    } catch (e) { show(status, message(e.message, 'error')); } finally { readPhotos.disabled = !chosen.length; }
+    } catch (e) { show(status, message(e.status === 429 && direct ? CLAUDE_CAP_NOTE : e.message, 'error')); } finally { readPhotos.disabled = capped || !chosen.length; }
   }
 
   root.appendChild(h('section', { class: 'screen import' }, bar(ctx), h('h1', null, 'Import Recipe'),
@@ -133,8 +134,11 @@ export function renderReview(root, ctx) {
       f.classList.add('import-' + key);
       return f;
     };
+    const unitSel = select(importUnitOptions(r.unit), String(r.unit == null ? '' : r.unit).trim(), { 'aria-label': 'Unit of ingredient ' + (i + 1) });
+    unitSel.addEventListener('change', () => { r.unit = unitSel.value; });
+    const unitBox = h('label', { class: 'field import-unit' }, h('span', null, 'Unit'), unitSel);
     return h('li', { class: 'import-row' },
-      h('div', { class: 'import-fields' }, box('amount', 'Amount', { inputmode: 'decimal' }), box('unit', 'Unit', { autocapitalize: 'none' }),
+      h('div', { class: 'import-fields' }, box('amount', 'Amount', { inputmode: 'decimal' }), unitBox,
         box('name', 'Ingredient'), box('note', 'Note')),
       h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Remove ingredient ' + (i + 1) + (r.name ? ', ' + r.name : ''),
         onclick: () => { draft.rows.splice(i, 1); paintRows(); } }, '×'));
@@ -318,7 +322,8 @@ export async function renderMatch(root, params, ctx) {
         if (b.send.length && left != null && left <= 0) {
           text = [text, CLAUDE_CAP_NOTE].filter(Boolean).join(' ');
         } else if (b.send.length) {
-          if (!(await confirmClaude(ctx.settings, { what: matchWhat(b.send.length), query: { match_rows: b.send.length } }))) {
+          // Full Claude Use: the matching after an import never asks; otherwise the usual confirm
+          if (ctx.settings.full_claude !== true && !(await confirmClaude(ctx.settings, { what: matchWhat(b.send.length), query: { match_rows: b.send.length } }))) {
             text = [text, AUTO_CLAUDE_CANCELLED].filter(Boolean).join(' ');
           } else {
             show(status, message('Claude is matching ' + b.send.length + (b.send.length === 1 ? ' ingredient...' : ' ingredients...')));
@@ -499,14 +504,16 @@ export async function renderMatch(root, params, ctx) {
     }, fail);
     save.addEventListener('click', () => {
       const a = memo.value(amt.input.value);
-      if (a == null || a <= 0) { show(status, message('Enter an amount above zero for ' + name + '.', 'error')); amt.input.focus(); return; }
       delete editing[item.id];
+      if (!amt.input.value.trim()) { apply(item.id, { skipped: true }); return; }  // no amount: it stays a plain text line, counting nothing
+      if (a == null || a <= 0) { editing[item.id] = true; show(status, message('Check the amount of ' + name + '.', 'error')); amt.input.focus(); return; }
       apply(item.id, { food_id: item.food_id, amount: a, unit: unitSel.value });
     });
     const noAmount = item.check && item.src && item.src.amount == null;
     return h('div', { class: 'amount-check', role: 'group', 'aria-label': (item.check ? 'Check amount of ' : 'Amount of ') + name },
-      item.check ? h('p', { class: 'sub' }, noAmount ? 'The recipe gives no amount here. Enter one, or tap Skip.'
+      item.check ? h('p', { class: 'sub' }, noAmount ? 'The recipe gives no amount here. Enter one, or leave it empty to keep plain text.'
         : 'The recipe amount could not be converted for this food. Enter the amount, then tap Confirm Amount.') : null,
+      h('p', { class: 'sub' }, 'Leave the amount empty to keep the line as plain text.'),
       h('div', { class: 'amount-edit' }, amt, unitBox, save,
         item.check ? null : h('button', { class: 'btn small ghost', type: 'button', onclick: () => { delete editing[item.id]; paintRows(); } }, 'Cancel')));
   }

@@ -56,7 +56,7 @@ IMPORT_TOOL = {
                 "properties": {
                     "text": {"type": "string", "description": "The ingredient line exactly as written"},
                     "amount": {**_NNUM, "description": "Quantity as a decimal (1 1/2 is 1.5, a range uses the average), null when none"},
-                    "unit": {**_NSTR, "description": "Unit in singular (cup, tbsp, tsp, g, oz, lb, ml, clove, can), null for plain counts like 2 eggs"},
+                    "unit": {**_NSTR, "description": "Unit in singular (cup, tbsp, tsp, g, oz, lb, ml, clove, can), null when the line gives none (2 eggs, salt to taste), never guessed"},
                     "name": {"type": "string", "description": "The ingredient itself, short, without amount, unit or preparation"},
                     "note": {**_NSTR, "description": "Preparation or other notes (chopped, divided, to taste), or null"},
                 },
@@ -74,7 +74,7 @@ IMPORT_INSTRUCTION = (
     "Extract the ingredient list of the recipe {where} and record it with the {tool} tool. "
     "{data}"
     "Record one entry per ingredient line, in order. Leave section headings (such as \"For the sauce\"), equipment and method steps out of the ingredient list. "
-    "Split each line into amount, unit, name and note. Do not convert units and do not invent amounts. "
+    "Split each line into amount, unit, name and note. Do not convert units and do not invent amounts or units: leave amount or unit null when the line has none. "
     "Record the method separately in steps, in order, one short instruction per step, copied from the recipe. Steps hold only the "
     "method: no ingredient lists, headings, tips, stories, ads, nutrition or reader comments. Leave steps empty when there is no method. "
     "If there is no recipe, record an empty ingredient list and say so in confidence."
@@ -142,7 +142,7 @@ def _clip(v, limit: int) -> Optional[str]:
 
 def clean_unit(v) -> Optional[str]:
     t = _clip(v, 40)
-    if not t:
+    if not t or not units.unit_or_blank(t):
         return None
     try:
         return units.parse_unit(t)

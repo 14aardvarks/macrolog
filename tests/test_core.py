@@ -107,7 +107,7 @@ def test_create_food_normalizes_barcode_and_accepts_ai_source(a):
 
 def test_unit_must_be_available(a):
     f = food(a, BREAD | {"serving_g": None, "name": "Slice only"})
-    assert [u["unit"] for u in a.get(f"/api/foods/{f['id']}").json()["units"]] == ["slice", "serving", "pct"]
+    assert [u["unit"] for u in a.get(f"/api/foods/{f['id']}").json()["units"]] == ["slice", "serving", "pct", "count", ""]
     r = a.post("/api/entries", json={"food_id": f["id"], "amount": 10, "unit": "g"})
     assert r.status_code == 400 and "not available" in r.json()["detail"]
     assert a.get("/api/preview", params={"food_id": f["id"], "amount": 10, "unit": "g"}).status_code == 400
@@ -351,7 +351,7 @@ def test_day_over_goal_has_negative_remaining(a):
 
 
 @pytest.mark.parametrize("body", [{"amount": 0}, {"amount": -2}, {"amount": "abc"}, {"amount": None}, {"unit": "cookie"},
-                                  {"unit": ""}, {"meal": "brunch"}, {"day": "2025/01/01"}, {"food_id": "x"},
+                                  {"unit": "furlong"}, {"meal": "brunch"}, {"day": "2025/01/01"}, {"food_id": "x"},
                                   {"food_id": True}])
 def test_entry_validation(a, body):
     f = food(a, BREAD)

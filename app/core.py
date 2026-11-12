@@ -327,12 +327,12 @@ def check_amount_unit(food: dict, amount, unit) -> tuple[float, str]:
     """Amount must be positive and finite, unit must be one the food can convert to."""
     amount = number(amount, "amount", positive=True)
     try:
-        unit = units.parse_unit(unit)
+        unit = units.unit_or_blank(unit)
     except ValueError as e:
         raise bad(f"unit: {e}")
     allowed = [u["unit"] for u in units.available_units(food)]
     if unit not in allowed:
-        raise bad(f"Unit '{unit}' is not available for this food. Choose one of: {', '.join(allowed)}")
+        raise bad(f"Unit '{unit}' is not available for this food. Choose one of: {', '.join(u or 'none' for u in allowed)}")
     return amount, unit
 
 
@@ -967,7 +967,7 @@ def items_from_rows(rows) -> dict:
         food = food_dict(r)
         base_amount, base_unit = units.default_pick(food)  # the package's own serving until the food is logged
         amount = r["lu_amount"] if r["lu_amount"] is not None else base_amount
-        unit = r["lu_unit"] or base_unit
+        unit = r["lu_unit"] if r["lu_amount"] is not None and r["lu_unit"] is not None else base_unit  # a blank unit is a real last unit
         items.append(quick_item(food, amount, unit, r["last_meal"]))
     return {"items": items}
 
