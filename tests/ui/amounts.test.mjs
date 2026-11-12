@@ -121,3 +121,40 @@ test('moveItem and stepsCheck', () => {
   assert.match(stepsCheck(['x'.repeat(1001)]).error, /Step 1/);
   assert.equal(stepsCheck(new Array(60).fill('x')).steps.length, 60);
 });
+
+import { amountBoxValue, amountMemo, parseAmount as parseAmt } from '../../app/static/js/util.js';
+
+test('amountBoxValue keeps the exact value while the text is unchanged', () => {
+  assert.equal(amountBoxValue('3/8', '3/8', 0.4), 0.4);
+  assert.equal(amountBoxValue(' 3/8 ', '3/8', 0.4), 0.4);
+  assert.equal(amountBoxValue('0.3', '0.3', 0.313), 0.313);
+});
+
+test('amountBoxValue parses edited text: fractions, mixed numbers, decimals', () => {
+  assert.equal(amountBoxValue('1 1/2', '3/8', 0.4), 1.5);
+  assert.equal(amountBoxValue('1/3', '3/8', 0.4), 1 / 3);
+  assert.equal(amountBoxValue('0.75', '3/8', 0.4), 0.75);
+  assert.equal(amountBoxValue('3/4', '3/8', 0.4), 0.75);
+});
+
+test('amountBoxValue: blank, unreadable and no exact value', () => {
+  assert.equal(amountBoxValue('', '3/8', 0.4), null);
+  assert.equal(amountBoxValue('abc', '3/8', 0.4), null);
+  assert.equal(amountBoxValue('', '', null), null);
+  assert.equal(amountBoxValue('2', '2', null), 2);
+});
+
+test('amountMemo works in fraction and decimal modes', () => {
+  for (const [mode, shown] of [['fraction', '3/8'], ['decimal', '0.4']]) {
+    const m = amountMemo();
+    assert.equal(m.set(0.4, 'cup', mode), shown);
+    assert.equal(m.value(shown), 0.4);
+    assert.equal(m.read(shown), 0.4);
+    assert.equal(m.value('1 1/2'), 1.5);
+    assert.equal(m.read('1/3'), '1/3');
+    assert.equal(m.value(''), null);
+  }
+  const g = amountMemo(12.34567, 'g');
+  assert.equal(g.value(g.shown()), 12.34567);
+  assert.equal(parseAmt(g.read('13')), 13);
+});

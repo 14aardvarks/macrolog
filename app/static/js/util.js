@@ -269,10 +269,36 @@ export function checkedItems(rows) {
 // Text for an amount box: follows the fraction/decimal setting for the unit (qtyText). Typing accepts both.
 export const rowAmountText = (amount, unit) => qtyText(amount, unit);
 
+// An amount box shows rounded text (0.4 cup reads 3/8), so the stored number must survive reopening and saving. amountBoxValue gives
+// the exact number the box was filled from while its text is still what was shown, and otherwise parses what was typed (fractions
+// like 1 1/2, 1/3 and decimals). A blank or unreadable box gives null.
+export function amountBoxValue(text, shownText, exact) {
+  const n = Number(exact);
+  if (exact != null && exact !== '' && Number.isFinite(n) && String(text == null ? '' : text).trim() === String(shownText == null ? '' : shownText).trim()) return n;
+  return parseAmount(text);
+}
+
+// The same rule for one live box: set() records the exact number and the text shown for it (returns the text to put in the box),
+// value(boxText) reads it back. read(boxText) gives the exact number while the text is unchanged, else the raw text for parseAmount.
+export function amountMemo(n, unit, format) {
+  let exact = null;
+  let shown = '';
+  const memo = {
+    keep(num, text) { exact = num == null || !Number.isFinite(Number(num)) ? null : Number(num); shown = String(text == null ? '' : text); return shown; },
+    set(num, u, f) { return memo.keep(num, qtyText(num, u, f)); },
+    shown: () => shown,
+    exact: () => exact,
+    value: (text) => amountBoxValue(text, shown, exact),
+    read: (text) => { const v = amountBoxValue(text, shown, exact); return v !== null && v === exact ? exact : text; },
+  };
+  if (n !== undefined) memo.set(n, unit, format);
+  return memo;
+}
+
 // Rows of the recipe screen are kept as drafts {checked, amount (text), unit} while the picker is open.
 // Returns a copy with row i set to the picked amount and unit and ticked. Other rows are untouched.
 export function applyRowPick(draft, i, amount, unit) {
-  return draft.map((r, k) => (k === i ? { ...r, checked: true, amount: rowAmountText(amount, unit), unit } : { ...r }));
+  return draft.map((r, k) => (k === i ? { ...r, checked: true, amount: rowAmountText(amount, unit), exact: amount, shown: rowAmountText(amount, unit), unit } : { ...r }));
 }
 
 // A draft is only restored when it was saved for this recipe, from this point in the history, and has one row per item.

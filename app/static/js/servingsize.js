@@ -2,7 +2,7 @@
 // screen (Save Serving Size) and by the last step of Match Ingredients (saved as each box changes, undone by Back there).
 import { api } from './api.js';
 import { h, field, message, show, select } from './dom.js';
-import { fmtAmount, fmtNum, qtyText } from './util.js';
+import { fmtAmount, fmtNum, qtyText, amountMemo } from './util.js';
 import { YIELD_UNITS, servingSizeBody } from './recipeimport.js';
 
 let seq = 0;
@@ -13,8 +13,10 @@ export function servingSizeEditor(meal, opts) {
   const o = opts || {};
   const id = 'yield-' + (++seq);
   const status = o.status || h('div', { 'aria-live': 'polite' });
-  const servings = field('Servings it makes', { value: fmtAmount(meal.servings), inputmode: 'decimal', autocomplete: 'off' });
-  const amount = h('input', { type: 'text', id, inputmode: 'decimal', autocomplete: 'off', value: meal.yield ? qtyText(meal.yield.amount, meal.yield.unit) : '',
+  const servingsMemo = amountMemo();
+  const yieldMemo = amountMemo();
+  const servings = field('Servings it makes', { value: servingsMemo.keep(meal.servings, fmtAmount(meal.servings)), inputmode: 'decimal', autocomplete: 'off' });
+  const amount = h('input', { type: 'text', id, inputmode: 'decimal', autocomplete: 'off', value: meal.yield ? yieldMemo.set(meal.yield.amount, meal.yield.unit) : '',
     'aria-describedby': id + '-help' });
   const unit = select(YIELD_UNITS.map(([value, label]) => ({ value, label })), meal.yield ? meal.yield.unit : 'g', { 'aria-label': 'Total yield unit' });
   const useTotal = h('button', { class: 'btn small', type: 'button' }, 'Use Total of Ingredients');
@@ -32,7 +34,7 @@ export function servingSizeEditor(meal, opts) {
     } catch (e) { show(status, message(e.message, 'error')); } finally { if (save) save.disabled = false; }
   }
   function commit() {
-    const r = servingSizeBody(servings.input.value, amount.value, unit.value);
+    const r = servingSizeBody(servingsMemo.read(servings.input.value), yieldMemo.read(amount.value), unit.value);
     if (r.error) { show(status, message(r.error, 'error')); return; }
     send(r.body);
   }
@@ -44,7 +46,7 @@ export function servingSizeEditor(meal, opts) {
   }
   useTotal.addEventListener('click', () => {
     if (current.ingredient_grams == null) return;
-    amount.value = fmtAmount(current.ingredient_grams);
+    amount.value = yieldMemo.keep(current.ingredient_grams, fmtAmount(current.ingredient_grams));
     unit.value = 'g';
     commit();  // one tap fills it in grams and saves
   });

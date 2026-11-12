@@ -5,7 +5,7 @@ import { microGrid } from './micros.js';
 import { refreshControl } from './refresh.js';
 import {
   MEALS, MEAL_LABELS, canRefresh, parseAmount, fmtNum, fmtAmount, indexFromScroll, debounce, guessMeal,
-  initialPick, startPreset, convertAmount, gramsFor, SERVING, PCT, amountText, amountLabel, amountValues, withValue, rowAmountText, qtyText, roundTo,
+  initialPick, startPreset, convertAmount, gramsFor, SERVING, PCT, amountText, amountLabel, amountValues, withValue, rowAmountText, qtyText, amountMemo, roundTo,
 } from './util.js';
 
 const ROW = 44;
@@ -159,10 +159,11 @@ export async function renderPicker(root, params, ctx) {
     preview();
   }
 
+  const typedMemo = amountMemo();
   function startTyping() {
     if (typing) return;
     typing = true;
-    amountIn.value = rowAmountText(st.amount, st.unit);
+    amountIn.value = typedMemo.set(st.amount, st.unit);
     amountIn.setAttribute('aria-invalid', 'false');
     amtWheel.wrap.hidden = true;
     typeBtn.style.visibility = 'hidden';  // keeps the layout still, so a tap on Log still lands
@@ -171,14 +172,14 @@ export async function renderPicker(root, params, ctx) {
     amountIn.select();
   }
   function onType() {
-    const v = parseAmount(amountIn.value);
+    const v = typedMemo.value(amountIn.value);
     amountIn.setAttribute('aria-invalid', v != null && v > 0 ? 'false' : 'true');
   }
   // Apply the typed amount (when valid) and go back to the wheel. cancel keeps the old amount.
   function finishTyping(cancel, refocus) {
     if (!typing) return;
     typing = false;
-    const v = cancel ? null : parseAmount(amountIn.value);
+    const v = cancel ? null : typedMemo.value(amountIn.value);
     typeBox.hidden = true;
     typeBtn.style.visibility = '';
     amtWheel.wrap.hidden = false;

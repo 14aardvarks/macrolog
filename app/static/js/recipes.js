@@ -2,7 +2,7 @@
 // from Saved. Matching is optional: a recipe with unmatched ingredients opens and logs like any other.
 import { api } from './api.js';
 import { h, clear, field, message, show, select } from './dom.js';
-import { MEALS, MEAL_LABELS, fmtNum, pageOf, PAGE_SIZE, matchedAmountText, stepsCheck, qtyText, SAVED_FILTERS, SAVED_FILTER_LABELS, filterSavedItems,
+import { MEALS, MEAL_LABELS, fmtNum, pageOf, PAGE_SIZE, matchedAmountText, stepsCheck, amountMemo, SAVED_FILTERS, SAVED_FILTER_LABELS, filterSavedItems,
   RECIPE_SORTS, RECIPE_SORT_LABELS, sortRecipes, sentence, RECIPE_OWNERS, RECIPE_OWNER_LABELS, recipeOwner, filterRecipeOwner, ownerText,
   ownerEmptyText, groupRecipesByMeal, pageGroups } from './util.js';
 import { recipeListSub, notCounted, notCountedText, matchState, servingsText, perServingText, tagsText, portionUnits, portionFraction, portionAmount, yieldText } from './recipeimport.js';
@@ -124,6 +124,7 @@ export async function renderRecipeView(root, params, ctx) {
   const mealSel = select([{ value: 'none', label: MEAL_LABELS.none }, ...MEALS.map((m) => ({ value: m, label: MEAL_LABELS[m] }))],
     ctx.defaultMeal(), { 'aria-label': 'Meal' });
   const amount = field('Amount', { inputmode: 'decimal', autocomplete: 'off', value: '1' });
+  const memo = amountMemo(1, 'serving');
   let units = portionUnits(meal);
   const unitSel = select(units.map((u) => ({ value: u.unit, label: u.label })), 'serving', { 'aria-label': 'Amount unit' });
   let lastUnit = 'serving';
@@ -135,7 +136,7 @@ export async function renderRecipeView(root, params, ctx) {
   function sizeSaved(m) {
     Object.assign(meal, m);
     units = portionUnits(meal);
-    if (!units.some((u) => u.unit === unitSel.value)) { unitSel.value = 'serving'; amount.input.value = '1'; }
+    if (!units.some((u) => u.unit === unitSel.value)) { unitSel.value = 'serving'; amount.input.value = memo.set(1, 'serving'); }
     const keep = unitSel.value;
     clear(unitSel);
     units.forEach((u) => unitSel.appendChild(h('option', { value: u.unit, selected: u.unit === keep }, u.label)));
@@ -145,13 +146,13 @@ export async function renderRecipeView(root, params, ctx) {
     per.textContent = perText();
   }
   unitSel.addEventListener('change', () => {  // keep the same share of the recipe in the new unit when the amount reads
-    const from = portionFraction(meal, amount.input.value, lastUnit);
-    if (!from.error) amount.input.value = qtyText(portionAmount(meal, from.fraction, unitSel.value), unitSel.value);
+    const from = portionFraction(meal, memo.read(amount.input.value), lastUnit);
+    if (!from.error) amount.input.value = memo.set(portionAmount(meal, from.fraction, unitSel.value), unitSel.value);
     lastUnit = unitSel.value;
   });
   const chosenMeal = () => (mealSel.value === 'none' ? null : mealSel.value);
   const logBtn = h('button', { class: 'btn primary', type: 'button', onclick: async () => {
-    const r = portionFraction(meal, amount.input.value, unitSel.value);
+    const r = portionFraction(meal, memo.read(amount.input.value), unitSel.value);
     if (r.error) { show(status, message(r.error, 'error')); return; }
     logBtn.disabled = true;
     try { await api.logMeal(meal.id, { amount: r.amount, unit: unitSel.value, meal: chosenMeal() }); await ctx.go('today', {}, true); } catch (e) {

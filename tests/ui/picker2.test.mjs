@@ -99,7 +99,7 @@ import { rowAmountText, applyRowPick, draftFits } from '../../app/static/js/util
 test('applyRowPick sets one row, ticks it and keeps the others', () => {
   const draft = [{ checked: false, amount: '2', unit: 'slice' }, { checked: true, amount: '1', unit: 'tbsp' }];
   const out = applyRowPick(draft, 0, 34, 'g');
-  assert.deepEqual(out[0], { checked: true, amount: '34', unit: 'g' });
+  assert.deepEqual(out[0], { checked: true, amount: '34', exact: 34, shown: '34', unit: 'g' });
   assert.deepEqual(out[1], draft[1]);
   assert.notEqual(out[1], draft[1]);
   assert.equal(draft[0].checked, false);

@@ -1,7 +1,7 @@
 import { api, setUnauthorizedHandler } from './api.js';
 import { h, clear, select, field, message, show, cameraIcon, sourceBadge } from './dom.js';
 import {
-  MEALS, MEAL_LABELS, parseDecimal, parseAmount, amountText, servingText, qtyText, setAmountFormat, unitLabel, fmtNum, fmtAmount, groupByMeal, mealGroupsAll, quickLabel, checkedItems, canSaveRecipe, rowAmountText, applyRowPick, draftFits, localDate, progressText, remainingText,
+  MEALS, MEAL_LABELS, parseDecimal, parseAmount, amountText, servingText, qtyText, amountMemo, setAmountFormat, unitLabel, fmtNum, fmtAmount, groupByMeal, mealGroupsAll, quickLabel, checkedItems, canSaveRecipe, rowAmountText, applyRowPick, draftFits, localDate, progressText, remainingText,
   sentence, matchAmount, newRecipeDraft, recipeAddRow, recipeSetRow, stepsBack, barWidth, debounce, digitsOnly, guessMeal, pctTotal, latestGuard, MEAL_FILTERS, MEAL_FILTER_LABELS, filterByMeal, filterSaved, pageOf, PAGE_SIZE, emptyText,
   entryKey, todayHold, holdFresh, holdTarget, DEFAULT_DISPLAY, searchSource, searchAction, searchHint, DESCRIPTION_TEXT, aiFeature, aiFeatureOff, searchSources, startSource,
   ownerText, groupRecipesByMeal, pageGroups,
@@ -681,16 +681,20 @@ async function mealScreen(root, params) {
   const status = h('div', { 'aria-live': 'polite' });
   const mealSel = mealSelect(params.meal || defaultMeal());
   if (draft && draft.meal !== undefined) mealSel.value = draft.meal;
-  const amountBox = field('Amount', { inputmode: 'decimal', autocomplete: 'off', value: qtyText(shareAmount, unit) });
+  const shareMemo = amountMemo();
+  const amountBox = field('Amount', { inputmode: 'decimal', autocomplete: 'off', value: shareMemo.set(shareAmount, unit) });
   const unitSel = select(units.map((u) => ({ value: u.unit, label: u.label })), unit, { 'aria-label': 'Amount unit' });
   const note = h('p', { class: 'sub', 'aria-live': 'polite' }, portionNote(found, shareAmount, unit));
   const rows = meal.items.map((it, i) => {
     const d = draft ? draft.rows[i] : null;
     const row = { it, unit: d ? d.unit : it.unit };
-    row.num = d ? parseAmount(d.amount) : it.amount;
+    row.memo = amountMemo();
+    const shownText = d ? d.amount : row.memo.set(it.amount, it.unit);
+    if (d) row.memo.keep(d.exact == null ? null : d.exact, d.shown == null ? d.amount : d.shown);
+    row.num = d ? row.memo.value(d.amount) : it.amount;
     row.box = h('input', { type: 'checkbox', checked: d ? d.checked : true, 'aria-label': 'Include ' + it.food.name });
-    row.amt = h('input', { type: 'text', inputmode: 'decimal', value: d ? d.amount : rowAmountText(it.amount, it.unit), 'aria-label': 'Amount of ' + it.food.name });
-    row.amt.addEventListener('input', () => { row.num = parseAmount(row.amt.value); });
+    row.amt = h('input', { type: 'text', inputmode: 'decimal', value: shownText, 'aria-label': 'Amount of ' + it.food.name });
+    row.amt.addEventListener('input', () => { row.num = row.memo.value(row.amt.value); });
     row.unitEl = h('span', { class: 'unit' }, unitLabel(row.unit));
     const name = h('button', { class: 'item-name', type: 'button', 'aria-label': 'Adjust ' + it.food.name, onclick: () => adjust(i) },
       h('span', { class: 'item-name-text' }, it.food.name), h('span', { class: 'item-name-hint', 'aria-hidden': 'true' }, 'Adjust \u203A'));
@@ -699,32 +703,33 @@ async function mealScreen(root, params) {
   });
   // A new amount or unit for the recipe scales every row by the same factor, so amounts changed by hand keep their ratio.
   function rescale() {
-    const r = portionFraction(found, amountBox.input.value, unitSel.value);
+    const r = portionFraction(found, shareMemo.read(amountBox.input.value), unitSel.value);
     if (r.error) { show(status, message(r.error, 'error')); return; }
     show(status, null);
+    shareMemo.keep(r.amount, amountBox.input.value);
     const k = r.fraction / frac;
     frac = r.fraction;
     shareAmount = r.amount;
     unit = unitSel.value;
-    rows.forEach((x) => { if (x.num != null) { x.num = Math.round(x.num * k * 10000) / 10000; x.amt.value = rowAmountText(x.num, x.unit); } });
+    rows.forEach((x) => { if (x.num != null) { x.num = Math.round(x.num * k * 10000) / 10000; x.amt.value = x.memo.set(x.num, x.unit); } });
     note.textContent = portionNote(found, shareAmount, unit);
   }
   amountBox.input.addEventListener('change', rescale);
   unitSel.addEventListener('change', () => {
     // Switching units keeps the same share of the recipe: 1 of 4 servings becomes 25% or 300 g of 1200 g.
-    amountBox.input.value = qtyText(portionAmount(found, frac, unitSel.value), unitSel.value);
+    amountBox.input.value = shareMemo.set(portionAmount(found, frac, unitSel.value), unitSel.value);
     rescale();
   });
   // Open the picker for one ingredient. The screen is rebuilt on return, so every row is saved first.
   function adjust(i) {
     const r = rows[i];
     state.draft = { mealId: meal.id, depth: state.depth, meal: mealSel.value, portion: { amount: shareAmount, unit },
-      rows: rows.map((x) => ({ checked: x.box.checked, amount: x.amt.value, unit: x.unit })) };
-    const a = parseAmount(r.amt.value);
+      rows: rows.map((x) => ({ checked: x.box.checked, amount: x.amt.value, exact: x.memo.exact(), shown: x.memo.shown(), unit: x.unit })) };
+    const a = r.memo.value(r.amt.value);
     go('picker', { foodId: r.it.food_id, adjust: { index: i }, ...(a != null && a > 0 ? { amount: a, unit: r.unit } : { unit: r.unit }) });
   }
   async function log() {
-    const { items, error } = checkedItems(rows.map((r) => ({ checked: r.box.checked, amount: r.amt.value, food_id: r.it.food_id, unit: r.unit, name: r.it.food.name })));
+    const { items, error } = checkedItems(rows.map((r) => ({ checked: r.box.checked, amount: r.memo.read(r.amt.value), food_id: r.it.food_id, unit: r.unit, name: r.it.food.name })));
     if (error) { show(status, message(error, 'error')); return; }
     // amount and unit name the portion of the recipe log on Today; the rows themselves come from items
     try { await api.logMeal(meal.id, { items, amount: shareAmount, unit, meal: mealSel.value === 'none' ? null : mealSel.value }); await go('today', {}, true); } catch (e) {

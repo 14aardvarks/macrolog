@@ -1,5 +1,5 @@
 // Pure helpers for Import Recipe and Match Ingredients. No DOM access, safe to import from node.
-import { plural, parseAmount, fmtAmount, qtyText, servingText, amountText, roundTo, matchedAmountText, sentence, stepsCheck, MEALS, MEAL_LABELS, MICROS, autoMatch } from './util.js';
+import { plural, parseAmount, amountBoxValue, fmtAmount, qtyText, servingText, amountText, roundTo, matchedAmountText, sentence, stepsCheck, MEALS, MEAL_LABELS, MICROS, autoMatch } from './util.js';
 
 // Unit words found at the start of an ingredient line, mapped to the server's canonical units or a count word.
 const UNIT_WORDS = {
@@ -90,8 +90,11 @@ export function parseIngredientText(text) {
 export function reviewDraft(recipe, extra) {
   const r = recipe || {};
   return {
-    name: r.name || '', servings: r.servings == null ? '' : fmtAmount(r.servings), meals: [], warnings: [], cost: null,
-    rows: (r.ingredients || []).map((i) => ({ amount: i.amount == null ? '' : qtyText(i.amount, i.unit), unit: i.unit || '', name: i.name || '', note: i.note || '', text: i.text || '' })),
+    name: r.name || '', servings: r.servings == null ? '' : fmtAmount(r.servings), servingsExact: r.servings == null ? null : r.servings, servingsShown: r.servings == null ? '' : fmtAmount(r.servings), meals: [], warnings: [], cost: null,
+    rows: (r.ingredients || []).map((i) => {
+      const amount = i.amount == null ? '' : qtyText(i.amount, i.unit);
+      return { amount, shown: amount, exact: i.amount == null ? null : i.amount, unit: i.unit || '', name: i.name || '', note: i.note || '', text: i.text || '' };
+    }),
     steps: (r.steps || []).filter((x) => typeof x === 'string'),
     ...(extra || {}),
   };
@@ -99,9 +102,13 @@ export function reviewDraft(recipe, extra) {
 
 export const blankRow = () => ({ amount: '', unit: '', name: '', note: '', text: '' });
 
+// A row's amount: the exact number it was filled from while the box text is untouched (shown is the text the box was built with),
+// else what was typed.
+function rowAmount(row) { return amountBoxValue(row.amount, row.shown, row.exact); }
+
 // The line as shown and stored. An edited row is rebuilt from its parts, so the stored text never disagrees with them.
 export function rowText(row) {
-  const a = parseAmount(row.amount);
+  const a = rowAmount(row);
   const head = [a == null ? '' : qtyText(a, row.unit), String(row.unit || '').trim(), String(row.name || '').trim()].filter(Boolean).join(' ');
   return head + (String(row.note || '').trim() ? ', ' + row.note.trim() : '');
 }
@@ -112,7 +119,7 @@ export function reviewBody(draft) {
   if (!name) return { error: 'Give the recipe a name.' };
   let servings = null;
   if (String(draft.servings || '').trim()) {
-    servings = parseAmount(draft.servings);
+    servings = amountBoxValue(draft.servings, draft.servingsShown, draft.servingsExact);
     if (servings == null || servings <= 0 || servings > 1000) return { error: 'Servings must be a number above zero.' };
   }
   const rows = draft.rows.filter((r) => String(r.name || '').trim() || String(r.amount || '').trim() || String(r.unit || '').trim());
@@ -123,7 +130,7 @@ export function reviewBody(draft) {
     const nm = String(r.name || '').trim();
     if (!nm) return { error: 'Ingredient ' + (i + 1) + ' needs a name.' };
     const raw = String(r.amount || '').trim();
-    const amount = raw ? parseAmount(raw) : null;
+    const amount = raw ? rowAmount(r) : null;
     if (raw && amount == null) return { error: 'Check the amount of ' + nm + '.' };
     const unit = String(r.unit || '').trim() || null;
     const note = String(r.note || '').trim() || null;

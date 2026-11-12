@@ -8,7 +8,7 @@ import { toJpeg } from './ai.js';
 import { confirmClaude } from './notice.js';
 import { chips } from './saved.js';
 import { stepsEditor } from './steps.js';
-import { fmtNum, fmtAmount, servingText, centsText, sentence, parseAmount, rowAmountText, matchedAmountText, MICROS, microValue, aiFeature, aiFeatureOff } from './util.js';
+import { fmtNum, fmtAmount, servingText, centsText, sentence, amountMemo, rowAmountText, matchedAmountText, MICROS, microValue, aiFeature, aiFeatureOff } from './util.js';
 import {
   parseIngredientText, parseIngredientLine, reviewDraft, reviewBody, blankRow, matchState, matchCountText, toggleAll, toggleId,
   proposalText, matchWhat, importWhat, matchSnapshot, restoreBody, changedSince, nextUnmatched, pendingProposals,
@@ -475,7 +475,8 @@ export async function renderMatch(root, params, ctx) {
   // opened by Edit Amount on a matched row (Save Amount, Cancel). Saving is a plain match, which clears Check Amount.
   function amountEditor(item) {
     const name = item.food.name;
-    const amt = field('Amount', { inputmode: 'decimal', autocomplete: 'off', value: rowAmountText(item.amount, item.unit),
+    const memo = amountMemo();
+    const amt = field('Amount', { inputmode: 'decimal', autocomplete: 'off', value: memo.set(item.amount, item.unit),
       'aria-label': 'Amount of ' + name });
     const unitBox = h('label', { class: 'field unit-field' }, h('span', null, 'Unit'), h('span', { class: 'sub' }, 'Loading...'));
     const save = h('button', { class: 'btn small primary', type: 'button', disabled: true }, item.check ? 'Confirm Amount' : 'Save Amount');
@@ -486,7 +487,7 @@ export async function renderMatch(root, params, ctx) {
       save.disabled = false;
     }, fail);
     save.addEventListener('click', () => {
-      const a = parseAmount(amt.input.value);
+      const a = memo.value(amt.input.value);
       if (a == null || a <= 0) { show(status, message('Enter an amount above zero for ' + name + '.', 'error')); amt.input.focus(); return; }
       delete editing[item.id];
       apply(item.id, { food_id: item.food_id, amount: a, unit: unitSel.value });

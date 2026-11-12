@@ -40,10 +40,19 @@ test('pasted text drops headings and finds servings', () => {
   assert.equal(r.ingredients[2].note, 'as needed');
 });
 
+test('review draft keeps an odd imported amount until the box is edited', () => {
+  const d = reviewDraft({ name: 'X', servings: 2.4, ingredients: [{ amount: 0.4, unit: 'cup', name: 'oats', note: null, text: '' }] });
+  assert.equal(d.rows[0].amount, '3/8');
+  assert.equal(reviewBody(d).body.ingredients[0].amount, 0.4);
+  d.rows[0].amount = '1/2';
+  assert.equal(reviewBody(d).body.ingredients[0].amount, 0.5);
+  assert.equal(reviewBody(d).body.servings, 2.4);
+});
+
 test('review draft round trips into the import body', () => {
   const d = reviewDraft({ name: 'Pancakes', servings: 4, ingredients: [{ amount: 1.5, unit: 'cup', name: 'flour', note: null, text: '1 1/2 cups flour' }],
     steps: ['Mix.', 5, 'Fry.'] });
-  assert.deepEqual(d.rows[0], { amount: '1 1/2', unit: 'cup', name: 'flour', note: '', text: '1 1/2 cups flour' });
+  assert.deepEqual(d.rows[0], { amount: '1 1/2', shown: '1 1/2', exact: 1.5, unit: 'cup', name: 'flour', note: '', text: '1 1/2 cups flour' });
   assert.deepEqual(d.steps, ['Mix.', 'Fry.']);
   d.meals = ['breakfast'];
   d.rows.push(blankRow());  // an empty row is ignored

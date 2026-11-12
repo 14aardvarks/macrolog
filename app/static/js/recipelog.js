@@ -3,7 +3,7 @@
 // (the server rescales every row), move it to another meal, or remove it. Yesterday (params.copy): Log puts a copy on today.
 import { api } from './api.js';
 import { h, field, message, show, select, sourceBadge } from './dom.js';
-import { MEALS, MEAL_LABELS, fmtNum, qtyText, amountText } from './util.js';
+import { MEALS, MEAL_LABELS, fmtNum, qtyText, amountText, amountMemo } from './util.js';
 import { portionUnits, portionFraction, portionAmount, recipeAmountText, scaledLog, partsText, REMOVE_RECIPE_CONFIRM } from './recipeimport.js';
 import { fillMacroBar } from './chart.js';
 import { microGrid } from './micros.js';
@@ -25,7 +25,8 @@ export async function renderRecipeLog(root, params, ctx) {
   const startMeal = copy && params.meal !== undefined ? params.meal : log.meal;
   const mealSel = select([{ value: 'none', label: MEAL_LABELS.none }, ...MEALS.map((m) => ({ value: m, label: MEAL_LABELS[m] }))],
     startMeal || 'none', { 'aria-label': 'Meal' });
-  const amount = field('Amount', { inputmode: 'decimal', autocomplete: 'off', value: qtyText(log.amount, unit) });
+  const memo = amountMemo(unit === log.unit ? log.amount : null);
+  const amount = field('Amount', { inputmode: 'decimal', autocomplete: 'off', value: unit === log.unit ? memo.set(log.amount, unit) : qtyText(log.amount, unit) });
   const unitSel = select(units.map((u) => ({ value: u.unit, label: u.label })), unit, { 'aria-label': 'Amount unit' });
   const portionLine = h('p', { class: 'sub', 'aria-live': 'polite' });
   const kcal = h('span', null, '-');
@@ -44,7 +45,7 @@ export async function renderRecipeLog(root, params, ctx) {
   }
   // The live numbers follow the amount box; nothing is saved until Save Changes (or Log).
   function preview() {
-    const r = portionFraction(log, amount.input.value, unitSel.value);
+    const r = portionFraction(log, memo.read(amount.input.value), unitSel.value);
     if (r.error) { show(status, message(r.error, 'error')); return null; }
     show(status, null);
     frac = r.fraction;
@@ -54,7 +55,7 @@ export async function renderRecipeLog(root, params, ctx) {
   }
   amount.input.addEventListener('input', preview);
   unitSel.addEventListener('change', () => {  // the same share of the recipe in the new unit
-    amount.input.value = qtyText(portionAmount(log, frac, unitSel.value), unitSel.value);
+    amount.input.value = memo.set(portionAmount(log, frac, unitSel.value), unitSel.value);
     preview();
   });
 
