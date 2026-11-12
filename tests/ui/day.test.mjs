@@ -67,3 +67,20 @@ test('canSaveRecipe needs a ticked row and a name', () => {
   assert.equal(canSaveRecipe(0, 'Breakfast'), false);
   assert.equal(canSaveRecipe(2, '   '), false);
 });
+
+import { mealGroupsAll, quickLabel, MEALS } from '../../app/static/js/util.js';
+
+test('mealGroupsAll lists every meal, empty ones too, and no meal only with entries', () => {
+  const g = mealGroupsAll([{ meal: 'lunch', kcal: 100 }]);
+  assert.deepEqual(g.map((x) => x.meal), MEALS);
+  assert.equal(g.find((x) => x.meal === 'lunch').entries.length, 1);
+  assert.equal(g.find((x) => x.meal === 'dinner').entries.length, 0);
+  assert.deepEqual(mealGroupsAll([]).map((x) => x.meal), MEALS);
+  assert.equal(mealGroupsAll([{ meal: null, kcal: 5 }]).at(-1).label, 'No meal');
+});
+
+test('quickLabel names the action and the meal', () => {
+  assert.equal(quickLabel('add', 'lunch'), 'Add to Lunch');
+  assert.equal(quickLabel('scan', 'snack'), 'Scan for Snack');
+  assert.equal(quickLabel('search', 'dessert'), 'Search for Dessert');
+});

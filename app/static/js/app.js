@@ -1,7 +1,7 @@
 import { api, setUnauthorizedHandler } from './api.js';
 import { h, clear, select, field, message, show, cameraIcon, sourceBadge } from './dom.js';
 import {
-  MEALS, MEAL_LABELS, parseDecimal, parseAmount, amountText, servingText, qtyText, setAmountFormat, unitLabel, fmtNum, fmtAmount, groupByMeal, checkedItems, canSaveRecipe, rowAmountText, applyRowPick, draftFits, localDate, progressText, remainingText,
+  MEALS, MEAL_LABELS, parseDecimal, parseAmount, amountText, servingText, qtyText, setAmountFormat, unitLabel, fmtNum, fmtAmount, groupByMeal, mealGroupsAll, quickLabel, checkedItems, canSaveRecipe, rowAmountText, applyRowPick, draftFits, localDate, progressText, remainingText,
   sentence, matchAmount, newRecipeDraft, recipeAddRow, recipeSetRow, stepsBack, barWidth, debounce, digitsOnly, guessMeal, pctTotal, latestGuard, MEAL_FILTERS, MEAL_FILTER_LABELS, filterByMeal, filterSaved, pageOf, PAGE_SIZE, emptyText,
   DEFAULT_DISPLAY, searchSource, searchAction, searchHint, DESCRIPTION_TEXT, aiFeature, aiFeatureOff, searchSources, startSource,
 } from './util.js';
@@ -28,7 +28,7 @@ import { startUpdates } from './update.js';
 
 const main = document.getElementById('main');
 const nav = document.getElementById('nav');
-const state = { user: null, settings: { start_screen: 'today', default_meal: null, use_last: true, confirm_ai: true, amount_format: 'fraction' }, display: DEFAULT_DISPLAY, cleanup: null, depth: 0, tab: 'favorites', addMeal: null, draft: null, recipe: null, source: null, aiSt: null, claude: null,
+const state = { user: null, settings: { start_screen: 'today', default_meal: null, use_last: true, confirm_ai: true, amount_format: 'fraction' }, display: DEFAULT_DISPLAY, cleanup: null, depth: 0, tab: 'favorites', addMeal: null, quickMeal: null, draft: null, recipe: null, source: null, aiSt: null, claude: null,
   importInput: null, importDraft: null, importBase: 0, proposals: {}, selections: {}, matchFocus: null, matchBase: {}, matchMethod: 'search', autoMatch: null };  // Import Recipe and Match Ingredients  // addMeal, source (null = the Default Search Source setting), aiSt (last /api/ai/status) and claude (last Claude estimate) live for the session only
 const NAV_OF = { today: 'today', settings: 'settings', admin: 'settings', saved: 'settings', editfood: 'settings',
   recipes: 'recipes', recipeview: 'recipes', recipe: 'recipes', import: 'recipes', importreview: 'recipes', match: 'recipes' };  // every other screen belongs to Add
@@ -224,7 +224,7 @@ async function render(entry) {
 
 nav.addEventListener('click', (e) => {
   const b = e.target.closest('button[data-go]');
-  if (b) go(b.dataset.go, {}, false);
+  if (b) { state.quickMeal = null; go(b.dataset.go, {}, false); }
 });
 
 function showLogin() {
@@ -299,6 +299,7 @@ async function loginScreen(root) {
 // ---------- today ----------
 
 async function todayScreen(root) {
+  state.quickMeal = null;
   const d = await api.day(localDate());
   const bars = [['kcal', 'Calories', ''], ['carbs', 'Carbs', ' g'], ['protein', 'Protein', ' g'], ['fat', 'Fat', ' g']].map(([k, label, unit]) => {
     const text = progressText(d.totals[k], d.targets[k], d.percent[k], unit);
@@ -310,9 +311,20 @@ async function todayScreen(root) {
       h('div', { class: 'bar-left' }, remainingText(d.remaining[k], unit)));
   });
   const status = h('div', { 'aria-live': 'polite' });
-  const groups = () => groupByMeal(d.entries).map((g) => h('div', null,
+  // Opens Add, Scan or Search with this meal chosen. Scan and a barcode lookup keep it through to the picker.
+  const quick = (kind, meal) => () => {
+    state.quickMeal = meal;
+    if (kind === 'scan') return go('scan', { autostart: true });
+    return go('add', kind === 'search' ? { focus: true } : {});
+  };
+  const quickRow = (g) => h('div', { class: 'quick-row', role: 'group', 'aria-label': 'Add to ' + g.label },
+    h('button', { class: 'btn', type: 'button', 'aria-label': quickLabel('add', g.meal), onclick: quick('add', g.meal) }, 'Add'),
+    h('button', { class: 'btn', type: 'button', 'aria-label': quickLabel('scan', g.meal), onclick: quick('scan', g.meal) }, cameraIcon(), 'Scan'),
+    h('button', { class: 'btn', type: 'button', 'aria-label': quickLabel('search', g.meal), onclick: quick('search', g.meal) }, 'Search'));
+  const groups = () => mealGroupsAll(d.entries).map((g) => h('div', null,
     h('h2', { class: 'group' }, g.label, h('span', null, fmtNum(g.kcal, 0) + ' kcal')),
-    h('ul', { class: 'list' }, g.entries.map((e) => entryRow(e, root))), saveMealBox(g, status)));
+    g.entries.length ? h('ul', { class: 'list' }, g.entries.map((e) => entryRow(e, root))) : null,
+    g.meal ? quickRow(g) : null, g.entries.length ? saveMealBox(g, status) : null));
   const removeEntry = async (e) => {
     try { await api.deleteEntry(e.id); await go('today', {}, true); } catch (err) { show(status, message(err.message, 'error')); }
   };
@@ -329,13 +341,14 @@ async function todayScreen(root) {
     grid.classList.toggle('table-mode', view === 'table' && d.entries.length > 0);
     clear(body);
     if (!d.entries.length) body.appendChild(message('Tap Add to log your first food.'));
-    else if (view === 'table') body.appendChild(dayTable(d.entries, { display: disp, onOpen: openEntry, onDelete: removeEntry }));
+    if (d.entries.length && view === 'table') body.appendChild(dayTable(d.entries, { display: disp, onOpen: openEntry, onDelete: removeEntry }));
     else groups().forEach((g) => body.appendChild(g));
   };
   const view = disp.show_table === false ? 'list' : todayView(disp);
   paint(view);
   grid.append(h('div', { class: 'col-a' }, disp.show_split !== false ? h('div', { class: 'split-box' }, h('h2', null, 'Calorie Split'), splitChart(d)) : null, nutrients),
-    h('div', { class: 'col-b' }, d.entries.length && disp.show_table !== false ? viewToggle(view, (v) => { paint(v); ctx.saveDisplay({ today_view: v }).catch(() => {}); }) : null, body, status));
+    h('div', { class: 'col-b' }, h('button', { class: 'btn primary add-food', type: 'button', onclick: () => go('add', {}) }, 'Add Food'),
+      d.entries.length && disp.show_table !== false ? viewToggle(view, (v) => { paint(v); ctx.saveDisplay({ today_view: v }).catch(() => {}); }) : null, body, status));
   root.appendChild(h('section', { class: 'screen wide' }, h('h1', null, 'Today'), grid));
 }
 
@@ -385,7 +398,8 @@ function saveMealBox(g, status) {
 
 const pickerOf = (it, meal) => () => go('picker', { foodId: it.food_id, amount: it.amount, unit: it.unit, meal });
 // The meal to preselect in the picker or checklist: the chosen one, or undefined so the usual default applies.
-const addMeal = () => (state.addMeal == null ? defaultMeal() : state.addMeal);  // until picked, follows the Default Meal setting or the time of day
+// quickMeal is set by Today's per meal buttons and lasts until Today is shown again, another tab is tapped or Meal is changed on Add; it never touches addMeal.
+const addMeal = () => (state.quickMeal != null ? state.quickMeal : state.addMeal == null ? defaultMeal() : state.addMeal);  // until picked, follows the Default Meal setting or the time of day
 const chosenMeal = () => (addMeal() === 'all' ? undefined : addMeal());
 const foodTitle = (f) => (f.brand ? f.name + ' (' + f.brand + ')' : f.name);
 
@@ -403,7 +417,7 @@ function addScreen(root, params) {
   let ingMeal = 'all';
   const curMeal = () => (ing ? ingMeal : addMeal());
   const mealSel = select(MEAL_FILTERS.map((m) => ({ value: m, label: MEAL_FILTER_LABELS[m] })), curMeal(), { 'aria-label': 'Meal' });
-  mealSel.addEventListener('change', () => { if (ing) ingMeal = mealSel.value; else state.addMeal = mealSel.value; if (!q.value.trim()) paintTabs(); });
+  mealSel.addEventListener('change', () => { if (ing) ingMeal = mealSel.value; else { state.addMeal = mealSel.value; state.quickMeal = null; } if (!q.value.trim()) paintTabs(); });
   const mealPick = h('label', { class: 'meal-pick' }, h('span', null, 'Meal'), mealSel);
   let searchSeq = 0;
   // Where the search box looks: the Default Search Source setting, then whatever is picked here for the session.
@@ -518,7 +532,7 @@ function addScreen(root, params) {
   if (state.source === 'ai' && state.claude) q.value = state.claude.text;  // back from the draft: the estimate is still here, no second request
   if (matching && params.q && state.source !== 'ai') { q.value = params.q; search(true); loadAi(); }  // the ingredient's name, searched at once
   else if (state.source === 'ai') loadAi().then(paintSearch); else { paintTabs(); loadAi(); }
-  if (params.focus) root.addEventListener('mounted', () => q.focus());
+  if (params.focus) root.addEventListener('mounted', () => setTimeout(() => q.focus(), 0));  // after render() moves focus to main
 }
 
 // A list of at most PAGE_SIZE items with a Show more button. build(visibleItems) returns the node for them.
@@ -579,7 +593,7 @@ async function recipesList(meal) {
 async function lookupScreen(root, params) {
   root.appendChild(h('section', { class: 'screen' }, message('Looking up ' + params.code + '...')));
   const r = await api.barcode(params.code);
-  if (r.food) { await go('picker', { foodId: r.food.id }, true); return; }
+  if (r.food) { await go('picker', state.quickMeal != null ? { foodId: r.food.id, meal: state.quickMeal } : { foodId: r.food.id }, true); return; }
   clear(root);
   root.appendChild(h('section', { class: 'screen' }, h('h1', null, 'Not Found'),
     h('p', { class: 'sub' }, sentence(r.note) || 'No product matched ' + params.code + '.'),

@@ -385,6 +385,8 @@ Screens: Login, Today, Add, Recipes, Picker, Claude fallback, Settings. Bottom n
   Import, Match Ingredients and the recipe screen mark the Recipes tab; Save, Save and Continue, Cancel and Back come back to it.
 - Start screen is a per-user setting (`today`, `scan`, `search`, `ai`) fetched from /api/settings after login. Today = running macros.
 - Today: Calorie Split chart, then the Macro Nutrients heading with bars for calories, carbs, protein, fat showing `value / target (percent)`,
+- Today quick add: an Add Food button tops the entries column (list and table views) and opens Add. In list view every meal group, empty ones too (util.js `mealGroupsAll`),
+  has a row of equal width Add, Scan and Search buttons (aria-labels from `quickLabel`, for example "Add to Lunch") under its entries; the table view has no such row (Add Food covers it). They set `state.quickMeal`, then open Add, Add with `focus` (search box focused), or Scan with autostart. `addMeal()` prefers `quickMeal`, so the Add Meal select, the picker after a barcode lookup (lookup passes it as the picker's meal) and logging use it; it never changes `state.addMeal` and is cleared when Today renders, a bottom tab is tapped or Meal is changed on Add, so the Default Meal behavior of the Add tab is unchanged. Back returns to Today.
   then a Micro Nutrients section (heading with a small arrow button, aria-expanded, open state saved as micros_open) with one thin bar row per
   shown nutrient: `value / target unit`, Goal or Limit, a "N of M foods" note when some entries lack data, limit bars use --over when exceeded.
   Then entries grouped by meal, each removable and tappable to adjust. On very wide screens the micro section sits under the bars in the middle column.

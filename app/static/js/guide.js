@@ -104,6 +104,7 @@ export const GUIDE = [
     'A thin bar under each food shows its carbs, protein and fat share.',
     'Tap an entry to change it.',
     'Tap X to remove it.',
+    'Add Food opens Add. Each meal has Add, Scan and Search buttons.',
   ] },
   { heading: 'Micro Nutrients', bullets: [
     'Fiber, sugars, sodium, vitamins and minerals sit under the macro bars.',

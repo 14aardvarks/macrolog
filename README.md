@@ -21,7 +21,7 @@ Dark mode follows the device setting, and the layout also works on desktop.
 - With Claude chosen as the source, nothing is sent while you type. Pressing Search sends the description (up to 200 characters, for example "Chipotle chicken burrito bowl") to Claude after the usual cost notice, and shows one estimated result. Tap it to check the values and save. All Sources never uses Claude.
 - Nutrients are stored per label serving. The amount picker offers the units the label allows, with grams, ounces, cups and tablespoons converted where the label makes that possible. Conversions that rely on an estimate are marked as estimated.
 - Custom foods can be created by hand.
-- The Today screen shows calorie and macro bars against your targets, with entries grouped by meal.
+- The Today screen shows calorie and macro bars against your targets, with entries grouped by meal. An Add Food button sits at the top, and each meal has small Add, Scan and Search buttons that open with that meal chosen.
 - Micronutrients (fiber, sugars, saturated fat, sodium, cholesterol, potassium, calcium, iron and vitamin D) come from Open Food Facts, USDA, Claude or your own entry, with per user daily targets.
 - A Display section in Settings shows or hides each part of Today and the food bars, per user.
 - Each user has their own daily goal (calories and the carb, protein and fat split) and start screen.

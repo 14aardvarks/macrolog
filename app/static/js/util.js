@@ -220,6 +220,19 @@ export function groupByMeal(entries, otherLabel = 'No meal') {
   return [...groups, other].filter((g) => g.entries.length).map((g) => ({ ...g, kcal: roundTo(g.kcal, 1) }));
 }
 
+// Like groupByMeal, but every meal is listed, empty ones too (Today shows a quick add row under each). No meal only when it has entries.
+export function mealGroupsAll(entries, otherLabel = 'No meal') {
+  const have = groupByMeal(entries, otherLabel);
+  return [...MEALS.map((m) => have.find((g) => g.meal === m) || { meal: m, label: MEAL_LABELS[m], entries: [], kcal: 0 }), ...have.filter((g) => !MEALS.includes(g.meal))];
+}
+
+// Accessible names for Today's quick add buttons, for example "Add to Lunch".
+export const QUICK_ACTIONS = ['add', 'scan', 'search'];
+export function quickLabel(kind, meal) {
+  const w = MEAL_LABELS[meal] || '';
+  return (kind === 'add' ? 'Add to ' : kind === 'scan' ? 'Scan for ' : 'Search for ') + w;
+}
+
 // Rows of a checklist: {checked, amount (typed text), food_id, unit, name}. Only checked rows count.
 // Returns {items} or {error}.
 export function checkedItems(rows) {
