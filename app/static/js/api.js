@@ -68,7 +68,7 @@ export const api = {
   saveMicroGoals: (targets) => send('PUT', '/api/goals/micros', { targets }),
   saveGoals: (g) => send('PUT', '/api/goals', g),
   day: (d) => get('/api/day', { day: d || day() }),
-  quick: (kind, d) => get('/api/quick/' + kind, kind === 'yesterday' ? { day: d || day() } : undefined),
+  quick: (kind, d, meal) => get('/api/quick/' + kind, kind === 'yesterday' ? { day: d || day() } : kind === 'recent' && meal && meal !== 'all' ? { meal } : undefined),
   search: (q, remote, source) => get('/api/foods/search', { q, remote: remote ? 1 : 0, source: source && source !== 'all' ? source : null }),
   barcode: (code) => get('/api/foods/barcode/' + encodeURIComponent(code)),
   food: (id) => get('/api/foods/' + id),

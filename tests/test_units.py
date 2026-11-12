@@ -373,3 +373,99 @@ def test_grams():
     assert units.grams(FLOUR_G, 1, "cup") is None  # only an estimate
     assert units.grams(BUTTER, 1, "can") is None
     assert units.grams({"serving_amount": 1, "serving_unit": "egg", "kcal": 1, "carbs": 0, "protein": 0, "fat": 0}, 2, "egg") is None
+
+
+# ---------- default_pick: the package's own serving ----------
+
+@pytest.mark.parametrize("f,expected", [
+    (food(30, "g"), (30, "g")),
+    (food(1, "cup", g=125), (1, "cup")),
+    (food(2, "slice", g=68), (2, "slice")),
+    (food(2, "tbsp", g=30), (2, "tbsp")),
+    (food(1, "serving", g=30), (30, "g")),          # "1 serving (30 g)": start at the weight
+    (food(1, "serving", ml=240), (240, "ml")),
+    (food(1, "serving", g=30, ml=28), (30, "g")),
+    (food(1, "serving"), (1, "serving")),           # nothing better on the package
+])
+def test_default_pick_is_the_package_serving(f, expected):
+    assert units.default_pick(f) == expected
+    assert "serving" in by_unit(f)                  # serving stays a unit
+
+
+# ---------- typical density by food name (used only when the label has no ml) ----------
+
+CUP = units.VOLUME["cup"]
+
+
+def cup_grams(f):
+    """Grams in one US cup of the food, through servings (same math the picker and recipes use)."""
+    s = units.servings_for(f, 1, "cup")
+    return s["servings"] * units._profile(f)[2]
+
+
+@pytest.mark.parametrize("name,grams", [
+    ("All Purpose Flour", 125), ("Wheat flour, white, all-purpose", 125), ("Bread Flour", 127), ("Whole Wheat Flour", 120),
+    ("Granulated Sugar", 200), ("Brown Sugar", 213), ("Powdered Sugar", 120), ("Butter, salted", 227), ("Honey", 340),
+    ("Milk, whole", 245), ("Water", 237), ("Rolled Oats", 90), ("Rice, white, long-grain, raw", 185), ("Cocoa Powder", 85),
+    ("Table Salt", 288), ("Baking Powder", 192), ("Peanut Butter", 258),
+])
+def test_weight_only_food_uses_its_typical_cup_weight(name, grams):
+    f = food(30, "g", name=name)
+    s = units.servings_for(f, 1, "cup")
+    assert s["estimated"] is True                       # still an estimate, just a close one
+    assert cup_grams(f) == pytest.approx(grams, rel=1e-6)
+    assert by_unit(f)["cup"]["estimated"] is True
+
+
+def test_flour_sugar_butter_cups_scale_nutrition_by_the_better_density():
+    flour = food(30, "g", name="All Purpose Flour", kcal=110)
+    assert units.scale(flour, 1, "cup")["kcal"] == pytest.approx(110 * 125 / 30)       # was 110 * 236.588 / 30
+    sugar = food(4, "g", name="Granulated Sugar", kcal=15)
+    assert units.scale(sugar, 1, "cup")["kcal"] == pytest.approx(15 * 200 / 4)
+    butter = food(14, "g", name="Unsalted Butter", kcal=100)
+    assert units.scale(butter, 1, "cup")["kcal"] == pytest.approx(100 * 227 / 14)
+    assert units.scale(butter, 1, "tbsp")["kcal"] == pytest.approx(100 * 227 / 16 / 14, rel=1e-4)   # 16 tbsp to the cup
+
+
+def test_volume_label_without_grams_uses_the_density_too():
+    flour = food(1, "cup", name="Flour")
+    assert by_unit(flour)["g"]["default_amount"] == pytest.approx(125, abs=0.01) and by_unit(flour)["g"]["estimated"] is True
+    assert units.servings_for(flour, 250, "g")["servings"] == pytest.approx(2)
+
+
+def test_unmatched_name_keeps_one_gram_per_ml():
+    f = food(30, "g", name="Mystery Powder")
+    assert units.density(f) is None
+    assert cup_grams(f) == pytest.approx(CUP)
+    assert units.servings_for(f, 1, "cup") == {"servings": pytest.approx(CUP / 30), "estimated": True}
+
+
+@pytest.mark.parametrize("name", ["Butter Cookies", "Peanut Butter Cups", "Chocolate Milk", "Rice, cooked", "Sugar Snap Peas",
+                                  "Salted Peanuts", "Rice Flour", "Tuna in oil", "Almond Milk", ""])
+def test_lookalike_names_do_not_match(name):
+    if name == "Peanut Butter Cups":
+        assert units.density(food(30, "g", name=name)) == pytest.approx(258 / CUP)  # peanut butter is a keyword, the cups are close enough
+        return
+    assert units.density(food(30, "g", name=name)) is None
+
+
+def test_label_ml_takes_priority_over_the_keyword_density():
+    f = food(30, "g", ml=60, name="All Purpose Flour")          # the label itself says 30 g is 60 ml
+    s = units.servings_for(f, 1, "cup")
+    assert s["estimated"] is False
+    assert s["servings"] == pytest.approx(CUP / 60)
+    assert by_unit(f)["cup"]["estimated"] is False
+    both = food(1, "cup", g=100, name="All Purpose Flour")        # label grams win for a volume label
+    assert units.servings_for(both, 100, "g") == {"servings": pytest.approx(1), "estimated": False}
+
+
+def test_count_unit_food_with_grams_only_uses_the_density():
+    f = food(1, "slice", g=30, name="Rolled Oats")
+    assert units.servings_for(f, 90, "g")["servings"] == pytest.approx(3)
+    assert units.servings_for(f, 1, "cup")["servings"] == pytest.approx(3)  # 90 g per cup
+    assert units.servings_for(f, 1, "cup")["estimated"] is True
+
+
+def test_match_amount_for_a_cup_of_flour_is_estimated_with_the_better_density():
+    flour = food(30, "g", name="All Purpose Flour")
+    assert units.match_amount(flour, 1, "cup") == {"amount": 1, "unit": "cup", "check": False, "estimated": True}

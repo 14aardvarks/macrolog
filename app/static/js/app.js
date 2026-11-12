@@ -389,7 +389,8 @@ const addMeal = () => (state.addMeal == null ? defaultMeal() : state.addMeal);  
 const chosenMeal = () => (addMeal() === 'all' ? undefined : addMeal());
 const foodTitle = (f) => (f.brand ? f.name + ' (' + f.brand + ')' : f.name);
 
-// params.ingredient: the finder used by Create Recipe. It shows Favorites and Past Foods only and no meal choice.
+// params.ingredient: the finder used by Create Recipe. It shows Favorites and Past Foods only. Its Meal choice starts on All and
+// is its own (it does not change the meal chosen on Add).
 function addScreen(root, params) {
   const ing = !!(params.ingredient && state.recipe);
   const matching = ing && state.recipe.match ? state.recipe.match : null;  // finding a food for one imported ingredient
@@ -399,8 +400,10 @@ function addScreen(root, params) {
   const tabNames = ing ? [['favorites', 'Favorites'], ['recent', 'Past Foods']] : [['favorites', 'Favorites'], ['yesterday', 'Yesterday'], ['recipes', 'Recipes']];
   const tabBar = h('div', { class: 'tabs', role: 'tablist' }, tabNames.map(([k, label]) => h('button', {
     type: 'button', role: 'tab', 'data-tab': k, onclick: () => { tab = k; if (!ing) state.tab = k; q.value = ''; liveSearch.cancel(); paintTabs(); } }, label)));
-  const mealSel = select(MEAL_FILTERS.map((m) => ({ value: m, label: MEAL_FILTER_LABELS[m] })), addMeal(), { 'aria-label': 'Meal' });
-  mealSel.addEventListener('change', () => { state.addMeal = mealSel.value; if (!q.value.trim()) paintTabs(); });
+  let ingMeal = 'all';
+  const curMeal = () => (ing ? ingMeal : addMeal());
+  const mealSel = select(MEAL_FILTERS.map((m) => ({ value: m, label: MEAL_FILTER_LABELS[m] })), curMeal(), { 'aria-label': 'Meal' });
+  mealSel.addEventListener('change', () => { if (ing) ingMeal = mealSel.value; else state.addMeal = mealSel.value; if (!q.value.trim()) paintTabs(); });
   const mealPick = h('label', { class: 'meal-pick' }, h('span', null, 'Meal'), mealSel);
   let searchSeq = 0;
   // Where the search box looks: the Default Search Source setting, then whatever is picked here for the session.
@@ -494,9 +497,9 @@ function addScreen(root, params) {
     show(listBox, message('Loading...'));
     const want = tab;
     try {
-      const meal = ing ? 'all' : addMeal();
+      const meal = curMeal();
       const node = want === 'recipes' ? await recipesList(meal) : want === 'yesterday' ? await yesterdayList(meal) : await quickList(want, meal);
-      if (want === tab && meal === (ing ? 'all' : addMeal()) && !q.value.trim()) show(listBox, node);
+      if (want === tab && meal === curMeal() && !q.value.trim()) show(listBox, node);
     } catch (e) { show(listBox, message(e.message, 'error')); }
   }
 
@@ -511,7 +514,7 @@ function addScreen(root, params) {
     h('form', { class: 'row add-search', role: 'search', onsubmit: (e) => { e.preventDefault(); liveSearch.cancel(); search(true); } },
       q, h('button', { class: 'btn', type: 'submit' }, 'Search')),
     srcPick, srcNote,
-    ing ? null : mealPick, tabBar, h('div', { class: 'tab-list' }, listBox)));
+    mealPick, tabBar, h('div', { class: 'tab-list' }, listBox)));
   if (state.source === 'ai' && state.claude) q.value = state.claude.text;  // back from the draft: the estimate is still here, no second request
   if (matching && params.q && state.source !== 'ai') { q.value = params.q; search(true); loadAi(); }  // the ingredient's name, searched at once
   else if (state.source === 'ai') loadAi().then(paintSearch); else { paintTabs(); loadAi(); }
@@ -531,10 +534,12 @@ function paged(items, build) {
   return box;
 }
 
+// Favorites are filtered by their meal tags. Past Foods (recent) are filtered by the server: only foods logged as that meal, plus
+// foods never logged with a meal, newest first.
 async function quickList(kind, meal) {
-  const all = (await api.quick(kind, localDate())).items;
-  const items = filterSaved(all, meal);
-  if (!items.length) return message(emptyText('favorites', meal, all.length > 0));
+  const all = (await api.quick(kind, localDate(), meal)).items;
+  const items = kind === 'recent' ? all : filterSaved(all, meal);
+  if (!items.length) return message(emptyText(kind === 'recent' ? 'recent' : 'favorites', meal, kind === 'recent' || all.length > 0));
   // With "start from my last entry" off a food opens on its label serving, so the row shows that serving too.
   const useLast = state.settings.use_last !== false;
   return paged(items, (page) => h('ul', { class: 'list' }, page.map((it) => foodRow(foodTitle(it.food),

@@ -19,6 +19,15 @@ test('initialPick uses the preset when usable, else the label unit', () => {
   assert.deepEqual(initialPick(units, { amount: 0, unit: 'g' }), { unit: 'g', amount: 240 });
 });
 
+test('initialPick starts on the package serving, never 1 serving by default', () => {
+  const ths = [{ unit: 'serving', step: 0.25, default_amount: 1 }, { unit: 'pct', step: 5, default_amount: 100 }, { unit: 'g', step: 5, default_amount: 30 }];
+  assert.deepEqual(initialPick(ths, null, { amount: 30, unit: 'g' }), { unit: 'g', amount: 30 });
+  assert.deepEqual(initialPick(ths, undefined, { amount: 30, unit: 'bogus' }), { unit: 'serving', amount: 1 });
+  assert.deepEqual(initialPick(units, null, { amount: 1, unit: 'cup' }), { unit: 'cup', amount: 1 });
+  assert.deepEqual(initialPick(ths, { amount: 2, unit: 'serving' }, { amount: 30, unit: 'g' }), { unit: 'serving', amount: 2 });  // last amount wins
+  assert.deepEqual(initialPick(ths, { amount: 0, unit: 'serving' }, { amount: 30, unit: 'g' }), { unit: 'g', amount: 30 });
+});
+
 test('convertAmount keeps the quantity', () => {
   assert.equal(convertAmount(units, 0.5, 'cup', 'g'), 120);
   assert.equal(convertAmount(units, 120, 'g', 'tbsp'), 8);

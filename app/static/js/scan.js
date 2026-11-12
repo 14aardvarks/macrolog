@@ -55,11 +55,32 @@ async function zxingDetector() {
   };
 }
 
+// Labels are not always printed upright: when the straight read finds nothing, read the frame turned a quarter turn
+// (1D barcodes read the same forwards and backwards, so 0 and 90 degrees cover upside down and sideways too).
+function withRotation(detect) {
+  const canvas = document.createElement('canvas');
+  return async (src) => {
+    const code = await detect(src);
+    if (code) return code;
+    const s = sourceSize(src);
+    const f = fitSize(s.w, s.h, 1280);
+    canvas.width = f.h;
+    canvas.height = f.w;
+    const ctx = canvas.getContext('2d');
+    ctx.save();
+    ctx.translate(f.h, 0);
+    ctx.rotate(Math.PI / 2);
+    ctx.drawImage(src, 0, 0, f.w, f.h);
+    ctx.restore();
+    return detect(canvas);
+  };
+}
+
 let detectorPromise = null;
 // Resolves to async (video|img) => digits string or null. Rejects only if neither decoder is available.
 function getDetector() {
   if (!detectorPromise) {
-    detectorPromise = nativeDetector().then((d) => d || zxingDetector()).catch((e) => { detectorPromise = null; throw e; });
+    detectorPromise = nativeDetector().then((d) => d || zxingDetector()).then(withRotation).catch((e) => { detectorPromise = null; throw e; });
   }
   return detectorPromise;
 }

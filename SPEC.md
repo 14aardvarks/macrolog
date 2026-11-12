@@ -75,6 +75,8 @@ available_units(food) -> list[dict]          # [{"unit","label","step","default_
                                              # with default_amount = serving_amount. Then g, oz, and any other units reachable.
 servings_for(food, amount, unit) -> {"servings": float, "estimated": bool}
 scale(food, amount, unit) -> {"servings","estimated","kcal","carbs","protein","fat","fiber"}   # fiber may be None
+default_pick(food) -> (amount, unit)         # where the picker starts for a food not logged yet: the package's own serving, see below
+density(food) -> g per ml|None               # typical density by name keywords (GRAMS_PER_CUP), None when no keyword matches
 grams(food, amount, unit) -> float|None      # grams (0.1) when the weight is known exactly; None for estimates, unknown or unit g
 match_amount(food, amount, unit) -> {"amount","unit","check","estimated"?: true}|None   # Match Ingredients: amount from a recipe line, see below
 ```
@@ -88,9 +90,19 @@ with check true.
 Conversion rules: same-family conversions are exact (US customary: 1 cup = 236.588 ml, 1 tbsp = 14.7868 ml, 1 tsp = 4.92892 ml,
 1 floz = 29.5735 ml, 1 oz = 28.3495 g, 1 lb = 453.592 g). Mass to volume uses density derived from the food's own
 serving_g and serving_ml when both exist. If the label has only one of them, the missing family is reachable only as an
-ESTIMATE using 1 g per ml and `estimated: true`. Count units (slice, piece) convert only through serving_g (or equal the label
+ESTIMATE and `estimated: true`: with the typical density of the food when its name matches the keyword table `units.GRAMS_PER_CUP`
+(about 30 common ingredients, grams per US cup: all purpose flour 125, bread flour 127, whole wheat flour 120, granulated sugar 200, brown sugar packed 213,
+powdered sugar 120, butter 227, honey 340, milk 245, water 237, rolled oats 90, uncooked rice 185, cocoa powder 85, salt 288, baking powder 192 and so on;
+rounded typical values from USDA household measures and common ingredient weight charts, matched by name regex with words that rule a name out, first match wins),
+else 1 g per ml. The table is used only for the missing family: a food's own serving_ml (or serving_g) always wins and is exact. The conversion stays marked
+estimated (the "Estimated Conversion" tag stays), it is just much closer. The same density turns a volume label with no grams into grams. The server is the
+source of truth: the client converts through the `units` list from GET /api/foods/{id} and has no density table. Count units (slice, piece) convert only through serving_g (or equal the label
 serving when the label unit is that count word). If a unit cannot be reached at all, omit it from available_units and raise
 ValueError from servings_for. "Convert anything necessary" means: whatever the user picks that is reachable, convert.
+Default amount: default_pick is the label's own serving_amount and serving_unit (30 g, 1 cup, 2 slice). Only when the label unit is just "serving"
+(or %) and the label gives serving_g or serving_ml does it start on that weight or volume (1 serving of 30 g starts at 30 g). "serving" and "pct"
+stay in available_units. GET /api/foods/{id} returns it as `default` {"amount","unit"}; quick items use it when the food was never logged. A prior amount
+(last_used) wins while the "Start from my last entry" setting (use_last) is on; the setting off means the package serving.
 Steps: g 5, kg 0.05, oz 0.25, lb 0.05, ml 5, l 0.05, floz 0.5, cup 0.125, tbsp 0.5, tsp 0.25, count 0.5.
 
 ## lookup.py (network, async)
@@ -163,12 +175,15 @@ POST /api/entries   {food_id, amount, unit, day?, meal?} -> entry     # meal in 
 PATCH /api/entries/{id} {amount?, unit?, meal?}   DELETE /api/entries/{id}   # only own entries
 GET  /api/preview?food_id=&amount=&unit=  -> units.scale result        # live macros while scrolling the picker
 GET  /api/day?day=YYYY-MM-DD -> {"day","entries":[...],"totals","targets","percent","remaining"}   # day defaults to today (server local date; accept ?tz offset optional)
-GET  /api/quick/favorites | /api/quick/yesterday | /api/quick/recent -> {"items":[{"food": Food, "amount","unit","servings","kcal","protein"}]}  # amount/unit = last used
+GET  /api/quick/favorites | /api/quick/yesterday | /api/quick/recent -> {"items":[{"food": Food, "amount","unit","servings","kcal","protein"}]}  # amount/unit = last used, else the package serving (units.default_pick)
+GET  /api/quick/recent?meal=breakfast|lunch|dinner|snack|dessert|all   # Past Foods (the Add ingredient finder). With a meal: foods the user logged as that meal
+        # (an entry of that food with that meal) plus foods never logged with any meal (untagged, shown under every meal like untagged favorites), newest first,
+        # filtered before the limit of 20. No meal or all keeps everything; anything else is 400. Items also carry `meals` (meals it was logged as) and `counts`.
 POST /api/favorites/{food_id}   DELETE /api/favorites/{food_id}   # POST also un-hides the food
 ```
 Meal tags (breakfast|lunch|dinner|snack|dessert, zero or more) live in `favorite_tags(user_id, food_id, meal)` and `recipe_tags(meal_id, meal)`;
 existing favorites and recipes start untagged. Untagged items show under every meal on Add. `recipe_logs` records each recipe log with its meal.
-`hidden_foods(user_id, food_id)` hides a food from the user's Recent and Yesterday lists. `foods.created_by` is the creating user.
+`hidden_foods(user_id, food_id)` hides a food from the user's Recent and Yesterday lists (Remove From My Lists). Deleting a food is separate, see DELETE /api/foods/{id}. `foods.created_by` is the creating user.
 Logging a favorite (POST /api/entries) or a recipe with a meal adds that tag; tags are never removed automatically; logging un-hides a food.
 ```
 GET  /api/saved -> {"favorites":[{"food","meals"}], "recipes":[meal + "meals","counts"], "foods":[Food + "in_use"]}   # own items; foods = custom/ai foods I created
@@ -186,7 +201,15 @@ POST /api/foods/{id}/refresh-nutrients -> {"food","filled":[nutrient...],"messag
 GET  /api/foods/missing-nutrients?date=YYYY-MM-DD -> {"ids":[food id...],"total"}
         # my logged foods (that day, or ever without date) with a null micronutrient, a lookup source (lookup.refresh_kind) and that I may refresh
         # (custom or ai foods only when I created them); distinct, oldest food first; 400 on a bad date. The client refreshes them one by one.
-DELETE /api/foods/{id}                               # creator only; 409 when in any entry or recipe, or in another user's favorites
+DELETE /api/foods/{id} -> {"deleted": id, "everyone": bool}   # soft delete, never a 409: any food, including one in a log entry or a recipe
+        # The food is hidden, not removed (foods.deleted INTEGER NOT NULL DEFAULT 0 and table deleted_foods(user_id, food_id), added in place by core.init).
+        # It disappears from my search, favorites (and their tags), Recent, Yesterday, picker lists and Saved (favorites and My Foods).
+        # Existing entries and recipe rows keep pointing at it, so names, nutrition, totals and recipe logging never change; GET /api/foods/{id} still answers.
+        # Scope: a shared Open Food Facts or USDA food, or anyone else's food, is hidden for me only (deleted_foods). A custom or Claude food I created is
+        # hidden for everyone (foods.deleted=1, everyone true) only when no other user has it in favorites, entries or recipes; otherwise for me only.
+        # Undelete: logging it, favoriting it, scanning its barcode again, or picking it again for a recipe row brings it back as a normal food (my
+        # deleted_foods row removed and foods.deleted cleared). A remote search that finds it again lists it, and it returns once picked.
+        # The lock stays on editing nutrition or serving of a logged food (PATCH 409), not on deleting.
 ```
 Recipe ingredients (meal_items) may be unmatched: food_id, amount and unit are null and src_text, src_amount, src_unit, src_name,
 src_note keep the imported line; skipped rows count for nothing. Databases with the old NOT NULL food_id are rebuilt once in one

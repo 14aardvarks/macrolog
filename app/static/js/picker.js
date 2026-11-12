@@ -80,7 +80,7 @@ export async function renderPicker(root, params, ctx) {
   const adjust = params.adjust && params.adjust.index != null ? params.adjust.index : null;  // picking for a recipe row
   const units = food.units;
   const st = { amount: 1, unit: '', idx: 0, seq: 0, ref: null, fav: !!food.favorite };
-  Object.assign(st, initialPick(units, startPreset(edit || adjust != null, params, food, ctx.settings && ctx.settings.use_last)));
+  Object.assign(st, initialPick(units, startPreset(edit || adjust != null, params, food, ctx.settings && ctx.settings.use_last), food.default));
   st.ref = { amount: st.amount, unit: st.unit };  // last amount the user chose; unit changes convert from here so rounding never piles up
   st.idx = Math.max(0, units.findIndex((u) => u.unit === st.unit));
 

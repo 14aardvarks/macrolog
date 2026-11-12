@@ -72,6 +72,61 @@ def _pos(x):
     return x if math.isfinite(x) and x > 0 else None
 
 
+# ---------- typical density of common ingredients ----------
+# Used ONLY when a food is known by weight (or by volume) on its label and the other family is missing: the old guess was 1 g per ml,
+# which is far off for flour (about 0.53 g per ml). Each row is (name pattern, words that rule it out, typical grams per US cup).
+# The values are rounded typical figures for a cup spooned and leveled, as in USDA FoodData Central household measures and the
+# King Arthur and Cook's Illustrated ingredient weight charts; real products vary a little. A food's own serving_ml (or serving_g)
+# always wins, and a conversion that uses a row is still marked estimated. Order matters: the first match wins, so specific
+# names come before general ones. Names are matched in lower case with apostrophes removed.
+GRAMS_PER_CUP = [
+    (r"\bbread flour\b", None, 127),
+    (r"whole[- ]?wheat flour|wholemeal flour|flour, whole|wheat flour, whole", None, 120),
+    (r"\bcake flour\b", None, 114),
+    (r"almond (flour|meal)", None, 96),
+    (r"\bcoconut flour\b", None, 112),
+    (r"\brye flour\b", None, 102),
+    (r"\ball[- ]?purpose\b|\bplain flour\b|\bwhite flour\b|^flour\b|wheat flour, white|\bunbleached flour\b", r"\b(rice|corn|oat|buckwheat|tapioca|potato|chickpea|soy|coconut|almond)\b", 125),
+    (r"brown sugar", None, 213),  # packed
+    (r"powdered sugar|confectioners sugar|confectioner s sugar|icing sugar", None, 120),
+    (r"\bsugar\b", r"\b(free|snap|cookie|cookies|cereal|substitute|maple|beet|cane syrup|cinnamon|coated|frosted)\b", 200),  # granulated
+    (r"peanut butter", None, 258),
+    (r"\bbutter\b", r"\b(peanut|almond|cashew|nut|seed|cookie|cookies|cracker|crackers|cocoa|shea|popcorn|bean|beans|chicken|cake|cream|spread|flavored)\b", 227),
+    (r"\bhoney\b", r"\b(mustard|roasted|nut|nuts|bun|bunches|bbq|barbecue|cereal|granola|bar)\b", 340),
+    (r"maple syrup", None, 322),
+    (r"\b(butter)?milk\b", r"\b(chocolate|powder|powdered|dry|condensed|evaporated|coconut|almond|soy|oat|rice|cashew|cookie|cookies|shake|malted|bar)\b", 245),
+    (r"heavy cream|whipping cream|heavy whipping", None, 238),
+    (r"sour cream", None, 230),
+    (r"\b(plain |greek )?yogh?urt\b", r"\b(frozen|bar|covered|coated|chips?|pretzel|raisins?|granola|drink|smoothie|dip)\b", 245),
+    (r"^(drinking |tap |filtered |cold |warm )?water\b", None, 237),
+    (r"\b(vegetable|canola|olive|sunflower|corn|peanut|avocado|safflower|soybean|coconut|sesame)? ?oil\b",
+     r"\b(tuna|sardines?|anchov\w*|fish|packed|spray|dressing|vinaigrette|chips?|popcorn|salmon)\b|\bin oil\b", 218),
+    (r"quick (cooking )?oats", None, 80),
+    (r"\brolled oats\b|old[- ]fashioned (rolled )?oats|\boats\b|\boatmeal\b", r"\b(flour|bran|milk|cereal|bar|bars|cookie|cookies|packet|instant)\b", 90),
+    (r"\brice\b", r"\b(cooked|steamed|fried|flour|milk|cereal|cake|cakes|pudding|vinegar|noodles?|crisp|crispy|krispies|paper|wine|syrup|bran|pilaf|mix|bowl|and|with|pasta)\b", 185),  # uncooked
+    (r"cocoa powder|unsweetened cocoa|\bcocoa\b", r"\b(butter|mix|hot|drink|beverage|krispies|puffs|cereal|chocolate)\b", 85),
+    (r"chocolate (chips|morsels)", None, 170),
+    (r"\bsalt\b", r"\b(pepper|vinegar|pretzels?|crackers?|caramel|chips?|peanuts?|nuts?|seasoning|garlic|free|substitute|lite|light|and)\b", 288),  # table salt
+    (r"baking powder", None, 192),
+    (r"baking soda|sodium bicarbonate", None, 288),
+    (r"corn ?starch", None, 128),
+    (r"corn ?meal", None, 157),
+    (r"\braisins?\b", r"\b(bran|cereal|cookie|cookies|bread|oatmeal|bagel|bagels)\b", 145),
+    (r"grated parmesan|parmesan, grated|parmesan cheese, grated", None, 100),
+]
+_DENSITY = [(re.compile(inc), re.compile(exc) if exc else None, cup / VOLUME["cup"]) for inc, exc, cup in GRAMS_PER_CUP]
+
+
+def density(food):
+    """Typical grams per ml for a food matched by name keywords (GRAMS_PER_CUP), or None when no keyword matches."""
+    name = re.sub(r"['\u2019]", "", str(food.get("name") or "").lower())
+    name = re.sub(r"\s+", " ", name).strip()
+    for inc, exc, per_ml in _DENSITY:
+        if inc.search(name) and not (exc and exc.search(name)):
+            return per_ml
+    return None
+
+
 def _profile(food):
     """Return (label unit, label amount, grams, grams estimated, ml, ml estimated) per serving."""
     unit = parse_unit(food.get("serving_unit"))
@@ -79,20 +134,25 @@ def _profile(food):
     if amount is None:
         raise ValueError("Food has no valid serving_amount")
     sg, sml = _pos(food.get("serving_g")), _pos(food.get("serving_ml"))
+    # The label's own grams and ml always win. Only the missing family is estimated: with the typical density of the food when its
+    # name matches a keyword (density), else 1 g per ml.
+    d = density(food) if not (sg and sml) else None
+    to_ml = (lambda grams: grams / d) if d else (lambda grams: grams)
+    to_g = (lambda millilitres: millilitres * d) if d else (lambda millilitres: millilitres)
     g = ge = ml = mle = None
     if unit in MASS:
         g, ge = amount * MASS[unit], False
-        ml, mle = (sml, False) if sml else (g, True)  # 1 g per ml when no volume on the label
+        ml, mle = (sml, False) if sml else (to_ml(g), True)
     elif unit in VOLUME:
         ml, mle = amount * VOLUME[unit], False
-        g, ge = (sg, False) if sg else (ml, True)
+        g, ge = (sg, False) if sg else (to_g(ml), True)
     else:
         g, ml = sg, sml
         ge = mle = False
         if g and not ml:
-            ml, mle = g, True
+            ml, mle = to_ml(g), True
         elif ml and not g:
-            g, ge = ml, True
+            g, ge = to_g(ml), True
     return unit, amount, g, bool(ge), ml, bool(mle)
 
 
@@ -142,6 +202,19 @@ def available_units(food):
             x = per / table[unit]
             out.append(entry(unit, round(x, 2) or float(f"{x:.2g}"), est))
     return out
+
+
+def default_pick(food):
+    """(amount, unit) a picker starts from for a food nobody has logged yet: the package's own serving, for example 30 g, 1 cup or
+    2 slice. When the label unit is only "serving" (or %) there is nothing better to show unless the label gives a weight or a
+    volume, then that is used (1 serving of 30 g starts at 30 g). "serving" stays available as a unit either way."""
+    label_unit, label_amount, _, _, _, _ = _profile(food)
+    if label_unit in PSEUDO:
+        for key, unit in (("serving_g", "g"), ("serving_ml", "ml")):
+            v = _pos(food.get(key))
+            if v:
+                return v, unit
+    return label_amount, label_unit
 
 
 def scale(food, amount, unit):

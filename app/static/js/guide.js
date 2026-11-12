@@ -21,6 +21,7 @@ export const GUIDE = [
   { heading: 'The Meal Selector on Add', bullets: [
     'It filters the lists by meal: Breakfast, Lunch, Dinner, Snack or Dessert.',
     'All shows everything.',
+    'In the ingredient finder, Past Foods follows it too.',
     'Dessert is never picked for you from the time of day. Choose it yourself.',
   ] },
   { heading: 'The Picker', bullets: [
@@ -32,11 +33,12 @@ export const GUIDE = [
     'Fractions cover servings, cups, spoons and counts. Grams and ounces stay decimal.',
     '% of serving is for partial servings.',
     'Macros update live and always convert back to the label\'s grams and calories.',
+    'Cups of a food sold by weight use a typical density, marked Estimated Conversion.',
     'The layout stays still while you change units.',
   ] },
   { heading: 'How It Remembers', bullets: [
     'A food reopens with the amount and unit from your last entry.',
-    'The first time, it uses the label\'s serving.',
+    'The first time, it uses the package serving, like 30 g or 1 cup.',
     'Turn this off with Start from my last entry.',
     'Favorites and Yesterday show last used amounts.',
   ] },
@@ -45,6 +47,8 @@ export const GUIDE = [
   ] },
   { heading: 'Saved and Meal Tags', bullets: [
     'Settings, then Saved, lets you tag, rename, edit and delete.',
+    'Delete Food hides a food from your lists. Past log entries and recipes keep it.',
+    'Logging, favoriting or scanning a deleted food brings it back.',
     'Untagged items show under every meal. Logging with a meal adds its tag.',
   ] },
   { heading: 'Recipes', bullets: [

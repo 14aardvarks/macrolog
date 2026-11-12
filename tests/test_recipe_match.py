@@ -381,7 +381,7 @@ def test_save_without_them_needs_one_matched_row(a, b):
 
 def test_estimated_unit_row_counts_and_is_flagged_not_checked(a):
     m = imported(a, rows=[{"text": "1 cup oats", "amount": 1, "unit": "cup", "name": "oats"}])
-    oats = a.post("/api/foods", json={"name": "Oats", "serving_amount": 40, "serving_unit": "g", "kcal": 150, "carbs": 27, "protein": 5, "fat": 3}).json()
+    oats = a.post("/api/foods", json={"name": "Mystery Flakes", "serving_amount": 40, "serving_unit": "g", "kcal": 150, "carbs": 27, "protein": 5, "fat": 3}).json()
     pick = core.units.match_amount(oats, 1, "cup")
     assert pick == {"amount": 1, "unit": "cup", "check": False, "estimated": True}
     r = a.patch(f"/api/meals/{m['id']}/items/{m['items'][0]['id']}", json={"food_id": oats["id"], "amount": pick["amount"], "unit": pick["unit"]}).json()

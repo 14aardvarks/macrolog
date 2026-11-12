@@ -3,7 +3,7 @@ import { api } from './api.js';
 import { h, clear, field, message, show, select, sourceBadge } from './dom.js';
 import { refreshAllControl } from './refresh.js';
 import { recipeSubText } from './recipeimport.js';
-import { MEALS, MEAL_LABELS, toggleMeal, fmtNum, amountText, SAVED_FILTERS, SAVED_FILTER_LABELS, filterSavedItems, pageOf, PAGE_SIZE } from './util.js';
+import { DELETE_FOOD_CONFIRM, MEALS, MEAL_LABELS, toggleMeal, fmtNum, amountText, SAVED_FILTERS, SAVED_FILTER_LABELS, filterSavedItems, pageOf, PAGE_SIZE } from './util.js';
 
 const title = (f) => (f.brand ? f.name + ' (' + f.brand + ')' : f.name);
 
@@ -33,8 +33,12 @@ function favoriteRow(fav, again) {
     if (!window.confirm('Remove "' + fav.food.name + '" from your favorites, tags, Recent and Yesterday? Your past log stays.')) return;
     try { await api.removeFromLists(fav.food.id); await again(); } catch (e) { show(status, message(e.message, 'error')); }
   } }, 'Remove From My Lists');
+  const del = h('button', { class: 'btn', type: 'button', onclick: async () => {
+    if (!window.confirm(DELETE_FOOD_CONFIRM)) return;
+    try { await api.deleteFood(fav.food.id); await again(); } catch (e) { show(status, message(e.message, 'error')); }
+  } }, 'Delete Food');
   return h('li', { class: 'saved-item' }, h('span', { class: 'item-title' }, title(fav.food)), sourceLine(fav.food),
-    chips(fav.meals, async (m) => { await api.favoriteTags(fav.food.id, m); fav.meals = m; }, status), h('div', { class: 'row wrap' }, remove), status);
+    chips(fav.meals, async (m) => { await api.favoriteTags(fav.food.id, m); fav.meals = m; }, status), h('div', { class: 'row wrap' }, remove, del), status);
 }
 
 // Asks Delete This Recipe?, then deletes through the same route Saved uses. Resolves true when deleted, false when cancelled.
@@ -78,7 +82,7 @@ export function recipeRow(rec, again, ctx, opts) {
 function foodRowMine(food, ctx, again) {
   const status = h('div', { 'aria-live': 'polite' });
   const del = async () => {
-    if (!window.confirm('Delete the food "' + food.name + '"?')) return;
+    if (!window.confirm(DELETE_FOOD_CONFIRM)) return;
     try { await api.deleteFood(food.id); await again(); } catch (e) { show(status, message(e.message, 'error')); }
   };
   return h('li', { class: 'saved-item' }, h('span', { class: 'item-title' }, title(food)),

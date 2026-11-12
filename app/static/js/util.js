@@ -336,6 +336,12 @@ export function sentence(text) {
   return t && t.split(/\s+/).length >= 4 && !/[.?!\u2026]$/.test(t) ? t + '.' : t;
 }
 
+// "1 item", "2 items". Counts of things shown in lists use this, so a single one never reads "1 items".
+export function plural(n, one, many = one + 's') { return n + ' ' + (n === 1 ? one : many); }
+
+// Confirm text for deleting a food, the same everywhere (Saved, the edit form). Deleting only hides it: the log and recipes keep it.
+export const DELETE_FOOD_CONFIRM = 'Delete This Food? ' + sentence('It will be removed from your lists') + ' ' + sentence('Past log entries and recipes keep it');
+
 // Where a food came from. The stored values are off, fdc, custom and ai (a barcode is only how a food was found, not a source).
 const SOURCE_LABELS = { off: 'Open Food Facts', fdc: 'USDA', custom: 'Custom', ai: 'Claude' };
 export function sourceLabel(source) { return Object.prototype.hasOwnProperty.call(SOURCE_LABELS, source) ? SOURCE_LABELS[source] : ''; }
@@ -347,7 +353,7 @@ export function sourceNote(source) { return isEstimate(source) ? sentence('Value
 export function emptyText(kind, meal, hasAny) {
   const w = mealWord(meal);
   if (kind === 'yesterday') return w ? 'Nothing for ' + w + ' yesterday.' : 'Nothing from yesterday.';
-  if (kind === 'recent') return 'No past foods yet. Foods you log show up here.';
+  if (kind === 'recent') return w ? 'No past foods logged as ' + w + '. Choose All to see every past food.' : 'No past foods yet. Foods you log show up here.';
   const one = kind === 'recipes' ? 'recipe' : 'favorite';
   if (w && hasAny) return 'No ' + kind + ' tagged ' + w + '. Choose All to see every ' + one + '.';
   if (kind === 'recipes') return 'No saved recipes. Make one on the Recipes tab, or tap "Save As Recipe" under a meal on Today.';
@@ -427,12 +433,17 @@ export function fitSize(w, h, max) {
 // units: food.units, [{unit, step, default_amount, ...}]. default_amount is one label serving in that unit.
 function unitOf(units, name) { return (units || []).find((u) => u.unit === name) || null; }
 
-// Starting unit and amount. A usable preset (quick item, edit, last used) wins, else the label unit and amount.
-export function initialPick(units, preset) {
+// Starting unit and amount. A usable preset (quick item, edit, last used) wins, else the package's own serving: def is
+// food.default from GET /api/foods/{id} ({amount, unit}, for example 30 g, 1 cup or 2 slice), else the label unit and amount.
+// It is never "1 serving" unless the package gives nothing else. serving stays in the unit list.
+export function initialPick(units, preset, def) {
   const own = units[0];
   const u = (preset && unitOf(units, preset.unit)) || own;
   const ok = preset && preset.unit === u.unit && Number(preset.amount) > 0;
-  return { unit: u.unit, amount: ok ? Number(preset.amount) : u.default_amount };
+  if (ok) return { unit: u.unit, amount: Number(preset.amount) };
+  const d = def && unitOf(units, def.unit);
+  if (d && Number(def.amount) > 0) return { unit: d.unit, amount: Number(def.amount) };
+  return { unit: u.unit, amount: u.default_amount };
 }
 
 // Which amount and unit a picker starts from. An edit always keeps its own. For a new log, "use last" off means

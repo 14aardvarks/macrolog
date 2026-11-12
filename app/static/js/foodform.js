@@ -1,7 +1,7 @@
 import { api } from './api.js';
 import { h, field, message, show, select, sourceLine } from './dom.js';
 import { refreshControl } from './refresh.js';
-import { sentence, canLookUp, parseDecimal, fmtAmount, MEALS, MEAL_LABELS, guessMeal, MICROS } from './util.js';
+import { DELETE_FOOD_CONFIRM, sentence, canLookUp, parseDecimal, fmtAmount, MEALS, MEAL_LABELS, guessMeal, MICROS } from './util.js';
 
 const NUM = [
   ['serving_amount', 'Serving amount', true, 'e.g. 2'],
@@ -66,7 +66,8 @@ export function renderFoodForm(root, opts, ctx) {
       : h('p', { class: 'sub' }, 'Nothing to look up. Add a barcode to fill blank nutrients from Open Food Facts or USDA.')) : null,
     edit ? null : h('label', { class: 'field' }, h('span', null, 'Meal when you log it'), mealSel),
     fromAi ? h('label', { class: 'check' }, confirm, described ? ' I checked these values' : ' I checked these values against the label') : null,
-    status, saveBtn);
+    status, saveBtn,
+    edit ? h('button', { class: 'btn danger', type: 'button', onclick: remove }, 'Delete Food') : null);
   root.appendChild(form);
   markEmpty();
 
@@ -81,6 +82,10 @@ export function renderFoodForm(root, opts, ctx) {
       if (edit[k] != null && f[k].input.value.trim() === '') f[k].input.value = fmtAmount(edit[k]);
     }
     if (MORE.some((k) => edit[k] != null)) form.querySelector('details.more').open = true;
+  }
+  async function remove() {
+    if (!window.confirm(DELETE_FOOD_CONFIRM)) return;
+    try { await api.deleteFood(edit.id); ctx.back(); } catch (err) { show(status, message(err.message, 'error')); }
   }
   function num(k) { const t = f[k].input.value.trim(); return t === '' ? null : parseDecimal(t); }
 

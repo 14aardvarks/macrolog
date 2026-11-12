@@ -74,3 +74,22 @@ test('toggleMeal adds and removes in meal order', () => {
   assert.deepEqual(toggleMeal(['breakfast', 'snack'], 'snack'), ['breakfast']);
   assert.deepEqual(toggleMeal(undefined, 'lunch'), ['lunch']);
 });
+
+import { plural, DELETE_FOOD_CONFIRM } from '../../app/static/js/util.js';
+
+test('emptyText for Past Foods names the meal', () => {
+  assert.equal(emptyText('recent', 'all', true), 'No past foods yet. Foods you log show up here.');
+  assert.equal(emptyText('recent', 'lunch', true), 'No past foods logged as lunch. Choose All to see every past food.');
+});
+
+test('plural uses the singular for exactly one', () => {
+  assert.equal(plural(1, 'item'), '1 item');
+  assert.equal(plural(2, 'item'), '2 items');
+  assert.equal(plural(0, 'item'), '0 items');
+  assert.equal(plural(3, 'box', 'boxes'), '3 boxes');
+});
+
+test('delete food confirm says exactly what happens', () => {
+  assert.equal(DELETE_FOOD_CONFIRM, 'Delete This Food? It will be removed from your lists. Past log entries and recipes keep it.');
+  assert.ok(!DELETE_FOOD_CONFIRM.includes('—'));
+});

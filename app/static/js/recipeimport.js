@@ -1,5 +1,5 @@
 // Pure helpers for Import Recipe and Match Ingredients. No DOM access, safe to import from node.
-import { parseAmount, fmtAmount, qtyText, servingText, matchedAmountText, sentence, stepsCheck, MEALS, MEAL_LABELS, autoMatch } from './util.js';
+import { plural, parseAmount, fmtAmount, qtyText, servingText, matchedAmountText, sentence, stepsCheck, MEALS, MEAL_LABELS, autoMatch } from './util.js';
 
 // Unit words found at the start of an ingredient line, mapped to the server's canonical units or a count word.
 const UNIT_WORDS = {
@@ -150,7 +150,7 @@ export function matchCountText(meal) {
 export function recipeSubText(meal, kcalText) {
   if (!meal.complete) return matchCountText(meal);
   const n = meal.needed != null ? meal.needed : meal.items.length;
-  return n + (n === 1 ? ' item' : ' items') + ' - ' + kcalText + ' kcal';
+  return plural(n, 'item') + ' - ' + kcalText + ' kcal';
 }
 
 // Index of the next unmatched (not skipped) or Check Amount row after `from`, wrapping round; -1 when every row is done.

@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS foods(
   name TEXT NOT NULL, brand TEXT, serving_amount REAL NOT NULL, serving_unit TEXT NOT NULL,
   serving_g REAL, serving_ml REAL, label_text TEXT NOT NULL DEFAULT '',
   kcal REAL NOT NULL, carbs REAL NOT NULL, protein REAL NOT NULL, fat REAL NOT NULL, fiber REAL,
-  created_at TEXT DEFAULT CURRENT_TIMESTAMP, created_by INTEGER, UNIQUE(source, source_id));
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP, created_by INTEGER, deleted INTEGER NOT NULL DEFAULT 0, UNIQUE(source, source_id));
 CREATE INDEX IF NOT EXISTS foods_barcode ON foods(barcode);
 CREATE TABLE IF NOT EXISTS entries(
   id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), day TEXT NOT NULL, meal TEXT,
@@ -83,6 +83,8 @@ CREATE TABLE IF NOT EXISTS recipe_tags(
 CREATE TABLE IF NOT EXISTS recipe_logs(
   id INTEGER PRIMARY KEY, meal_id INTEGER NOT NULL REFERENCES meals(id) ON DELETE CASCADE, meal TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS hidden_foods(
+  user_id INTEGER NOT NULL, food_id INTEGER NOT NULL, PRIMARY KEY(user_id, food_id));
+CREATE TABLE IF NOT EXISTS deleted_foods(
   user_id INTEGER NOT NULL, food_id INTEGER NOT NULL, PRIMARY KEY(user_id, food_id));
 CREATE TABLE IF NOT EXISTS goals(
   user_id INTEGER PRIMARY KEY REFERENCES users(id), kcal REAL NOT NULL,
@@ -128,6 +130,8 @@ def init(c: sqlite3.Connection) -> None:
     c.executescript(SCHEMA)
     if "created_by" not in {r[1] for r in c.execute("PRAGMA table_info(foods)")}:  # databases made before My foods
         c.execute("ALTER TABLE foods ADD COLUMN created_by INTEGER")
+    if "deleted" not in {r[1] for r in c.execute("PRAGMA table_info(foods)")}:  # databases made before soft delete
+        c.execute("ALTER TABLE foods ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0")
     if "meal" not in {r[1] for r in c.execute("PRAGMA table_info(meals)")}:  # databases made before recipes had a meal
         c.execute("ALTER TABLE meals ADD COLUMN meal TEXT")
     if "servings" not in {r[1] for r in c.execute("PRAGMA table_info(meals)")}:  # databases made before imported recipes
@@ -242,6 +246,19 @@ def need_food(c, food_id) -> dict:
     return food_dict(row)
 
 
+# A deleted food is hidden, never removed: entries and recipe rows keep pointing at it, so history and totals never change.
+# foods.deleted hides it from everyone (only set for a custom or Claude food its creator deleted when nobody else uses it);
+# deleted_foods(user_id, food_id) hides it from one user (the rule for shared Open Food Facts and USDA foods).
+# SQL fragment for a query over foods f, with one ? for the user id.
+VISIBLE = "f.deleted=0 AND f.id NOT IN (SELECT food_id FROM deleted_foods WHERE user_id=?)"
+
+
+def undelete(c, uid: int, food_id: int) -> None:
+    """Bring a deleted food back as a normal food, for this user and (when it was deleted for everyone) for all."""
+    c.execute("DELETE FROM deleted_foods WHERE user_id=? AND food_id=?", (uid, food_id))
+    c.execute("UPDATE foods SET deleted=0 WHERE id=? AND deleted=1", (food_id,))
+
+
 def normalize_food(raw: dict, sources: tuple = SOURCES) -> dict:
     """Validate a Food from a client or from lookup and return the clean dict to store. Raises 400."""
     name = str(raw.get("name") or "").strip()
@@ -336,6 +353,8 @@ async def barcode(code: str, user: CurrentUser):
             row = c.execute(f"SELECT * FROM foods WHERE barcode IN ({marks}) ORDER BY (source IN ('custom','ai')) DESC, id DESC LIMIT 1",
                             info["candidates"]).fetchone()
         if row:
+            with db.conn() as c:
+                undelete(c, user["id"], row["id"])  # scanning a deleted food again brings it back
             return {"food": food_dict(row), "note": "", "valid": info["valid"], "can_ask_ai": ask}
     res = await lookup.barcode(code)
     food, note = res.get("food"), res.get("note") or ""
@@ -343,6 +362,7 @@ async def barcode(code: str, user: CurrentUser):
         try:
             with db.conn() as c:
                 food = save_food(c, normalize_food(food))
+                undelete(c, user["id"], food["id"])
         except HTTPException as e:
             food, note = None, f"Found a product but its data was unusable ({e.detail})"
     return {"food": food, "note": note, "valid": bool(res.get("valid")), "can_ask_ai": ask}
@@ -365,9 +385,9 @@ async def search_foods(user: CurrentUser, q: str = "", remote: int = 1, source: 
         where, params = f"{where} AND f.source=?", [*params, source]
     with db.conn() as c:
         favs = c.execute(f"SELECT f.* FROM favorites v JOIN foods f ON f.id=v.food_id "
-                         f"WHERE v.user_id=? AND {where} ORDER BY f.name", [user["id"], *params]).fetchall()
-        local = c.execute(f"SELECT f.* FROM foods f WHERE {where} ORDER BY length(f.name), f.name LIMIT 20",
-                          params).fetchall()
+                         f"WHERE v.user_id=? AND {where} AND {VISIBLE} ORDER BY f.name", [user["id"], *params, user["id"]]).fetchall()
+        local = c.execute(f"SELECT f.* FROM foods f WHERE {where} AND {VISIBLE} ORDER BY length(f.name), f.name LIMIT 20",
+                          [*params, user["id"]]).fetchall()
     results = [food_dict(r) for r in favs]
     seen = {f["id"] for f in results}
     results += [f for f in map(food_dict, local) if f["id"] not in seen]
@@ -424,7 +444,8 @@ def get_food(food_id: int, user: CurrentUser):
         last = c.execute("SELECT amount, unit FROM last_used WHERE user_id=? AND food_id=?",
                          (user["id"], food_id)).fetchone()
         fav = c.execute("SELECT 1 FROM favorites WHERE user_id=? AND food_id=?", (user["id"], food_id)).fetchone()
-    return {**food, "units": units.available_units(food), "favorite": bool(fav),
+    start = units.default_pick(food)
+    return {**food, "units": units.available_units(food), "default": {"amount": start[0], "unit": start[1]}, "favorite": bool(fav),
             "last": {"amount": last["amount"], "unit": last["unit"]} if last else None}
 
 
@@ -461,6 +482,7 @@ def log_entry(c, uid: int, food: dict, amount: float, unit: str, day: str, meal)
               "ON CONFLICT(user_id,food_id) DO UPDATE SET amount=excluded.amount, unit=excluded.unit, "
               "used_at=excluded.used_at", (uid, food["id"], amount, unit, now()))
     c.execute("DELETE FROM hidden_foods WHERE user_id=? AND food_id=?", (uid, food["id"]))
+    undelete(c, uid, food["id"])  # logging a deleted food again brings it back
     return entry_dict(c.execute("SELECT * FROM entries WHERE id=?", (cur.lastrowid,)).fetchone())
 
 
@@ -714,7 +736,7 @@ def quick_item(food: dict, amount: float, unit: str, meal: str | None = None) ->
     try:
         m = macros(food, amount, unit)
     except ValueError:  # stored unit no longer reachable: fall back to the label serving
-        amount, unit = food["serving_amount"], units.parse_unit(food["serving_unit"])
+        amount, unit = units.default_pick(food)
         m = macros(food, amount, unit)
     return {"food": food, "amount": amount, "unit": unit, "servings": m["servings"],
             "kcal": m["kcal"], "protein": m["protein"], "meal": meal}
@@ -729,8 +751,9 @@ def items_from_rows(rows) -> dict:
     items = []
     for r in rows:
         food = food_dict(r)
-        amount = r["lu_amount"] if r["lu_amount"] is not None else food["serving_amount"]
-        unit = r["lu_unit"] or units.parse_unit(food["serving_unit"])
+        base_amount, base_unit = units.default_pick(food)  # the package's own serving until the food is logged
+        amount = r["lu_amount"] if r["lu_amount"] is not None else base_amount
+        unit = r["lu_unit"] or base_unit
         items.append(quick_item(food, amount, unit, r["last_meal"]))
     return {"items": items}
 
@@ -741,8 +764,8 @@ def quick_favorites(user: CurrentUser):
         rows = c.execute(
             "SELECT f.*, lu.amount AS lu_amount, lu.unit AS lu_unit, " + LAST_MEAL.replace("lu.user_id", "v.user_id") +
             " FROM favorites v JOIN foods f ON f.id=v.food_id "
-            "LEFT JOIN last_used lu ON lu.food_id=f.id AND lu.user_id=v.user_id WHERE v.user_id=? "
-            "ORDER BY (lu.used_at IS NULL), lu.used_at DESC, f.name", (user["id"],)).fetchall()
+            f"LEFT JOIN last_used lu ON lu.food_id=f.id AND lu.user_id=v.user_id WHERE v.user_id=? AND {VISIBLE} "
+            "ORDER BY (lu.used_at IS NULL), lu.used_at DESC, f.name", (user["id"], user["id"])).fetchall()
         out = items_from_rows(rows)
         tags, counts = favorite_tags(c, user["id"]), meal_counts(c, user["id"])
     for it in out["items"]:
@@ -750,24 +773,45 @@ def quick_favorites(user: CurrentUser):
     return out
 
 
+def logged_meals(c, uid: int) -> dict:
+    """{food_id: [meals the user logged it as]} in breakfast..dessert order, from entries (null meals left out)."""
+    out: dict = {}
+    for r in c.execute("SELECT DISTINCT food_id, meal FROM entries WHERE user_id=? AND food_id IS NOT NULL AND meal IS NOT NULL", (uid,)):
+        out.setdefault(r["food_id"], set()).add(r["meal"])
+    return {k: [m for m in MEALS if m in v] for k, v in out.items()}
+
+
 @router.get("/quick/recent")
-def quick_recent(user: CurrentUser):
+def quick_recent(user: CurrentUser, meal: str | None = None):
+    """Recently logged foods, newest first. With meal (breakfast..dessert) only foods the user logged as that meal, plus foods
+    never logged with a meal (they show under every meal, like untagged favorites). No meal or all keeps every food.
+    Items carry meals (the meals the food was logged as) and counts ({meal: times logged}), the same shape as favorites."""
+    meal_sql, meal_args = "", []
+    if meal not in (None, "", "all"):
+        pick(meal, MEALS, "meal")
+        own = "FROM entries x WHERE x.user_id=lu.user_id AND x.food_id=f.id"
+        meal_sql = f"AND (EXISTS(SELECT 1 {own} AND x.meal=?) OR NOT EXISTS(SELECT 1 {own} AND x.meal IS NOT NULL)) "
+        meal_args = [meal]
     with db.conn() as c:
         rows = c.execute(
             "SELECT f.*, lu.amount AS lu_amount, lu.unit AS lu_unit, " + LAST_MEAL +
             " FROM last_used lu JOIN foods f ON f.id=lu.food_id "
-            "WHERE lu.user_id=? AND f.id NOT IN (SELECT food_id FROM hidden_foods WHERE user_id=lu.user_id) "
-            "ORDER BY lu.used_at DESC, f.id DESC LIMIT 20", (user["id"],)).fetchall()
-    return items_from_rows(rows)
+            f"WHERE lu.user_id=? AND f.id NOT IN (SELECT food_id FROM hidden_foods WHERE user_id=lu.user_id) AND {VISIBLE} "
+            f"{meal_sql}ORDER BY lu.used_at DESC, f.id DESC LIMIT 20", (user["id"], user["id"], *meal_args)).fetchall()
+        out = items_from_rows(rows)
+        tags, counts = logged_meals(c, user["id"]), meal_counts(c, user["id"])
+    for it in out["items"]:
+        it["meals"], it["counts"] = tags.get(it["food"]["id"], []), counts.get(it["food"]["id"], {})
+    return out
 
 
 @router.get("/quick/yesterday")
 def quick_yesterday(user: CurrentUser, day: str | None = None):
     prev = (date.fromisoformat(day_str(day)) - timedelta(days=1)).isoformat()
     with db.conn() as c:
-        entries = c.execute("SELECT food_id, amount, unit, meal FROM entries WHERE user_id=? AND day=? "
-                            "AND food_id IS NOT NULL AND food_id NOT IN (SELECT food_id FROM hidden_foods WHERE user_id=?) ORDER BY id",
-                            (user["id"], prev, user["id"])).fetchall()
+        entries = c.execute("SELECT e.food_id, e.amount, e.unit, e.meal FROM entries e JOIN foods f ON f.id=e.food_id "
+                            f"WHERE e.user_id=? AND e.day=? AND {VISIBLE} AND e.food_id NOT IN (SELECT food_id FROM hidden_foods WHERE user_id=?) "
+                            "ORDER BY e.id", (user["id"], prev, user["id"], user["id"])).fetchall()
         last: dict = {}  # last entry per distinct (food, meal) pair, in order of that last entry
         for e in entries:
             key = (e["food_id"], e["meal"])
@@ -835,6 +879,7 @@ def add_favorite(food_id: int, user: CurrentUser):
         need_food(c, food_id)
         c.execute("INSERT OR IGNORE INTO favorites(user_id, food_id) VALUES(?,?)", (user["id"], food_id))
         c.execute("DELETE FROM hidden_foods WHERE user_id=? AND food_id=?", (user["id"], food_id))
+        undelete(c, user["id"], food_id)
     return {"food_id": food_id, "favorite": True}
 
 
@@ -1241,7 +1286,7 @@ def check_item_body(body) -> None:
         raise bad("Send food_id together with amount and unit")
 
 
-def apply_item(c, item_id: int, body: dict) -> None:
+def apply_item(c, item_id: int, body: dict, uid: int | None = None) -> None:
     """Match ({food_id, amount, unit, check?}), unmatch ({food_id: null}) and or skip ({skipped}) one checked row.
     A match clears skipped unless skipped is sent too; skipped is applied last."""
     if "food_id" in body and body["food_id"] is None:
@@ -1258,6 +1303,8 @@ def apply_item(c, item_id: int, body: dict) -> None:
         amount, unit = check_amount_unit(food, body.get("amount"), body.get("unit"))
         c.execute("UPDATE meal_items SET food_id=?, amount=?, unit=?, skipped=0, needs_check=? WHERE id=?",
                   (food["id"], amount, unit, int(body.get("check") is True), item_id))
+        if uid is not None:
+            undelete(c, uid, food["id"])  # picking a deleted food again for a recipe brings it back
     if "skipped" in body:
         c.execute("UPDATE meal_items SET skipped=? WHERE id=?", (int(body["skipped"]), item_id))
 
@@ -1270,7 +1317,7 @@ def patch_meal_item(meal_id: int, item_id: int, user: CurrentUser, body: dict = 
     with db.conn() as c:
         own_meal(c, user["id"], meal_id)
         own_item(c, meal_id, item_id)
-        apply_item(c, item_id, body)
+        apply_item(c, item_id, body, user["id"])
         return meal_dict(c, own_meal(c, user["id"], meal_id))
 
 
@@ -1299,7 +1346,7 @@ def patch_meal_items(meal_id: int, user: CurrentUser, body: dict = Body(...)):
             own_item(c, meal_id, item_id)
         for i, (item_id, rest) in enumerate(changes, 1):  # db.conn commits only when every row went through
             try:
-                apply_item(c, item_id, rest)
+                apply_item(c, item_id, rest, user["id"])
             except HTTPException as e:
                 raise HTTPException(e.status_code, f"row {i}: {e.detail}")
         return meal_dict(c, own_meal(c, user["id"], meal_id))
@@ -1336,6 +1383,7 @@ def add_meal_item(meal_id: int, user: CurrentUser, body: dict = Body(...)):
             food = need_food(c, whole_id(body["food_id"], "food_id"))
             amount, unit = check_amount_unit(food, body.get("amount"), body.get("unit"))
             food_id = food["id"]
+            undelete(c, user["id"], food_id)
         cur = c.execute("INSERT INTO meal_items(meal_id, food_id, amount, unit, position, src_text, src_amount, src_unit, src_name, src_note,"
                         " skipped, needs_check) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                         (meal_id, food_id, amount, unit, len(ids), *src, int(body.get("skipped") is True), int(body.get("check") is True)))
@@ -1401,11 +1449,11 @@ def get_saved(user: CurrentUser):
     uid = user["id"]
     with db.conn() as c:
         tags = favorite_tags(c, uid)
-        favs = c.execute("SELECT f.* FROM favorites v JOIN foods f ON f.id=v.food_id WHERE v.user_id=? "
-                         "ORDER BY f.name COLLATE NOCASE, f.id", (uid,)).fetchall()
+        favs = c.execute(f"SELECT f.* FROM favorites v JOIN foods f ON f.id=v.food_id WHERE v.user_id=? AND {VISIBLE} "
+                         "ORDER BY f.name COLLATE NOCASE, f.id", (uid, uid)).fetchall()
         recipes = c.execute("SELECT * FROM meals WHERE user_id=? ORDER BY name COLLATE NOCASE, id", (uid,)).fetchall()
-        mine = c.execute(f"SELECT f.*, {IN_USE} AS in_use FROM foods f WHERE f.created_by=? AND f.source IN ('custom','ai') "
-                         "ORDER BY f.name COLLATE NOCASE, f.id", (uid,)).fetchall()
+        mine = c.execute(f"SELECT f.*, {IN_USE} AS in_use FROM foods f WHERE f.created_by=? AND f.source IN ('custom','ai') AND {VISIBLE} "
+                         "ORDER BY f.name COLLATE NOCASE, f.id", (uid, uid)).fetchall()
         return {"favorites": [{"food": food_dict(r), "meals": tags.get(r["id"], [])} for r in favs],
                 "recipes": [meal_dict(c, r) for r in recipes],
                 "foods": [{**food_dict(r), "in_use": bool(r["in_use"])} for r in mine]}
@@ -1490,13 +1538,25 @@ async def refresh_nutrients(food_id: int, user: CurrentUser):
 
 @router.delete("/foods/{food_id}")
 def delete_food(food_id: int, user: CurrentUser):
+    """Soft delete. The food leaves my lists, search, favorites, picker and Saved, but nothing is removed: log entries and recipe
+    rows keep it, so history and totals never change. A shared Open Food Facts or USDA food, or anyone else's food, is only hidden
+    for me. A custom or Claude food I created is hidden for everyone, but only when no other user has it in favorites, entries or
+    recipes; otherwise it is hidden for me alone. Logging, favoriting or scanning it again brings it back."""
+    uid = user["id"]
     with db.conn() as c:
-        row = own_food(c, user["id"], food_id)
-        if row["in_use"]:
-            raise HTTPException(409, "This food is in a log entry or a recipe, so it cannot be deleted.")
-        if c.execute("SELECT 1 FROM favorites WHERE food_id=? AND user_id<>?", (food_id, user["id"])).fetchone():
-            raise HTTPException(409, "Someone else has this food in their favorites, so it cannot be deleted.")
-        for table in ("favorites", "favorite_tags", "hidden_foods", "last_used"):
-            c.execute(f"DELETE FROM {table} WHERE food_id=?", (food_id,))
-        c.execute("DELETE FROM foods WHERE id=?", (food_id,))
-    return {"deleted": food_id}
+        row = c.execute("SELECT id, source, created_by FROM foods WHERE id=?", (food_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Food not found")
+        for table in ("favorites", "favorite_tags", "hidden_foods"):
+            c.execute(f"DELETE FROM {table} WHERE user_id=? AND food_id=?", (uid, food_id))
+        c.execute("INSERT OR IGNORE INTO deleted_foods(user_id, food_id) VALUES(?,?)", (uid, food_id))
+        everyone = False
+        if row["source"] in ("custom", "ai") and row["created_by"] == uid:
+            others = c.execute("SELECT 1 FROM favorites WHERE food_id=? AND user_id<>? UNION ALL "
+                               "SELECT 1 FROM entries WHERE food_id=? AND user_id<>? UNION ALL "
+                               "SELECT 1 FROM meal_items mi JOIN meals m ON m.id=mi.meal_id WHERE mi.food_id=? AND m.user_id<>? LIMIT 1",
+                               (food_id, uid, food_id, uid, food_id, uid)).fetchone()
+            if not others:
+                c.execute("UPDATE foods SET deleted=1 WHERE id=?", (food_id,))
+                everyone = True
+    return {"deleted": food_id, "everyone": everyone}

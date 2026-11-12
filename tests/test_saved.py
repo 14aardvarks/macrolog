@@ -152,7 +152,6 @@ def test_my_foods_edit_rules(a, b):
     assert a.patch(f"/api/foods/{f['id']}", json={"kcal": -1}).status_code == 400
     assert a.patch(f"/api/foods/{f['id']}", json={}).status_code == 400
     assert b.patch(f"/api/foods/{f['id']}", json={"name": "x"}).status_code == 403
-    assert b.delete(f"/api/foods/{f['id']}").status_code == 403
     e = log(a, f, amount=10)
     assert a.get("/api/saved").json()["foods"][0]["in_use"] is True
     r = a.patch(f"/api/foods/{f['id']}", json={"kcal": 50})
@@ -163,20 +162,16 @@ def test_my_foods_edit_rules(a, b):
     assert a.patch("/api/foods/9999", json={"name": "x"}).status_code == 404
 
 
-def test_my_foods_delete_rules(a, b):
-    f, used, shared, remote = food(a, SALT), food(a), food(a, PB), None
-    assert a.delete(f"/api/foods/{f['id']}").json() == {"deleted": f["id"]}
-    assert a.get(f"/api/foods/{f['id']}").status_code == 404
+def test_my_foods_delete_is_soft_and_never_blocked(a, b):
+    f, used, shared = food(a, SALT), food(a), food(a, PB)
+    assert a.delete(f"/api/foods/{f['id']}").json() == {"deleted": f["id"], "everyone": True}
+    assert f["id"] not in [x["id"] for x in a.get("/api/saved").json()["foods"]]
     log(a, used)
-    r = a.delete(f"/api/foods/{used['id']}")
-    assert r.status_code == 409 and "cannot be deleted" in r.json()["detail"]
+    assert a.delete(f"/api/foods/{used['id']}").status_code == 200  # no 409 for a food in a log
     m = a.post("/api/meals", json={"name": "R", "items": [{"food_id": shared["id"], "amount": 1, "unit": "tbsp"}]}).json()
-    assert a.delete(f"/api/foods/{shared['id']}").status_code == 409
-    a.delete(f"/api/meals/{m['id']}")
-    fav(b, shared)
-    assert a.delete(f"/api/foods/{shared['id']}").status_code == 409  # someone else's favorite
-    b.delete(f"/api/favorites/{shared['id']}")
-    assert a.delete(f"/api/foods/{shared['id']}").status_code == 200
+    assert a.delete(f"/api/foods/{shared['id']}").status_code == 200  # nor for one in a recipe
+    assert a.get(f"/api/meals/{m['id']}").json()["items"][0]["food"]["name"] == shared["name"]
+    assert a.delete("/api/foods/9999").status_code == 404
 
 
 def test_foods_not_created_by_the_user_are_not_editable(a):
@@ -187,7 +182,7 @@ def test_foods_not_created_by_the_user_are_not_editable(a):
                   "VALUES('custom','Old',1,'cup',1,1,1,1)")
     assert a.get("/api/saved").json()["foods"] == []
     assert a.patch("/api/foods/1", json={"name": "x"}).status_code == 403
-    assert a.delete("/api/foods/2").status_code == 403
+    assert a.patch("/api/foods/2", json={"name": "x"}).status_code == 403
 
 
 def test_init_migrates_an_old_database(tmp_path, monkeypatch):
