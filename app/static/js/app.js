@@ -24,6 +24,7 @@ import { renderImport, renderReview, renderMatch } from './recipeflow.js';
 import { recipeSubText, portionUnits, portionFraction, portionItems, portionNote, portionAmount } from './recipeimport.js';
 import { renderClaudeSection, renderSignIn } from './claudekey.js';
 import { refreshLoggedControl } from './refresh.js';
+import { startUpdates } from './update.js';
 
 const main = document.getElementById('main');
 const nav = document.getElementById('nav');
@@ -782,6 +783,4 @@ function hideSplash() {
   hideSplash();
 })();
 
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => { navigator.serviceWorker.register('/sw.js').catch(() => {}); });
-}
+startUpdates();

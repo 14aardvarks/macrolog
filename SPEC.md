@@ -156,14 +156,14 @@ GET  /api/foods/search?q=&remote=&source= -> {"results": [Food...]}   # order: u
         # off or fdc: favorites, local foods and remote results of that source only; anything else 400. remote=0 skips the network.
 POST /api/foods                -> Food    # create custom or AI-confirmed food (source "custom" or "ai"); validates numbers >= 0
 GET  /api/foods/{id}           -> Food + {"units": units.available_units(food), "last": {"amount","unit"}|null, "favorite": bool}
-POST /api/entries   {food_id, amount, unit, day?, meal?} -> entry     # meal in breakfast|lunch|dinner|snack|null; updates last_used
+POST /api/entries   {food_id, amount, unit, day?, meal?} -> entry     # meal in breakfast|lunch|dinner|snack|dessert|null; updates last_used
 PATCH /api/entries/{id} {amount?, unit?, meal?}   DELETE /api/entries/{id}   # only own entries
 GET  /api/preview?food_id=&amount=&unit=  -> units.scale result        # live macros while scrolling the picker
 GET  /api/day?day=YYYY-MM-DD -> {"day","entries":[...],"totals","targets","percent","remaining"}   # day defaults to today (server local date; accept ?tz offset optional)
 GET  /api/quick/favorites | /api/quick/yesterday | /api/quick/recent -> {"items":[{"food": Food, "amount","unit","servings","kcal","protein"}]}  # amount/unit = last used
 POST /api/favorites/{food_id}   DELETE /api/favorites/{food_id}   # POST also un-hides the food
 ```
-Meal tags (breakfast|lunch|dinner|snack, zero or more) live in `favorite_tags(user_id, food_id, meal)` and `recipe_tags(meal_id, meal)`;
+Meal tags (breakfast|lunch|dinner|snack|dessert, zero or more) live in `favorite_tags(user_id, food_id, meal)` and `recipe_tags(meal_id, meal)`;
 existing favorites and recipes start untagged. Untagged items show under every meal on Add. `recipe_logs` records each recipe log with its meal.
 `hidden_foods(user_id, food_id)` hides a food from the user's Recent and Yesterday lists. `foods.created_by` is the creating user.
 Logging a favorite (POST /api/entries) or a recipe with a meal adds that tag; tags are never removed automatically; logging un-hides a food.
@@ -205,7 +205,7 @@ Steps: meals.steps (TEXT, a JSON list of strings, null = none, added in place) i
 Quick favorites items also carry `meals` (tags) and `counts` ({meal: times logged}); recipes carry `meals` and `counts` (from recipe_logs).
 ```
 GET/POST /api/meals    POST {"name","items":[{"food_id","amount","unit"}],"meals"?:[...tags],"meal"?: one tag (older),"steps"?:[str]}  -> meal   # meals wins over meal; used by Create Recipe
-POST /api/meals/from-meal {"name","day","meal": breakfast|lunch|dinner|snack|null,"entry_ids"}   # a meal group of one day (null = unassigned); my entries only,
+POST /api/meals/from-meal {"name","day","meal": breakfast|lunch|dinner|snack|dessert|null,"entry_ids"}   # a meal group of one day (null = unassigned); my entries only,
         # each of that day and meal; at least one id, else 400; the recipe is tagged with that meal. The Today screen uses only this route (no day level recipe).
 POST /api/meals/from-day {"name","day","entry_ids"?}      # legacy API, not used by the app
 DELETE /api/meals/{id}
@@ -346,7 +346,8 @@ Screens: Login, Today, Add, Recipes, Picker, Claude fallback, Settings. Bottom n
   (Meal, Amount and a unit from meal.portions: servings, % of recipe, and the yield units when a yield is set; POST /api/meals/{id}/log
   with amount and unit, so the server scales it), Adjust Items (the log checklist, starting at that share), Serving Size (js/servingsize.js:
   servings, Total yield amount and unit, Use Total of Ingredients when the yield is blank and ingredient_grams is known, which fills it
-  in grams and saves at once; Save Serving Size) and the Saved tools (tags, Rename, Edit Items, Delete; saved.js recipeRow).
+  in grams and saves at once; Save Serving Size) and the Saved tools (tags, Rename, Edit Items; saved.js recipeRow with noDelete), then a Delete Recipe button (btn danger, after the
+  Edit list; only on this screen, not on Match Ingredients). It asks "Delete This Recipe?" (saved.js `deleteRecipe`, the same confirm and DELETE /api/meals/{id} as Saved's Delete) and then goes back to the Recipes tab list.
   The log checklist (Add, Recipes sub-tab, and Adjust Items) has the same Amount and unit at the top; changing them scales every row by
   the same factor, so amounts changed by hand keep their ratio, and switching units keeps the same share of the recipe. New Recipe,
   Import, Match Ingredients and the recipe screen mark the Recipes tab; Save, Save and Continue, Cancel, Back and Done come back to it.
@@ -418,7 +419,7 @@ Screens: Login, Today, Add, Recipes, Picker, Claude fallback, Settings. Bottom n
 - Saved (Settings, then Saved): Favorites, Recipes and My foods lists with meal tag chips, rename, delete, recipe item editing, Remove From My Lists, and the food form for My foods.
   Refresh Nutrients (js/refresh.js) is a button in the food edit form (shown for every edited food, with a hint when it has no barcode) and in the picker (only when the food can be looked up and has a blank nutrient); it fills the blank boxes and never overwrites. My Foods also has Refresh All Missing, at most 10 foods per tap, one after another, stopping at a rate limit, with a summary of how many were done and how many are left.
   Refresh logged foods (refreshLoggedControl in js/refresh.js): Today has a Refresh Nutrients button under Micro Nutrients (the logged foods of the viewed day, hidden when nothing needs it) and Settings has Refresh All Logged Foods (every food ever logged). Both take ids from /api/foods/missing-nutrients, say how many foods will be checked, run at most 10 per tap one after another, stop at once on a 429 with a rate limit message, skip foods without a source, remember which foods were already checked this visit so tapping again continues, and report foods checked, values filled and foods left. Today repaints after a batch.
-  A search box filters all three sections by name (every word must match, case ignored). The Meal filter (All, Breakfast, Lunch, Dinner, Snack, Untagged) uses the tags and applies to Favorites and Recipes only, strictly (an untagged item is not shown under a meal here). Each section shows 20 items with a Show More button. Remove and delete reload in place, so the search and filter stay.
+  A search box filters all three sections by name (every word must match, case ignored). The Meal filter (All, Breakfast, Lunch, Dinner, Snack, Dessert, Untagged) uses the tags and applies to Favorites and Recipes only, strictly (an untagged item is not shown under a meal here). Each section shows 20 items with a Show More button. Remove and delete reload in place, so the search and filter stay.
 - Source labels (util.js `sourceLabel`, dom.js `sourceBadge` and `sourceLine`): foods carry `source` (off, fdc, custom, ai), shown as a tiny text badge (Open Food Facts, USDA, Custom, Claude) in the sub line of Add lists and search results, on the Saved rows, under the name in the picker and on the food edit form. Claude foods get a filled badge plus an Estimate word in rows and the note "Values are estimates from Claude." in the picker, the draft form and the Ask Claude screen, which also says it is not a database search. Regular sources get no note. Today shows it too: `/api/day` entries carry `source` (a LEFT JOIN on foods, null when the food row is missing), as a badge in the list row's sub line and under the food name in the pinned Food column of the table.
 - New Recipe (Recipes tab button, js/recipe.js, the Create Recipe flow): name, ingredients, meal tags, Save (POST /api/meals). Add Ingredient opens the Add screen in ingredient mode (search, Scan Barcode, Enter Manually, Favorites and Past Foods tabs, no meal choice); a food opens the picker with a Done button, which returns the amount and unit to the draft (the picker's Serving unit works as usual). Tapping a draft ingredient adjusts it the same way, and the x removes it. The draft lives in app state until Save, and Save returns to the Recipes tab. Add has no recipe buttons; its Recipes sub-tab logs recipes.
 - Settings: start screen, goals (kcal and split), sign out, Claude status (used/cap), personal Claude key, cap, model and
@@ -437,6 +438,21 @@ Screens: Login, Today, Add, Recipes, Picker, Claude fallback, Settings. Bottom n
   screen has rendered, with an inline 6 s safety timeout. No iOS apple-touch-startup-image sizes.
 - Light and dark via prefers-color-scheme. Large tap targets, no confirmation dialogs except destructive deletes of meals. Escape all
   text with textContent, never innerHTML with data. Register sw.js to cache only the static shell.
+- Meals are one ordered list, five long: Breakfast, Lunch, Dinner, Snack, Dessert (core.MEALS on the server, util.js `MEALS` and `MEAL_LABELS`
+  on the client; every selector, chip row, filter, Today group and table subtotal is built from it). Dessert is a full meal after Snack
+  but is never chosen by `guessMeal` (time of day); it is only ever picked by hand, as the Default Meal or on the Meal selectors. No table
+  has a CHECK on meal (meals are validated in core.MEALS only), so older databases need no migration and take dessert at once
+  (tests/test_dessert.py). Untagged favorites and recipes show under every meal, Dessert included. Meal chips wrap on a narrow phone.
+- Picker layout never shifts while units or amounts change: the "1 serving = 28 g" line (`.base-line`) always takes one line of height and is
+  empty when there is nothing to show (label unit, serving, %), and the Estimated Conversion badge sits in a fixed `.badge-slot` that is
+  hidden with visibility, not removed. Both stay on one line (ellipsis), so the unit wheel, kcal and macro block and the Meal and Log
+  controls below keep their position for every unit.
+- Update banner (js/update.js `watchUpdates`, `updateBanner`, `startUpdates`): sw.js no longer calls skipWaiting while installing; a new worker waits.
+  When one is installed and waiting while another controls the page (or a new worker took over by itself), a sticky bar at the top of the app
+  reads "Update Available" with a Reload button (role status, light and dark). Reload posts `{type: 'SKIP_WAITING'}` to the waiting worker (sw.js
+  answers with skipWaiting), then reloads on controllerchange (with a short timer as a fallback). A fresh install, with no earlier controller,
+  shows nothing. The page also asks the registration for a newer worker whenever it becomes visible. Bump the sw.js cache name (now v41) with
+  every change to the shell and list new js files in SHELL.
 - Do not ship a mock server. Test pure helpers (picker math, number formatting, day grouping) with node scripts in tests/ui,
   run with `node --test tests/ui`. Keep those helpers in their own module (js/util.js) so node can import them.
 

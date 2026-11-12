@@ -97,10 +97,10 @@ export async function renderPicker(root, params, ctx) {
   let amtValues = [];
   let typing = false;
   const sub = h('p', { class: 'sub' });
-  const baseLine = h('p', { class: 'sub base-line', hidden: '' });
+  const baseLine = h('p', { class: 'sub base-line' });  // always in the layout (fixed height), empty when there is nothing to show
   const gramLine = h('p', { class: 'gram-line', 'aria-live': 'polite' });
   const star = h('button', { class: 'star', type: 'button', onclick: toggleFav });
-  const estBadge = h('p', { class: 'badge', hidden: '' }, 'Estimated conversion');
+  const estBadge = h('p', { class: 'badge', style: 'visibility:hidden' }, 'Estimated conversion');  // hidden but still taking its space
   const status = h('div', { 'aria-live': 'polite' });
   const logBtn = h('button', { class: 'btn primary', type: 'button', onclick: save }, adjust != null ? 'Done' : edit ? 'Save Changes' : 'Log');
 
@@ -121,7 +121,7 @@ export async function renderPicker(root, params, ctx) {
     h('div', { class: 'kcal-big' }, kcal, ' kcal'),
     h('div', { class: 'macros' }, macroCell('Carbs g', 'pv-carbs'), macroCell('Protein g', 'pv-protein'),
       macroCell('Fat g', 'pv-fat'), macroCell('Fiber g', 'pv-fiber')),
-    showBar ? mbar : null, micros.el, canRefresh(food) ? refreshControl(food, () => runPreview()).el : null, estBadge,
+    showBar ? mbar : null, micros.el, canRefresh(food) ? refreshControl(food, () => runPreview()).el : null, h('div', { class: 'badge-slot' }, estBadge),
     adjust != null ? null : h('label', { class: 'field' }, h('span', null, 'Meal'), mealSel),
     status, logBtn,
     edit ? h('button', { class: 'btn danger', type: 'button', onclick: remove }, 'Remove Entry') : null));
@@ -203,7 +203,6 @@ export async function renderPicker(root, params, ctx) {
   function paintBase() {
     const u = units.find((x) => x.unit === st.unit);
     const show = u && st.unit !== units[0].unit && st.unit !== SERVING && st.unit !== PCT && u.default_amount > 0;
-    baseLine.hidden = !show;
     baseLine.textContent = show ? '1 serving = ' + qtyText(roundTo(u.default_amount, u.default_amount >= 10 ? 0 : 2), u.unit) + ' ' + u.label + (u.estimated ? ' (estimated)' : '') : '';
   }
   function paintGrams() {
@@ -224,7 +223,7 @@ export async function renderPicker(root, params, ctx) {
       root.querySelector('#pv-fiber').textContent = p.fiber == null ? '-' : fmtNum(p.fiber, 1);
       fillMacroBar(mbar.firstChild, p);
       micros.update(p);
-      estBadge.hidden = !p.estimated;
+      estBadge.style.visibility = p.estimated ? 'visible' : 'hidden';
       if (status.firstChild) clear(status);
     } catch (e) {
       if (seq === st.seq) show(status, message(e.message, 'error'));

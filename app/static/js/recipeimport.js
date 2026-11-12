@@ -1,5 +1,5 @@
 // Pure helpers for Import Recipe and Match Ingredients. No DOM access, safe to import from node.
-import { parseAmount, fmtAmount, qtyText, servingText, matchedAmountText, sentence, stepsCheck } from './util.js';
+import { parseAmount, fmtAmount, qtyText, servingText, matchedAmountText, sentence, stepsCheck, MEALS, MEAL_LABELS } from './util.js';
 
 // Unit words found at the start of an ingredient line, mapped to the server's canonical units or a count word.
 const UNIT_WORDS = {
@@ -197,9 +197,7 @@ export function importWhat(kind, n) {
 
 // Meal tags as a short label: "Breakfast, Dinner", or "Untagged".
 export function tagsText(meals) {
-  const order = ['breakfast', 'lunch', 'dinner', 'snack'];
-  const names = { breakfast: 'Breakfast', lunch: 'Lunch', dinner: 'Dinner', snack: 'Snack' };
-  const list = order.filter((m) => (meals || []).indexOf(m) >= 0).map((m) => names[m]);
+  const list = MEALS.filter((m) => (meals || []).indexOf(m) >= 0).map((m) => MEAL_LABELS[m]);
   return list.length ? list.join(', ') : 'Untagged';
 }
 

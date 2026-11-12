@@ -7,7 +7,7 @@ import { MEALS, MEAL_LABELS, toggleMeal, parseAmount, rowAmountText, unitLabel, 
 
 const title = (f) => (f.brand ? f.name + ' (' + f.brand + ')' : f.name);
 
-// Toggle chips for the four meals. save(meals) persists the new set, or throws.
+// Toggle chips for the meals. save(meals) persists the new set, or throws.
 export function chips(meals, save, status) {
   let now = meals.slice();
   const box = h('div', { class: 'chips', role: 'group', 'aria-label': 'Meal tags' });
@@ -37,8 +37,15 @@ function favoriteRow(fav, again) {
     chips(fav.meals, async (m) => { await api.favoriteTags(fav.food.id, m); fav.meals = m; }, status), h('div', { class: 'row wrap' }, remove), status);
 }
 
+// Asks Delete This Recipe?, then deletes through the same route Saved uses. Resolves true when deleted, false when cancelled.
+export async function deleteRecipe(rec) {
+  if (!window.confirm('Delete This Recipe? "' + rec.name + '" is removed for good. Entries already in your log stay.')) return false;
+  await api.deleteMeal(rec.id);
+  return true;
+}
+
 // One recipe with its tags, Rename, Edit Items (or Match Ingredients) and Delete. Also used by the recipe screen on the
-// Recipes tab. opts.onDeleted runs after a delete instead of again().
+// Recipes tab. opts.onDeleted runs after a delete instead of again(); opts.noDelete leaves the Delete button out (the recipe screen has its own Delete Recipe).
 export function recipeRow(rec, again, ctx, opts) {
   const status = h('div', { 'aria-live': 'polite' });
   const body = h('div');
@@ -79,8 +86,7 @@ export function recipeRow(rec, again, ctx, opts) {
         h('button', { class: 'btn ghost', type: 'button', onclick: () => show(body, null) }, 'Cancel'))));
   };
   const del = async () => {
-    if (!window.confirm('Delete the recipe "' + rec.name + '"?')) return;
-    try { await api.deleteMeal(rec.id); await (opts && opts.onDeleted ? opts.onDeleted() : again()); } catch (e) { fail(e); }
+    try { if (await deleteRecipe(rec)) await (opts && opts.onDeleted ? opts.onDeleted() : again()); } catch (e) { fail(e); }
   };
   return h('li', { class: 'saved-item' }, h('span', { class: 'item-title' }, rec.name),
     h('span', { class: 'item-sub' }, recipeSubText(rec, fmtNum(rec.kcal, 0))),
@@ -89,7 +95,7 @@ export function recipeRow(rec, again, ctx, opts) {
       // An imported recipe with unmatched or skipped ingredients is edited on Match Ingredients, which keeps the recipe's own lines.
       rec.complete && !rec.skipped ? h('button', { class: 'btn', type: 'button', onclick: items }, 'Edit Items')
         : h('button', { class: 'btn', type: 'button', onclick: () => ctx.go('match', { mealId: rec.id }) }, 'Match Ingredients'),
-      h('button', { class: 'btn', type: 'button', onclick: del }, 'Delete')),
+      opts && opts.noDelete ? null : h('button', { class: 'btn', type: 'button', onclick: del }, 'Delete')),
     body, status);
 }
 

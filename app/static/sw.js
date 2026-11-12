@@ -1,11 +1,16 @@
 // Caches the static shell only. Never touches /api or /auth.
-const CACHE = 'macrolog-shell-v40';
+const CACHE = 'macrolog-shell-v41';
 const SHELL = ['/', '/style.css', '/manifest.webmanifest', '/icon.svg', '/icon-192.png', '/icon-512.png', '/icon-maskable-512.png', '/apple-touch-icon.png', '/js/app.js', '/js/api.js', '/js/util.js', '/js/dom.js',
   '/js/picker.js', '/js/scan.js', '/js/ai.js', '/js/notice.js', '/js/foodform.js', '/js/chart.js', '/js/guide.js', '/js/guide-view.js',
-  '/js/setup.js', '/js/admin.js', '/js/adminutil.js', '/js/claudekey.js', '/js/saved.js', '/js/micros.js', '/js/recipe.js', '/js/tablemodel.js', '/js/daytable.js', '/js/refresh.js', '/js/recipeimport.js', '/js/recipeflow.js', '/js/recipes.js', '/js/steps.js', '/js/servingsize.js'];
+  '/js/setup.js', '/js/admin.js', '/js/adminutil.js', '/js/claudekey.js', '/js/saved.js', '/js/micros.js', '/js/recipe.js', '/js/tablemodel.js', '/js/daytable.js', '/js/refresh.js', '/js/recipeimport.js', '/js/recipeflow.js', '/js/recipes.js', '/js/steps.js', '/js/servingsize.js', '/js/update.js'];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)));
+});
+
+// A new worker waits until the page asks (the Update Available banner), so nobody is switched mid-use.
+self.addEventListener('message', (e) => {
+  if (e.data && e.data.type === 'SKIP_WAITING') self.skipWaiting();
 });
 
 self.addEventListener('activate', (e) => {

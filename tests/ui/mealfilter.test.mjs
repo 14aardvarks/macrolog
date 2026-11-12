@@ -7,8 +7,8 @@ const items = [
 ];
 
 test('filter options and labels', () => {
-  assert.deepEqual(MEAL_FILTERS, ['all', 'breakfast', 'lunch', 'dinner', 'snack']);
-  assert.deepEqual(MEAL_FILTERS.map((m) => MEAL_FILTER_LABELS[m]), ['All', 'Breakfast', 'Lunch', 'Dinner', 'Snack']);
+  assert.deepEqual(MEAL_FILTERS, ['all', 'breakfast', 'lunch', 'dinner', 'snack', 'dessert']);
+  assert.deepEqual(MEAL_FILTERS.map((m) => MEAL_FILTER_LABELS[m]), ['All', 'Breakfast', 'Lunch', 'Dinner', 'Snack', 'Dessert']);
 });
 
 test('filterByMeal keeps everything for all, including items with no meal', () => {

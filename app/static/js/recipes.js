@@ -5,7 +5,7 @@ import { h, clear, field, message, show, select } from './dom.js';
 import { MEALS, MEAL_LABELS, fmtNum, pageOf, PAGE_SIZE, matchedAmountText, stepsCheck, qtyText } from './util.js';
 import { recipeListSub, servingsText, perServingText, tagsText, portionUnits, portionFraction, portionAmount, yieldText } from './recipeimport.js';
 import { servingSizeEditor } from './servingsize.js';
-import { recipeRow } from './saved.js';
+import { recipeRow, deleteRecipe } from './saved.js';
 import { stepsList, stepsEditor } from './steps.js';
 
 // The recipe's ingredients as a read only list: "Wheat flour" over "1 1/2 cup, 188 g". Skipped lines keep their own text.
@@ -123,6 +123,10 @@ export async function renderRecipeView(root, params, ctx) {
     if (r.error) { show(status, message(r.error, 'error')); return; }
     ctx.go('meal', { mealId: meal.id, meal: mealSel.value, amount: r.amount, unit: unitSel.value, nav: 'recipes' });
   } }, 'Adjust Items');
+  const deleteStatus = h('div', { 'aria-live': 'polite' });
+  async function removeRecipe() {  // back to the Recipes tab list, which sits just below this screen
+    try { if (await deleteRecipe(meal)) await ctx.back(); } catch (e) { show(deleteStatus, message(e.message, 'error')); }
+  }
   const again = () => ctx.go('recipeview', { mealId: meal.id }, true);  // rename, tags and items repaint from fresh data
   root.appendChild(h('section', { class: 'screen recipe-view' },
     h('div', { class: 'bar' }, h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back')),
@@ -141,5 +145,7 @@ export async function renderRecipeView(root, params, ctx) {
     h('h2', null, 'Serving Size'),
     servingSizeEditor(meal, { onSaved: sizeSaved }).el,
     h('h2', null, 'Edit'),
-    h('ul', { class: 'list' }, recipeRow(meal, again, ctx, { onDeleted: () => ctx.back() }))));
+    h('ul', { class: 'list' }, recipeRow(meal, again, ctx, { noDelete: true })),
+    deleteStatus,
+    h('button', { class: 'btn danger', type: 'button', onclick: removeRecipe }, 'Delete Recipe')));
 }

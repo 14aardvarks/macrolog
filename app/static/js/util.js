@@ -1,7 +1,7 @@
 // Pure helpers. No DOM access, safe to import from node.
 
-export const MEALS = ['breakfast', 'lunch', 'dinner', 'snack'];
-export const MEAL_LABELS = { breakfast: 'Breakfast', lunch: 'Lunch', dinner: 'Dinner', snack: 'Snack', none: 'No meal' };
+export const MEALS = ['breakfast', 'lunch', 'dinner', 'snack', 'dessert'];
+export const MEAL_LABELS = { breakfast: 'Breakfast', lunch: 'Lunch', dinner: 'Dinner', snack: 'Snack', dessert: 'Dessert', none: 'No meal' };
 
 // Parse "1,5" or "1.5" or " 2 " into a number. Returns null for anything that is not a plain decimal.
 export function parseDecimal(text) {
@@ -319,7 +319,7 @@ export function bulkSummary({ checked, filled, failed, left, stopped }) {
   return parts.join('. ');
 }
 
-// The tag set after tapping a meal chip, in breakfast to snack order.
+// The tag set after tapping a meal chip, in breakfast to dessert order.
 export function toggleMeal(meals, meal) {
   const set = new Set(meals || []);
   if (set.has(meal)) set.delete(meal); else set.add(meal);
@@ -354,6 +354,7 @@ export function emptyText(kind, meal, hasAny) {
   return 'No favorites yet. Tap the star on a food to add one.';
 }
 
+// Dessert is never guessed: it is only ever chosen by hand.
 export function guessMeal(hour) {
   if (hour < 10) return 'breakfast';
   if (hour < 14) return 'lunch';

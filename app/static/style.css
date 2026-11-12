@@ -145,6 +145,9 @@ input[type=checkbox] { width: 24px; height: 24px; flex: none; accent-color: var(
 .type-btn { min-height: 44px; margin-top: 6px; border: 1px solid var(--line); border-radius: 10px; background: var(--card);
   color: var(--text); cursor: pointer; touch-action: manipulation; }
 .type-btn:active { background: var(--track); }
+.picker .base-line { height: 1.4em; line-height: 1.4; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .9rem; }
+.badge-slot { height: 2rem; margin: 0 0 4px; }
+.badge-slot .badge { margin: 4px 0; }
 .gram-line { min-height: 1.4em; margin: 4px 0 0; color: var(--muted); text-align: center; }
 .kcal-big { font-size: 1.75rem; font-weight: 700; margin: 8px 0; }
 .macros { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 8px; }
@@ -449,3 +452,8 @@ textarea { font: inherit; color: inherit; width: 100%; min-height: 160px; paddin
 .yield-row > input { flex: 1 1 6em; min-width: 0; }
 .yield-row > select { flex: 1 1 7em; min-width: 0; }
 .serving-size .row.wrap { align-items: center; gap: 8px; margin: 0 0 8px; }
+
+/* update banner */
+.update-banner { position: sticky; top: 0; z-index: 40; display: flex; align-items: center; justify-content: center; gap: 12px; padding: 6px 12px;
+  background: var(--card); border-bottom: 1px solid var(--accent); font-size: .9rem; }
+.update-banner .btn { min-height: 36px; padding: 4px 14px; border-color: var(--accent); color: var(--accent); font-weight: 600; }

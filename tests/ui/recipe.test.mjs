@@ -60,8 +60,8 @@ test('filterSavedItems by query and meal tag', () => {
 });
 
 test('saved filter options and the past foods empty text', () => {
-  assert.deepEqual(SAVED_FILTERS, ['all', 'breakfast', 'lunch', 'dinner', 'snack', 'untagged']);
-  assert.deepEqual(SAVED_FILTERS.map((m) => SAVED_FILTER_LABELS[m]), ['All', 'Breakfast', 'Lunch', 'Dinner', 'Snack', 'Untagged']);
+  assert.deepEqual(SAVED_FILTERS, ['all', 'breakfast', 'lunch', 'dinner', 'snack', 'dessert', 'untagged']);
+  assert.deepEqual(SAVED_FILTERS.map((m) => SAVED_FILTER_LABELS[m]), ['All', 'Breakfast', 'Lunch', 'Dinner', 'Snack', 'Dessert', 'Untagged']);
   assert.match(emptyText('recent', 'all', false), /past foods/);
 });
 

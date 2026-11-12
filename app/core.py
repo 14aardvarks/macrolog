@@ -21,7 +21,7 @@ from . import db, deps, lookup, units
 router = APIRouter(prefix="/api", dependencies=[Depends(deps.current_user)])
 CurrentUser = Annotated[dict, Depends(deps.current_user)]
 
-MEALS = ("breakfast", "lunch", "dinner", "snack")
+MEALS = ("breakfast", "lunch", "dinner", "snack", "dessert")
 SCREENS = ("today", "scan", "search", "ai")
 SOURCES = ("off", "fdc", "custom", "ai")
 MACROS = ("kcal", "carbs", "protein", "fat")
@@ -770,7 +770,7 @@ def quick_yesterday(user: CurrentUser, day: str | None = None):
 
 
 def clean_tags(v) -> list[str]:
-    """A list of meal names, de-duplicated and in breakfast..snack order."""
+    """A list of meal names, de-duplicated and in breakfast..dessert order."""
     if not isinstance(v, list):
         raise bad("meals must be a list of " + ", ".join(MEALS))
     for m in v:

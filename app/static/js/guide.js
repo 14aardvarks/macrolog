@@ -18,8 +18,9 @@ export const GUIDE = [
     'Tap the estimate to check the values, then save it.',
   ] },
   { heading: 'The Meal Selector on Add', bullets: [
-    'It filters the lists by meal.',
+    'It filters the lists by meal: Breakfast, Lunch, Dinner, Snack or Dessert.',
     'All shows everything.',
+    'Dessert is never picked for you from the time of day. Choose it yourself.',
   ] },
   { heading: 'The Picker', bullets: [
     'Two wheels: amount on the left, unit on the right.',
@@ -30,6 +31,7 @@ export const GUIDE = [
     'Fractions cover servings, cups, spoons and counts. Grams and ounces stay decimal.',
     '% of serving is for partial servings.',
     'Macros update live and always convert back to the label\'s grams and calories.',
+    'The layout stays still while you change units.',
   ] },
   { heading: 'How It Remembers', bullets: [
     'A food reopens with the amount and unit from your last entry.',
@@ -56,7 +58,8 @@ export const GUIDE = [
     'Tap an item\'s name to adjust it in the picker, with any unit, then tap Done.',
     'The recipe screen lists the ingredients, then the steps.',
     'Edit Steps adds, changes, reorders or removes steps. Steps never change nutrition.',
-    'The same screen renames, retags, edits items and deletes the recipe.',
+    'The same screen renames, retags and edits items.',
+    'Delete Recipe at the bottom asks first, then returns to the Recipes tab.',
     'Add, then Recipes, still logs a recipe straight from Add.',
   ] },
   { heading: 'Importing a Recipe', bullets: [
