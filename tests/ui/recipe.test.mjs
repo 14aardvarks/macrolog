@@ -26,7 +26,11 @@ test('recipeBody validates and builds the request', () => {
   assert.match(recipeBody(d).error, /ingredient/);
   d.rows = recipeAddRow([], rice, 2, 'serving');
   d.meals = ['snack', 'lunch'];
-  assert.deepEqual(recipeBody(d).body, { name: 'Pilaf', meals: ['lunch', 'snack'], items: [{ food_id: 4, amount: 2, unit: 'serving' }] });
+  assert.deepEqual(recipeBody(d).body, { name: 'Pilaf', meals: ['lunch', 'snack'], items: [{ food_id: 4, amount: 2, unit: 'serving' }], steps: [] });
+  d.steps = [' Rinse  the rice. ', '', 'Simmer.'];
+  assert.deepEqual(recipeBody(d).body.steps, ['Rinse the rice.', 'Simmer.']);
+  d.steps = ['x'.repeat(1001)];
+  assert.match(recipeBody(d).error, /Step 1 is too long/);
 });
 
 test('stepsBack is at least one', () => {

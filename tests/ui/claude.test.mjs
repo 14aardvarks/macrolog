@@ -23,12 +23,15 @@ test('decimal mode shows servings as decimals', () => {
   } finally { setAmountFormat('fraction'); }
 });
 
-test('other units stay decimal in both modes', () => {
+test('cooking units follow the format, metric, weights and percent stay decimal', () => {
+  assert.equal(amountLabel('cup', 0.5, 'fraction'), '1/2');
+  assert.equal(amountText(0.25, 'cup', 'fraction'), '1/4 cup');
+  assert.equal(amountLabel('cup', 0.5, 'decimal'), '0.5');
+  assert.equal(amountText(0.25, 'cup', 'decimal'), '0.25 cup');
   for (const f of ['fraction', 'decimal']) {
-    assert.equal(amountLabel('cup', 0.5, f), '0.5');
-    assert.equal(amountText(0.25, 'cup', f), '0.25 cup');
     assert.equal(amountText(25, 'pct', f), '25% of a serving');
     assert.equal(amountText(30, 'g', f), '30 g');
+    assert.equal(amountText(0.5, 'oz', f), '0.5 oz');
   }
 });
 

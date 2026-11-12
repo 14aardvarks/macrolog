@@ -2,7 +2,7 @@ import { api, setUnauthorizedHandler } from './api.js';
 import { h, clear, select, field, message, show, cameraIcon, sourceBadge } from './dom.js';
 import {
   MEALS, MEAL_LABELS, parseDecimal, parseAmount, amountText, servingText, setAmountFormat, unitLabel, fmtNum, fmtAmount, groupByMeal, checkedItems, canSaveRecipe, rowAmountText, applyRowPick, draftFits, localDate, progressText, remainingText,
-  sentence, newRecipeDraft, recipeAddRow, recipeSetRow, stepsBack, barWidth, debounce, digitsOnly, guessMeal, pctTotal, latestGuard, MEAL_FILTERS, MEAL_FILTER_LABELS, filterByMeal, filterSaved, pageOf, PAGE_SIZE, emptyText,
+  sentence, matchAmount, newRecipeDraft, recipeAddRow, recipeSetRow, stepsBack, barWidth, debounce, digitsOnly, guessMeal, pctTotal, latestGuard, MEAL_FILTERS, MEAL_FILTER_LABELS, filterByMeal, filterSaved, pageOf, PAGE_SIZE, emptyText,
   DEFAULT_DISPLAY, searchSource, searchAction, searchHint, DESCRIPTION_TEXT, aiFeature, aiFeatureOff, searchSources, startSource,
 } from './util.js';
 import { microSection, displaySection, microTargets } from './micros.js';
@@ -89,11 +89,14 @@ const ctx = {
     selection(id) { return state.selections[id] || []; },
     setSelection(id, ids) { state.selections[id] = ids; },
     takeFocus() { const f = state.matchFocus; state.matchFocus = null; return f; },
-    // Search or Scan for one ingredient. The finder and picker run in ingredient mode and finishAdjust saves the match.
+    // Search or Scan for one ingredient. The finder runs in ingredient mode; picking a food skips the amount screen
+    // (autoMatch works the amount out from the recipe line, saves the match and returns to Match Ingredients).
     find(meal, item, how) {
       const src = item.src || {};
+      // line: what the recipe says ("1 cup"), from which the amount is worked out once a food is picked (autoMatch).
+      const line = item.src ? { amount: src.amount, unit: src.unit } : { amount: item.amount, unit: item.unit };
       state.recipe = { match: { mealId: meal.id, itemId: item.id, amount: item.food ? item.amount : src.amount, unit: item.food ? item.unit : src.unit,
-        label: src.text || (item.food && item.food.name) || '' }, name: '', meals: [], rows: [], depth: state.depth, adding: true, picking: null };
+        line, label: src.text || (item.food && item.food.name) || '' }, name: '', meals: [], rows: [], depth: state.depth, adding: true, picking: null };
       state.matchFocus = item.id;
       return how === 'scan' ? go('scan', { autostart: true }) : go('add', { ingredient: true, q: src.name || (item.food && item.food.name) || '' });
     },
@@ -606,6 +609,25 @@ async function mealScreen(root, params) {
     h('button', { class: 'btn primary', type: 'button', onclick: log }, 'Log')));
 }
 
+// ---------- Match Ingredients: a picked food goes straight back ----------
+
+// Instead of the amount screen: the amount and unit come from the recipe line (util.js matchAmount). When they cannot be
+// worked out, or the line has no amount, the food is attached with one label serving and flagged Check Amount, and the
+// row on Match Ingredients asks for the amount. Then back past the finder to Match Ingredients.
+async function autoMatch(root, params) {
+  const r = state.recipe;
+  const m = r.match;
+  root.appendChild(h('section', { class: 'screen' }, message('Matching...')));
+  const food = await api.food(params.foodId);
+  const label = food.units[0];
+  const pick = matchAmount(food.units, m.line && m.line.amount, m.line && m.line.unit) || { amount: label.default_amount, unit: label.unit, check: true };
+  await api.matchItem(m.mealId, m.itemId, { food_id: food.id, amount: pick.amount, unit: pick.unit, ...(pick.check ? { check: true } : {}) });
+  delete ctx.flow.proposals(m.mealId)[m.itemId];
+  const n = stepsBack(state.depth, r.depth);
+  state.recipe = null;
+  history.go(-n);
+}
+
 // ---------- settings ----------
 
 async function settingsScreen(root) {
@@ -621,7 +643,7 @@ async function settingsScreen(root) {
   const useLast = h('input', { type: 'checkbox', id: 'use-last', checked: s.use_last !== false, 'aria-describedby': 'use-last-help' });
   const confirmAi = h('input', { type: 'checkbox', id: 'confirm-ai', checked: s.confirm_ai !== false, 'aria-describedby': 'confirm-ai-help' });
   const fmtSel = select([{ value: 'fraction', label: 'Fractions (1/2)' }, { value: 'decimal', label: 'Decimals (0.5)' }],
-    s.amount_format === 'decimal' ? 'decimal' : 'fraction', { 'aria-label': 'Show servings as' });
+    s.amount_format === 'decimal' ? 'decimal' : 'fraction', { 'aria-label': 'Show amounts as', 'aria-describedby': 'amount-format-help' });
   fmtSel.addEventListener('change', () => setAmountFormat(fmtSel.value));  // applies at once; Save keeps it
   const kcal = field('Calories per day', { inputmode: 'decimal', value: fmtAmount(g.kcal) });
   const pcts = [['carb_pct', 'Carbs %'], ['protein_pct', 'Protein %'], ['fat_pct', 'Fat %']].map(([k, label]) => [k, field(label, { inputmode: 'decimal', value: fmtAmount(g[k]) })]);
@@ -656,7 +678,8 @@ async function settingsScreen(root) {
         h('label', { for: 'use-last' }, useLast, h('span', null, 'Start from my last entry')),
         h('p', { class: 'sub', id: 'use-last-help' }, 'On: a food opens with the amount and unit you used last time. Off: it opens with the label\'s serving.')),
       h('label', { class: 'field' }, h('span', null, 'Default meal'), mealSel),
-      h('label', { class: 'field' }, h('span', null, 'Show servings as'), fmtSel),
+      h('label', { class: 'field' }, h('span', null, 'Show amounts as'), fmtSel),
+      h('p', { class: 'sub', id: 'amount-format-help' }, 'Fractions apply to servings, cups, spoons and counts. Grams, millilitres, ounces and pounds always show decimals.'),
       h('div', { class: 'switch-row' },
         h('label', { for: 'confirm-ai' }, confirmAi, h('span', null, 'Confirm before using Claude')),
         h('p', { class: 'sub', id: 'confirm-ai-help' }, 'On: you see the request count and estimated cost before anything is sent.')),
@@ -684,7 +707,7 @@ const SCREENS = {
   recipes: (root) => renderRecipes(root, ctx),
   recipeview: (root, p) => renderRecipeView(root, p, ctx),
   recipe: (root) => { if (!state.recipe) state.recipe = newRecipeDraft(); state.recipe.depth = state.depth; return renderRecipe(root, ctx); }, editfood: (root, p) => renderFoodForm(root, { edit: p.food }, ctx),
-  picker: (root, p) => renderPicker(root, p, ctx),
+  picker: (root, p) => (state.recipe && state.recipe.match && p.adjust && p.entryId == null ? autoMatch(root, p) : renderPicker(root, p, ctx)),
   scan: (root, p) => { const auto = !!p.autostart; p.autostart = false; return renderScan(root, ctx, { autostart: auto }); },
   ai: (root, p) => renderAi(root, p, ctx),
   import: (root) => renderImport(root, ctx),

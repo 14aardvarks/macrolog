@@ -2,9 +2,50 @@
 // from Saved. A partial recipe (unmatched ingredients) opens Match Ingredients instead.
 import { api } from './api.js';
 import { h, clear, field, message, show, select } from './dom.js';
-import { MEALS, MEAL_LABELS, fmtNum, pageOf, PAGE_SIZE } from './util.js';
+import { MEALS, MEAL_LABELS, fmtNum, pageOf, PAGE_SIZE, matchedAmountText, stepsCheck } from './util.js';
 import { recipeListSub, logItems, servingsText, perServingText, tagsText } from './recipeimport.js';
 import { recipeRow } from './saved.js';
+import { stepsList, stepsEditor } from './steps.js';
+
+// The recipe's ingredients as a read only list: "Wheat flour" over "1 1/2 cup, 188 g". Skipped lines keep their own text.
+function ingredientList(meal) {
+  return h('ul', { class: 'list recipe-ings' }, meal.items.map((it) => (it.skipped || !it.food
+    ? h('li', { class: 'item' }, h('div', { class: 'item-main' }, h('span', { class: 'item-title' }, (it.src && it.src.text) || 'Ingredient'),
+      h('span', { class: 'item-sub' }, 'Skipped')))
+    : h('li', { class: 'item' }, h('div', { class: 'item-main' },
+      h('span', { class: 'item-title' }, it.food.brand ? it.food.name + ' (' + it.food.brand + ')' : it.food.name),
+      h('span', { class: 'item-sub' }, matchedAmountText(it.amount, it.unit, it.grams)))))));
+}
+
+// Steps with Edit Steps: the editor works on a copy, Save Steps sends it (PATCH steps), Cancel drops it.
+function stepsSection(meal) {
+  const box = h('div');
+  const status = h('div', { 'aria-live': 'polite' });
+  function view(focusEdit) {
+    const edit = h('button', { class: 'btn', type: 'button', onclick: editMode }, meal.steps.length ? 'Edit Steps' : 'Add Steps');
+    show(box, h('div', null, stepsList(meal.steps), edit));
+    if (focusEdit) edit.focus();
+  }
+  function editMode() {
+    const draft = { steps: meal.steps.slice() };
+    if (!draft.steps.length) draft.steps.push('');
+    const save = h('button', { class: 'btn primary', type: 'button', onclick: async () => {
+      const r = stepsCheck(draft.steps);
+      if (r.error) { show(status, message(r.error, 'error')); return; }
+      save.disabled = true;
+      try { meal.steps = (await api.patchMeal(meal.id, { steps: r.steps })).steps; show(status, message('Steps saved.')); view(true); } catch (e) {
+        save.disabled = false;
+        show(status, message(e.message, 'error'));
+      }
+    } }, 'Save Steps');
+    show(box, h('div', null, stepsEditor(draft), h('div', { class: 'row wrap' }, save,
+      h('button', { class: 'btn ghost', type: 'button', onclick: () => { show(status, null); view(true); } }, 'Cancel'))));
+    const first = box.querySelector('textarea');
+    if (first) first.focus();
+  }
+  view(false);
+  return h('div', null, box, status);
+}
 
 // ctx: { go, back, newRecipe(), importRecipe(), defaultMeal() }
 export async function renderRecipes(root, ctx) {
@@ -66,6 +107,10 @@ export async function renderRecipeView(root, params, ctx) {
     status,
     h('div', { class: 'row wrap' }, logBtn, adjust),
     h('p', { class: 'sub' }, 'Adjust Items lets you untick ingredients or change amounts for this log only.'),
+    h('h2', null, 'Ingredients'),
+    ingredientList(meal),
+    h('h2', null, 'Steps'),
+    stepsSection(meal),
     h('h2', null, 'Edit'),
     h('ul', { class: 'list' }, recipeRow(meal, again, ctx, { onDeleted: () => ctx.back() }))));
 }

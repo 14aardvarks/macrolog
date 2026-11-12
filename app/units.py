@@ -157,3 +157,49 @@ def scale(food, amount, unit):
         res[key] = v if v is not None else 0.0
     res["fiber"] = val("fiber")
     return res
+
+
+def grams(food, amount, unit):
+    """Grams in amount of unit, rounded to 0.1, or None when the food's weight is unknown or only estimated,
+    or when the amount is already in grams."""
+    try:
+        u = parse_unit(unit)
+        servings, estimated = _convert(food, amount, u)
+        g, ge = _profile(food)[2:4]
+    except ValueError:
+        return None
+    if u == "g" or not g or ge or estimated:
+        return None
+    return round(servings * g, 1)
+
+
+# Line units that only say "this many of the thing", for counts without a unit such as "2 eggs".
+PLAIN_COUNTS = ("piece", "each", "whole", "unit", "item", "large", "medium", "small")
+
+
+def match_amount(food, amount, unit):
+    """Amount and unit for a recipe line ("1 cup", "2 tbsp", "2" eggs) matched to food, without asking the user.
+
+    Returns {"amount", "unit", "check"} or None when the line has no amount (salt to taste).
+    - The line's own unit when the food reaches it without an estimate: same unit, weight to weight, volume to volume,
+      and weight to volume through the food's own density (serving_g and serving_ml) or label count word.
+    - A plain count (no unit, piece, each) uses the label's count word when it has one, else label servings.
+    - Anything else (a cup of a food known only by weight, a can of something sold by the cup) cannot be worked out:
+      one label serving with check True, so the user confirms the amount."""
+    a = _pos(amount)
+    if a is None:
+        return None
+    label_unit, label_amount = _profile(food)[:2]
+    try:
+        u = parse_unit(unit) if unit not in (None, "") else None
+    except ValueError:
+        u = None
+    if u is not None and u not in PLAIN_COUNTS:
+        for entry in available_units(food):
+            if entry["unit"] == u and not entry["estimated"]:
+                return {"amount": a, "unit": u, "check": False}
+    elif label_unit not in MASS and label_unit not in VOLUME and label_unit not in PSEUDO:
+        return {"amount": a, "unit": label_unit, "check": False}
+    else:
+        return {"amount": a, "unit": SERVING, "check": False}
+    return {"amount": label_amount, "unit": label_unit, "check": True}

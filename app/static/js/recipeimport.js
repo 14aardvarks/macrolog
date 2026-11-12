@@ -1,5 +1,5 @@
 // Pure helpers for Import Recipe and Match Ingredients. No DOM access, safe to import from node.
-import { parseAmount, fmtAmount, amountText, sentence } from './util.js';
+import { parseAmount, fmtAmount, qtyText, servingText, matchedAmountText, sentence, stepsCheck } from './util.js';
 
 // Unit words found at the start of an ingredient line, mapped to the server's canonical units or a count word.
 const UNIT_WORDS = {
@@ -91,7 +91,8 @@ export function reviewDraft(recipe, extra) {
   const r = recipe || {};
   return {
     name: r.name || '', servings: r.servings == null ? '' : fmtAmount(r.servings), meals: [], warnings: [], cost: null,
-    rows: (r.ingredients || []).map((i) => ({ amount: i.amount == null ? '' : fmtAmount(i.amount), unit: i.unit || '', name: i.name || '', note: i.note || '', text: i.text || '' })),
+    rows: (r.ingredients || []).map((i) => ({ amount: i.amount == null ? '' : qtyText(i.amount, i.unit), unit: i.unit || '', name: i.name || '', note: i.note || '', text: i.text || '' })),
+    steps: (r.steps || []).filter((x) => typeof x === 'string'),
     ...(extra || {}),
   };
 }
@@ -101,7 +102,7 @@ export const blankRow = () => ({ amount: '', unit: '', name: '', note: '', text:
 // The line as shown and stored. An edited row is rebuilt from its parts, so the stored text never disagrees with them.
 export function rowText(row) {
   const a = parseAmount(row.amount);
-  const head = [a == null ? '' : fmtAmount(a), String(row.unit || '').trim(), String(row.name || '').trim()].filter(Boolean).join(' ');
+  const head = [a == null ? '' : qtyText(a, row.unit), String(row.unit || '').trim(), String(row.name || '').trim()].filter(Boolean).join(' ');
   return head + (String(row.note || '').trim() ? ', ' + row.note.trim() : '');
 }
 
@@ -128,16 +129,20 @@ export function reviewBody(draft) {
     const note = String(r.note || '').trim() || null;
     ingredients.push({ text: rowText(r).slice(0, 300), amount, unit, name: nm, note });
   }
-  return { body: { name, servings, meals: draft.meals || [], ingredients } };
+  const st = stepsCheck(draft.steps);
+  if (st.error) return st;
+  return { body: { name, servings, meals: draft.meals || [], ingredients, steps: st.steps } };
 }
 
 // ---------- match state ----------
 
-export function matchState(item) { return item.skipped ? 'skipped' : item.food ? 'matched' : 'unmatched'; }
+// check: a food is attached but its amount still needs confirming (Check Amount), so it counts for nothing yet.
+export function matchState(item) { return item.skipped ? 'skipped' : item.check ? 'check' : item.food ? 'matched' : 'unmatched'; }
 
-// "3 of 8 matched", plus skipped ones when any.
+// "3 of 8 matched", plus skipped ones and amounts still to check when any.
 export function matchCountText(meal) {
-  const base = meal.matched + ' of ' + meal.needed + ' matched';
+  let base = meal.matched + ' of ' + meal.needed + ' matched';
+  if (meal.checks) base += ', ' + meal.checks + ' to check';
   return meal.skipped ? base + ', ' + meal.skipped + ' skipped' : base;
 }
 
@@ -148,12 +153,13 @@ export function recipeSubText(meal, kcalText) {
   return n + (n === 1 ? ' item' : ' items') + ' - ' + kcalText + ' kcal';
 }
 
-// Index of the next unmatched (not skipped) row after `from`, wrapping round; -1 when every row is done.
+// Index of the next unmatched (not skipped) or Check Amount row after `from`, wrapping round; -1 when every row is done.
 export function nextUnmatched(items, from) {
   const n = items.length;
   for (let k = 1; k <= n; k++) {
     const i = (((from == null ? -1 : from) + k) % n + n) % n;
-    if (matchState(items[i]) === 'unmatched') return i;
+    const st = matchState(items[i]);
+    if (st === 'unmatched' || st === 'check') return i;
   }
   return -1;
 }
@@ -173,11 +179,12 @@ export const toggleId = (selected, id) => (selected.indexOf(id) >= 0 ? selected.
 // One Claude request takes at most `max` rows. The rest stay ticked for the next tap.
 export function matchBatch(ids, max = 15) { return { send: ids.slice(0, max), rest: ids.slice(max) }; }
 
-// Proposal lines: "Wheat flour, 1 1/2 cup" with the kind as a word, so color is never the only cue.
+// Proposal lines: "Wheat flour, 1 1/2 cup, 188 g" with the kind as a word, so color is never the only cue. A proposal whose
+// amount could not be worked out says so; Accept then attaches it as Check Amount.
 export function proposalText(p) {
   if (!p || p.kind === 'none' || !p.food) return sentence(p && p.note ? p.note : 'Claude found no match. Search for it, or skip it');
   const name = p.food.brand ? p.food.name + ' (' + p.food.brand + ')' : p.food.name;
-  return name + ', ' + amountText(p.amount, p.unit);
+  return name + ', ' + matchedAmountText(p.amount, p.unit, p.grams) + (p.check ? ' (check the amount)' : '');
 }
 
 // What "ingredients" means in the Claude notice, for example "3 ingredients and their database matches".
@@ -199,7 +206,7 @@ export function tagsText(meals) {
 // "Makes 4 servings" or "Makes 1 serving". A recipe without servings makes one.
 export function servingsText(meal) {
   const n = meal && meal.servings > 0 ? meal.servings : 1;
-  return 'Makes ' + fmtAmount(n) + (n === 1 ? ' serving' : ' servings');
+  return 'Makes ' + servingText(n) + (n === 1 ? ' serving' : ' servings');
 }
 
 // The second line of a recipe on the Recipes tab: "3 of 8 matched" or "4 items - 520 kcal", then servings and tags.
@@ -228,6 +235,6 @@ export function perServingText(meal, fmt) {
 
 // The note on the log checklist: amounts for `want` servings of a recipe that makes `per`. '' for one serving of a one serving recipe.
 export function logAmountText(want, per) {
-  if (per > 1) return 'Amounts are for ' + fmtAmount(want) + ' of ' + fmtAmount(per) + ' servings.';
-  return want !== 1 ? 'Amounts are for ' + fmtAmount(want) + ' servings.' : '';
+  if (per > 1) return 'Amounts are for ' + servingText(want) + ' of ' + servingText(per) + ' servings.';
+  return want !== 1 ? 'Amounts are for ' + servingText(want) + ' servings.' : '';
 }

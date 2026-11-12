@@ -4,6 +4,7 @@ import { api } from './api.js';
 import { h, field, message, show } from './dom.js';
 import { amountText, recipeRemoveRow, recipeBody } from './util.js';
 import { chips } from './saved.js';
+import { stepsEditor } from './steps.js';
 
 // ctx: { recipe (the draft), back, addIngredient(), adjustIngredient(i), saved() }
 export function renderRecipe(root, ctx) {
@@ -35,6 +36,9 @@ export function renderRecipe(root, ctx) {
     h('h2', null, 'Ingredients'),
     rows.length ? h('ul', { class: 'list' }, rows) : h('p', { class: 'sub' }, 'No ingredients yet.'),
     h('button', { class: 'btn', type: 'button', onclick: ctx.addIngredient }, 'Add Ingredient'),
+    h('h2', null, 'Steps'),
+    h('p', { class: 'sub' }, 'Optional. The method, in order. Steps never change the nutrition.'),
+    stepsEditor(draft),
     h('h2', null, 'Meal Tags'),
     h('p', { class: 'sub' }, 'Tags decide where the recipe shows on Add. Untagged recipes show under every meal.'),
     chips(draft.meals, (m) => { draft.meals = m; }, status),

@@ -319,3 +319,51 @@ def test_pct_and_serving_not_flagged_when_conversions_are_estimates():
     for u in available_units(OZ_ONLY):
         assert u["estimated"] is (u["unit"] in ("ml", "floz", "cup", "tbsp", "tsp", "l"))
     assert servings_for(OZ_ONLY, 50, "pct")["estimated"] is False
+
+
+# ---------- match_amount and grams (Match Ingredients picks a food without the amount screen) ----------
+
+FLOUR_G = {"serving_amount": 30, "serving_unit": "g", "kcal": 110, "carbs": 23, "protein": 3, "fat": 0}
+FLOUR_CUP = {"serving_amount": 1, "serving_unit": "cup", "serving_g": 125, "kcal": 455, "carbs": 95, "protein": 13, "fat": 1}
+BUTTER = {"serving_amount": 1, "serving_unit": "tbsp", "serving_g": 14, "kcal": 100, "carbs": 0, "protein": 0, "fat": 11}
+MILK_ML = {"serving_amount": 240, "serving_unit": "ml", "serving_g": 248, "kcal": 120, "carbs": 12, "protein": 8, "fat": 5}
+EGG = {"serving_amount": 1, "serving_unit": "egg", "serving_g": 50, "kcal": 72, "carbs": 0, "protein": 6, "fat": 5}
+CHEESE = {"serving_amount": 28, "serving_unit": "g", "kcal": 110, "carbs": 1, "protein": 7, "fat": 9}
+
+
+def test_match_amount_same_unit_and_same_family():
+    assert units.match_amount(BUTTER, 2, "tbsp") == {"amount": 2, "unit": "tbsp", "check": False}
+    assert units.match_amount(FLOUR_CUP, 1, "cups") == {"amount": 1, "unit": "cup", "check": False}
+    assert units.match_amount(CHEESE, 4, "oz") == {"amount": 4, "unit": "oz", "check": False}  # weight to weight
+    assert units.match_amount(MILK_ML, 1, "cup") == {"amount": 1, "unit": "cup", "check": False}  # volume to volume
+    assert units.match_amount(FLOUR_CUP, 250, "grams") == {"amount": 250, "unit": "g", "check": False}  # through serving_g
+
+
+def test_match_amount_counts():
+    assert units.match_amount(EGG, 2, None) == {"amount": 2, "unit": "egg", "check": False}
+    assert units.match_amount(EGG, 3, "eggs") == {"amount": 3, "unit": "egg", "check": False}
+    assert units.match_amount(EGG, 2, "large") == {"amount": 2, "unit": "egg", "check": False}
+    assert units.match_amount(CHEESE, 2, None) == {"amount": 2, "unit": "serving", "check": False}  # count to servings
+    assert units.match_amount(CHEESE, 1, "piece") == {"amount": 1, "unit": "serving", "check": False}
+
+
+def test_match_amount_needs_a_check_when_it_cannot_convert():
+    # a cup of a food known only by weight: the 1 g per ml estimate is not good enough, so one label serving to check
+    assert units.match_amount(FLOUR_G, 1, "cup") == {"amount": 30, "unit": "g", "check": True}
+    assert units.match_amount(FLOUR_CUP, 1, "can") == {"amount": 1, "unit": "cup", "check": True}
+    assert units.match_amount(BUTTER, 1, "pinch") == {"amount": 1, "unit": "tbsp", "check": True}
+
+
+@pytest.mark.parametrize("amount", [None, 0, -1, "x", float("nan")])
+def test_match_amount_without_an_amount(amount):
+    assert units.match_amount(BUTTER, amount, "tbsp") is None
+
+
+def test_grams():
+    assert units.grams(BUTTER, 2, "tbsp") == 28
+    assert units.grams(FLOUR_CUP, 0.5, "cup") == 62.5
+    assert units.grams(CHEESE, 4, "oz") == 113.4
+    assert units.grams(CHEESE, 30, "g") is None  # already grams
+    assert units.grams(FLOUR_G, 1, "cup") is None  # only an estimate
+    assert units.grams(BUTTER, 1, "can") is None
+    assert units.grams({"serving_amount": 1, "serving_unit": "egg", "kcal": 1, "carbs": 0, "protein": 0, "fat": 0}, 2, "egg") is None

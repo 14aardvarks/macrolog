@@ -61,6 +61,8 @@ export function fmtAmount(n) { return fmtNum(n, 3); }
 
 export const SERVING = 'serving';
 export const PCT = 'pct';
+const SERVING_UNIT = SERVING;
+const PCT_UNIT = PCT;
 
 // Fraction text for common amounts: 0.5 -> "1/2", 1.5 -> "1 1/2", 2 -> "2". null when it is not a tidy fraction.
 export function fractionText(n) {
@@ -77,28 +79,61 @@ export function fractionText(n) {
   return null;
 }
 
-// How serving amounts are shown: 'fraction' (1/4, 1 1/2) or 'decimal' (0.25, 1.5). Set from the user's setting.
-// Other units always show decimals. Typing accepts both whatever this is.
+// How amounts are shown: 'fraction' (1/4, 1 1/2) or 'decimal' (0.25, 1.5). Set from the user's setting.
+// Fractions apply to servings, cooking measures and counts (fractionUnit); metric, weights and percent always show decimals.
+// Typing accepts both whatever this is.
 let amountFormat = 'fraction';
 export function setAmountFormat(f) { amountFormat = f === 'decimal' ? 'decimal' : 'fraction'; }
 export function getAmountFormat() { return amountFormat; }
 
-// A serving count as text in the chosen format (or the one passed in).
-export function servingText(n, format = amountFormat) {
-  return format === 'decimal' ? fmtAmount(n) : (fractionText(n) || fmtAmount(n));
+// Free text unit to the server's canonical name: "Cups" -> cup, "tablespoons" -> tbsp, "fl oz" -> floz, "grams" -> g,
+// "%" -> pct. Count words come back lowercase and singular ("cloves" -> clove). Empty gives ''.
+const UNIT_ALIASES = {
+  g: 'g', gm: 'g', gr: 'g', gram: 'g', gramme: 'g', kg: 'kg', kilo: 'kg', kilogram: 'kg', mg: 'mg', milligram: 'mg', mcg: 'mcg',
+  oz: 'oz', ounce: 'oz', lb: 'lb', lbs: 'lb', pound: 'lb', ml: 'ml', milliliter: 'ml', millilitre: 'ml', l: 'l', liter: 'l', litre: 'l',
+  floz: 'floz', 'fl oz': 'floz', 'fluid ounce': 'floz', 'fluid oz': 'floz', cup: 'cup', c: 'cup',
+  tbsp: 'tbsp', tbs: 'tbsp', tbl: 'tbsp', tablespoon: 'tbsp', tsp: 'tsp', teaspoon: 'tsp',
+  serving: SERVING_UNIT, svg: SERVING_UNIT, '%': PCT_UNIT, pct: PCT_UNIT, percent: PCT_UNIT, '% of serving': PCT_UNIT,
+};
+export function canonUnit(unit) {
+  const raw = String(unit == null ? '' : unit).trim();
+  if (raw === 'T') return 'tbsp';
+  if (raw === 't') return 'tsp';
+  const t = raw.toLowerCase().replace(/[.,()]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!t) return raw.indexOf('%') === 0 ? PCT_UNIT : '';
+  if (UNIT_ALIASES[t]) return UNIT_ALIASES[t];
+  const one = t.split(' ').map((w) => (/(ss|sh|ch|x|z)es$/.test(w) ? w.slice(0, -2) : /[^s]s$/.test(w) && w.length > 2 ? w.slice(0, -1) : w)).join(' ');
+  return UNIT_ALIASES[one] || UNIT_ALIASES[t.replace(/ /g, '')] || one;
 }
+
+// Units that always show decimals: metric, weights (oz is a weight) and percent. Everything else, servings, cups, spoons,
+// fl oz and counts (slice, clove, no unit at all) reads as a tidy fraction in fraction mode.
+export const DECIMAL_UNITS = ['g', 'kg', 'mg', 'mcg', 'ml', 'l', 'oz', 'lb', PCT_UNIT];
+export function fractionUnit(unit) { return DECIMAL_UNITS.indexOf(canonUnit(unit)) < 0; }
+
+// The one place an amount becomes text: "1 1/2" or "1.5" for a cup, "30" for grams. Not tidy (0.4 cup) stays a decimal.
+// Calories and nutrients never come here; they use fmtNum.
+export function qtyText(n, unit, format = amountFormat) {
+  const x = Number(n);
+  if (n == null || !Number.isFinite(x)) return '';
+  if (format === 'decimal' || !fractionUnit(unit)) return fmtAmount(x);
+  return fractionText(x) || fmtAmount(x);
+}
+
+// A serving count as text in the chosen format (or the one passed in).
+export function servingText(n, format = amountFormat) { return qtyText(n, SERVING_UNIT, format); }
 
 // Short unit name for lists: "pct" shows as "% of serving".
 export function unitLabel(unit) { return unit === PCT ? '% of serving' : unit; }
 
-// "1/2 serving", "1 serving", "1 1/2 servings", "25% of a serving", "30 g", "2 slice".
+// "1/2 serving", "1 serving", "1 1/2 servings", "25% of a serving", "30 g", "1 1/2 cup", "2 slice".
 export function amountText(amount, unit, format) {
   const n = Number(amount);
   if (unit === PCT) return fmtAmount(n) + '% of a serving';
   if (unit === SERVING) {
     return servingText(n, format) + (n > 1 ? ' servings' : ' serving');
   }
-  return fmtAmount(n) + ' ' + unit;
+  return qtyText(n, unit, format) + ' ' + unit;
 }
 
 // ---------- picker math ----------
@@ -145,11 +180,8 @@ export function nearestIndex(list, v) {
 export const SERVING_MAX = 10;
 export const PCT_MAX = 500;
 
-// Row text on the amount wheel. Servings read as fractions ("1/4") or decimals ("0.25"), everything else as a plain number.
-export function amountLabel(unit, v, format) {
-  if (unit === SERVING) return servingText(v, format);
-  return fmtAmount(v);
-}
+// Row text on the amount wheel: the same rule as everywhere else (qtyText).
+export function amountLabel(unit, v, format) { return qtyText(v, unit, format); }
 
 // Values for the amount wheel of one unit: its step up to a sensible top (10 servings, 500 percent, else wheelMax).
 export function amountValues(unit, step, value) {
@@ -201,8 +233,8 @@ export function checkedItems(rows) {
   return items.length ? { items } : { error: 'Tick at least one item.' };
 }
 
-// Text for a recipe row's amount box: servings follow the fraction/decimal setting, everything else is a plain number.
-export const rowAmountText = (amount, unit) => (unit === SERVING ? servingText(amount) : fmtAmount(amount));
+// Text for an amount box: follows the fraction/decimal setting for the unit (qtyText). Typing accepts both.
+export const rowAmountText = (amount, unit) => qtyText(amount, unit);
 
 // Rows of the recipe screen are kept as drafts {checked, amount (text), unit} while the picker is open.
 // Returns a copy with row i set to the picked amount and unit and ticked. Other rows are untouched.
@@ -427,6 +459,39 @@ export function gramsFor(units, amount, unit) {
   if (!g || unit === 'g') return null;
   const n = convertAmount(units, amount, unit, 'g');
   return n > 0 ? n : null;
+}
+
+// ---------- Match Ingredients: amount from the recipe line ----------
+
+const MASS_UNITS = ['g', 'kg', 'oz', 'lb'];
+const VOLUME_UNITS = ['ml', 'l', 'floz', 'cup', 'tbsp', 'tsp'];
+// Line units that only say "this many of the thing", like a count without a unit ("2 eggs").
+const PLAIN_COUNTS = ['piece', 'each', 'whole', 'unit', 'item', 'large', 'medium', 'small'];
+
+// Amount and unit for a recipe line matched to a food without the picker. Mirrors units.match_amount on the server.
+// units: food.units from GET /api/foods/{id} (first entry is the label unit, estimated marks a 1 g per ml guess).
+// Returns { amount, unit, check } or null when the line has no amount (salt to taste).
+// - The line's own unit when the food reaches it without an estimate: same unit, weight to weight (g, oz, lb, kg),
+//   volume to volume (ml, l, tsp, tbsp, cup, fl oz), and between the two through the food's own density.
+// - A plain count (no unit, piece, each) uses the label's count word when it has one ("2 eggs" -> 2 egg), else servings.
+// - Otherwise it cannot be worked out: one label serving with check true, so the row asks the user to confirm.
+export function matchAmount(units, amount, unit) {
+  const a = typeof amount === 'number' ? amount : parseAmount(amount);
+  if (a == null || !(a > 0) || !units || !units.length) return null;
+  const label = units[0];
+  const u = canonUnit(unit);
+  if (u && PLAIN_COUNTS.indexOf(u) < 0) {
+    const hit = units.find((x) => x.unit === u && !x.estimated);
+    return hit ? { amount: a, unit: u, check: false } : { amount: label.default_amount, unit: label.unit, check: true };
+  }
+  const count = MASS_UNITS.indexOf(label.unit) < 0 && VOLUME_UNITS.indexOf(label.unit) < 0 && label.unit !== SERVING && label.unit !== PCT;
+  return { amount: a, unit: count ? label.unit : SERVING, check: false };
+}
+
+// "1 cup, 125 g": the matched amount, plus grams when the server knows them and the unit is not grams already.
+export function matchedAmountText(amount, unit, grams) {
+  const g = Number(grams);
+  return amountText(amount, unit) + (grams != null && g > 0 && unit !== 'g' ? ', ' + fmtNum(g, g >= 10 ? 0 : 1) + ' g' : '');
 }
 
 // ---------- calorie split chart ----------
@@ -669,7 +734,7 @@ export function filterSavedItems(items, query, meal, text) {
 
 // ---------- Create Recipe draft ----------
 
-export const newRecipeDraft = (depth) => ({ name: '', meals: [], rows: [], depth, adding: false, picking: null });
+export const newRecipeDraft = (depth) => ({ name: '', meals: [], rows: [], steps: [], depth, adding: false, picking: null });
 
 // Draft rows are {food_id, name, brand, amount (number), unit}. These return new arrays.
 export const recipeAddRow = (rows, food, amount, unit) => [...rows, { food_id: food.id, name: food.name, brand: food.brand || null, amount, unit }];
@@ -681,8 +746,35 @@ export function recipeBody(draft) {
   const name = String(draft.name || '').trim();
   if (!name) return { error: 'Enter a recipe name.' };
   if (!draft.rows.length) return { error: 'Add at least one ingredient.' };
+  const st = stepsCheck(draft.steps);
+  if (st.error) return st;
   return { body: { name, meals: MEALS.filter((m) => (draft.meals || []).includes(m)),
-    items: draft.rows.map((r) => ({ food_id: r.food_id, amount: r.amount, unit: r.unit })) } };
+    items: draft.rows.map((r) => ({ food_id: r.food_id, amount: r.amount, unit: r.unit })), steps: st.steps } };
+}
+
+// ---------- recipe steps (the method) ----------
+
+export const MAX_STEPS = 60;  // same as core.MAX_STEPS
+export const MAX_STEP_LEN = 1000;  // same as core.MAX_STEP_LEN
+
+// A copy of list with item i moved by dir (-1 up, +1 down). Out of range moves change nothing.
+export function moveItem(list, i, dir) {
+  const out = (list || []).slice();
+  const j = i + dir;
+  if (i < 0 || i >= out.length || j < 0 || j >= out.length) return out;
+  const t = out[i];
+  out[i] = out[j];
+  out[j] = t;
+  return out;
+}
+
+// Steps as the server stores them: whitespace folded, blank steps dropped. Returns { steps } or { error }.
+export function stepsCheck(list) {
+  const steps = (list || []).map((x) => String(x == null ? '' : x).replace(/\s+/g, ' ').trim()).filter(Boolean);
+  if (steps.length > MAX_STEPS) return { error: 'A recipe can have at most ' + MAX_STEPS + ' steps.' };
+  const long = steps.findIndex((x) => x.length > MAX_STEP_LEN);
+  if (long >= 0) return { error: 'Step ' + (long + 1) + ' is too long. Keep each step to ' + MAX_STEP_LEN + ' characters.' };
+  return { steps };
 }
 
 // History steps from the current screen back to the recipe screen, at least one.

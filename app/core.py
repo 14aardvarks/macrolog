@@ -7,7 +7,7 @@ macros at log time, so later food changes never rewrite history.
 from __future__ import annotations
 
 import asyncio
-
+import json
 import math
 import re
 import sqlite3
@@ -46,7 +46,10 @@ GOAL_KEYS = {"carbs": ("carb_pct", 4), "protein": ("protein_pct", 4), "fat": ("f
 MEAL_ITEMS_BODY = """
   id INTEGER PRIMARY KEY, meal_id INTEGER NOT NULL REFERENCES meals(id) ON DELETE CASCADE,
   food_id INTEGER REFERENCES foods(id), amount REAL, unit TEXT, position INTEGER NOT NULL DEFAULT 0,
-  src_text TEXT, src_amount REAL, src_unit TEXT, src_name TEXT, src_note TEXT, skipped INTEGER NOT NULL DEFAULT 0"""
+  src_text TEXT, src_amount REAL, src_unit TEXT, src_name TEXT, src_note TEXT, skipped INTEGER NOT NULL DEFAULT 0,
+  needs_check INTEGER NOT NULL DEFAULT 0"""
+# needs_check: a food is attached but its amount could not be worked out from the recipe line (for example "1 cup" of a
+# food known only by weight). It counts for nothing, like an unmatched row, until the user confirms an amount.
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS foods(
@@ -128,7 +131,11 @@ def init(c: sqlite3.Connection) -> None:
         c.execute("ALTER TABLE meals ADD COLUMN meal TEXT")
     if "servings" not in {r[1] for r in c.execute("PRAGMA table_info(meals)")}:  # databases made before imported recipes
         c.execute("ALTER TABLE meals ADD COLUMN servings REAL")
+    if "steps" not in {r[1] for r in c.execute("PRAGMA table_info(meals)")}:  # databases made before recipe steps (JSON list, null = none)
+        c.execute("ALTER TABLE meals ADD COLUMN steps TEXT")
     migrate_meal_items(c)
+    if "needs_check" not in {r[1] for r in c.execute("PRAGMA table_info(meal_items)")}:  # databases made before Check Amount
+        c.execute("ALTER TABLE meal_items ADD COLUMN needs_check INTEGER NOT NULL DEFAULT 0")
     c.execute("CREATE INDEX IF NOT EXISTS meal_items_meal ON meal_items(meal_id, position)")
     if "use_last" not in {r[1] for r in c.execute("PRAGMA table_info(settings)")}:  # databases made before use_last
         c.execute("ALTER TABLE settings ADD COLUMN use_last INTEGER NOT NULL DEFAULT 1")
@@ -850,16 +857,17 @@ SRC_KEYS = ("text", "amount", "unit", "name", "note")
 def item_dict(c, it) -> dict:
     """One recipe ingredient. Unmatched rows have food null and null nutrients; skipped rows count for nothing."""
     src = {k: it["src_" + k] for k in SRC_KEYS} if it["src_text"] is not None or it["src_name"] is not None else None
-    base = {"id": it["id"], "food_id": it["food_id"], "amount": it["amount"], "unit": it["unit"],
-            "src": src, "skipped": bool(it["skipped"]), "matched": it["food_id"] is not None}
+    check = it["food_id"] is not None and bool(it["needs_check"])
+    base = {"id": it["id"], "food_id": it["food_id"], "amount": it["amount"], "unit": it["unit"], "src": src,
+            "skipped": bool(it["skipped"]), "matched": it["food_id"] is not None and not check, "check": check}
     if it["food_id"] is None:
-        return {**base, "food": None, "servings": None, "estimated": False, **{k: None for k in (*MACROS, *MICROS)}}
+        return {**base, "food": None, "servings": None, "estimated": False, "grams": None, **{k: None for k in (*MACROS, *MICROS)}}
     food = need_food(c, it["food_id"])
-    return {**base, "food": food, **macros(food, it["amount"], it["unit"])}
+    return {**base, "food": food, "grams": units.grams(food, it["amount"], it["unit"]), **macros(food, it["amount"], it["unit"])}
 
 
 def recipe_totals(items: list) -> dict:
-    """Sums over matched, not skipped rows. A micronutrient is null when no counted row knows it."""
+    """Sums over matched (amount confirmed), not skipped rows. A micronutrient is null when no counted row knows it."""
     counted = [i for i in items if i["matched"] and not i["skipped"]]
     out = {k: r2(sum(i[k] for i in counted)) for k in MACROS}
     for k in MICROS:
@@ -880,13 +888,52 @@ def meal_dict(c, row) -> dict:
             "items": items, "kcal": r1(totals["kcal"]), "servings": servings, "totals": totals,
             "per_serving": {k: None if v is None else r2(v / servings) for k, v in totals.items()},
             "matched": matched, "needed": len(needed), "skipped": len(items) - len(needed),
+            "checks": sum(1 for i in needed if i["check"]), "steps": read_steps(row["steps"]),
             "complete": bool(needed) and matched == len(needed)}
 
 
-def save_meal(c, uid: int, name, items: list, meal: str | list | None = None) -> dict:
+MAX_STEPS = 60
+MAX_STEP_LEN = 1000
+
+
+def read_steps(raw) -> list[str]:
+    """meals.steps as a list. Null, empty or unreadable means no steps."""
+    try:
+        v = json.loads(raw) if raw else []
+    except ValueError:
+        return []
+    return [x for x in v if isinstance(x, str)] if isinstance(v, list) else []
+
+
+def clean_steps(v) -> list[str]:
+    """Recipe method steps: a list of text, in order. Blank steps are dropped, whitespace inside a step is folded.
+    Steps are notes only and never change nutrition or logging."""
+    if v is None:
+        return []
+    if not isinstance(v, list):
+        raise bad("steps must be a list of text")
+    out = []
+    for i, s in enumerate(v, 1):
+        if not isinstance(s, str):
+            raise bad(f"step {i} must be text")
+        s = " ".join(s.split())
+        if len(s) > MAX_STEP_LEN:
+            raise bad(f"step {i} must be {MAX_STEP_LEN} characters or fewer")
+        if s:
+            out.append(s)
+    if len(out) > MAX_STEPS:
+        raise bad(f"A recipe can have at most {MAX_STEPS} steps")
+    return out
+
+
+def steps_json(steps: list[str]):
+    return json.dumps(steps) if steps else None
+
+
+def save_meal(c, uid: int, name, items: list, meal: str | list | None = None, steps: list | None = None) -> dict:
     """meal is one meal name, a list of meal names (the recipe tags), or None. meals.meal keeps the first tag."""
     tags = [meal] if isinstance(meal, str) else clean_tags(meal or [])
-    cur = c.execute("INSERT INTO meals(user_id, name, meal) VALUES(?,?,?)", (uid, name, tags[0] if tags else None))
+    cur = c.execute("INSERT INTO meals(user_id, name, meal, steps) VALUES(?,?,?,?)", (uid, name, tags[0] if tags else None, steps_json(steps or [])))
     c.executemany("INSERT INTO recipe_tags(meal_id, meal) VALUES(?,?)", [(cur.lastrowid, m) for m in tags])
     c.executemany("INSERT INTO meal_items(meal_id,food_id,amount,unit,position) VALUES(?,?,?,?,?)",
                   [(cur.lastrowid, f["id"], a, u, i) for i, (f, a, u) in enumerate(items)])
@@ -919,8 +966,9 @@ def create_meal(user: CurrentUser, body: dict = Body(...)):
     """Create a recipe from items. Tags come from meals (a list) or the older single meal."""
     name = meal_name(body)
     tags = clean_tags(body["meals"]) if "meals" in body else clean_tags([m for m in [pick(body.get("meal"), MEALS, "meal", nullable=True)] if m])
+    steps = clean_steps(body.get("steps"))
     with db.conn() as c:
-        return save_meal(c, user["id"], name, parse_items(c, body.get("items")), tags)
+        return save_meal(c, user["id"], name, parse_items(c, body.get("items")), tags, steps)
 
 
 def recipe_from_entries(uid: int, body: dict, only_meal: bool = False) -> dict:
@@ -958,22 +1006,25 @@ def meal_from_meal(user: CurrentUser, body: dict = Body(...)):
 
 @router.patch("/meals/{meal_id}")
 def patch_meal(meal_id: int, user: CurrentUser, body: dict = Body(...)):
-    """Rename, retag (meals), or replace the items list (amounts, units, removed items)."""
-    if not {"name", "meals", "items", "servings"} & body.keys():
-        raise bad("Nothing to update: send name, meals, items or servings")
+    """Rename, retag (meals), set servings or steps, or replace the items list (amounts, units, removed items)."""
+    if not {"name", "meals", "items", "servings", "steps"} & body.keys():
+        raise bad("Nothing to update: send name, meals, items, servings or steps")
+    steps = clean_steps(body["steps"]) if "steps" in body else None
     name = meal_name(body) if "name" in body else None
     tags = clean_tags(body["meals"]) if "meals" in body else None
     servings = recipe_servings(body["servings"]) if "servings" in body else None
     with db.conn() as c:
         own_meal(c, user["id"], meal_id)
         items = parse_items(c, body["items"]) if "items" in body else None
-        if items is not None and c.execute("SELECT 1 FROM meal_items WHERE meal_id=? AND (food_id IS NULL OR skipped=1)",
+        if items is not None and c.execute("SELECT 1 FROM meal_items WHERE meal_id=? AND (food_id IS NULL OR skipped=1 OR needs_check=1)",
                                            (meal_id,)).fetchone():
             raise HTTPException(409, "This recipe still has unmatched or skipped ingredients. Finish them on the Match Ingredients screen first.")
         if name:
             c.execute("UPDATE meals SET name=? WHERE id=?", (name, meal_id))
         if "servings" in body:
             c.execute("UPDATE meals SET servings=? WHERE id=?", (servings, meal_id))
+        if steps is not None:  # allowed at any time, also while ingredients are still being matched
+            c.execute("UPDATE meals SET steps=? WHERE id=?", (steps_json(steps), meal_id))
         if tags is not None:
             c.execute("DELETE FROM recipe_tags WHERE meal_id=?", (meal_id,))
             c.executemany("INSERT INTO recipe_tags(meal_id, meal) VALUES(?,?)", [(meal_id, m) for m in tags])
@@ -995,12 +1046,14 @@ def delete_meal(meal_id: int, user: CurrentUser):
 
 
 def need_complete(c, row) -> None:
-    """Loggability rule: every ingredient must be matched to a food or skipped, and at least one must be matched."""
-    left = c.execute("SELECT COUNT(*) FROM meal_items WHERE meal_id=? AND food_id IS NULL AND skipped=0", (row["id"],)).fetchone()[0]
+    """Loggability rule: every ingredient must be matched to a food with a confirmed amount, or skipped, and at least one
+    must be matched."""
+    left = c.execute("SELECT COUNT(*) FROM meal_items WHERE meal_id=? AND (food_id IS NULL OR needs_check=1) AND skipped=0",
+                     (row["id"],)).fetchone()[0]
     if left:
         raise HTTPException(409, f"This recipe has {left} ingredient{'s' if left != 1 else ''} still to match. "
                                  "Match or skip them before logging it.")
-    if not c.execute("SELECT 1 FROM meal_items WHERE meal_id=? AND food_id IS NOT NULL AND skipped=0", (row["id"],)).fetchone():
+    if not c.execute("SELECT 1 FROM meal_items WHERE meal_id=? AND food_id IS NOT NULL AND skipped=0 AND needs_check=0", (row["id"],)).fetchone():
         raise HTTPException(409, "This recipe has no matched ingredients to log.")
 
 
@@ -1058,6 +1111,7 @@ def import_meal(user: CurrentUser, body: dict = Body(...)):
         raise bad("ingredients must be a non-empty list")
     if len(raw) > MAX_IMPORT_ROWS:
         raise bad(f"A recipe can have at most {MAX_IMPORT_ROWS} ingredients")
+    steps = clean_steps(body.get("steps"))
     rows = []
     for i, it in enumerate(raw, 1):
         try:
@@ -1065,7 +1119,8 @@ def import_meal(user: CurrentUser, body: dict = Body(...)):
         except HTTPException as e:
             raise HTTPException(400, f"ingredient {i}: {e.detail}")
     with db.conn() as c:
-        cur = c.execute("INSERT INTO meals(user_id, name, meal, servings) VALUES(?,?,?,?)", (user["id"], name, tags[0] if tags else None, servings))
+        cur = c.execute("INSERT INTO meals(user_id, name, meal, servings, steps) VALUES(?,?,?,?,?)",
+                        (user["id"], name, tags[0] if tags else None, servings, steps_json(steps)))
         c.executemany("INSERT INTO recipe_tags(meal_id, meal) VALUES(?,?)", [(cur.lastrowid, m) for m in tags])
         c.executemany("INSERT INTO meal_items(meal_id, position, src_text, src_amount, src_unit, src_name, src_note) VALUES(?,?,?,?,?,?,?)",
                       [(cur.lastrowid, i, *r) for i, r in enumerate(rows)])
@@ -1087,20 +1142,24 @@ def own_item(c, meal_id: int, item_id: int):
 
 @router.patch("/meals/{meal_id}/items/{item_id}")
 def patch_meal_item(meal_id: int, item_id: int, user: CurrentUser, body: dict = Body(...)):
-    """Match one ingredient ({food_id, amount, unit}), unmatch it ({food_id: null}), or skip it ({skipped: bool})."""
-    if not isinstance(body, dict) or not body or set(body) - {"food_id", "amount", "unit", "skipped"}:
+    """Match one ingredient ({food_id, amount, unit, check?}), unmatch it ({food_id: null}), or skip it ({skipped: bool}).
+    check true attaches the food with an amount still to confirm (Check Amount); a match without check confirms it."""
+    if not isinstance(body, dict) or not body or set(body) - {"food_id", "amount", "unit", "skipped", "check"}:
         raise bad("Send food_id with amount and unit, food_id null, or skipped")
     if "skipped" in body and not isinstance(body["skipped"], bool):
         raise bad("skipped must be true or false")
+    if "check" in body and (not isinstance(body["check"], bool) or body.get("food_id") is None):
+        raise bad("check must be true or false and needs food_id")
     with db.conn() as c:
         own_meal(c, user["id"], meal_id)
         own_item(c, meal_id, item_id)
         if "food_id" in body and body["food_id"] is None:
-            c.execute("UPDATE meal_items SET food_id=NULL, amount=NULL, unit=NULL WHERE id=?", (item_id,))
+            c.execute("UPDATE meal_items SET food_id=NULL, amount=NULL, unit=NULL, needs_check=0 WHERE id=?", (item_id,))
         elif "food_id" in body:
             food = need_food(c, whole_id(body["food_id"], "food_id"))
             amount, unit = check_amount_unit(food, body.get("amount"), body.get("unit"))
-            c.execute("UPDATE meal_items SET food_id=?, amount=?, unit=?, skipped=0 WHERE id=?", (food["id"], amount, unit, item_id))
+            c.execute("UPDATE meal_items SET food_id=?, amount=?, unit=?, skipped=0, needs_check=? WHERE id=?",
+                      (food["id"], amount, unit, int(body.get("check") is True), item_id))
         elif {"amount", "unit"} & body.keys():
             raise bad("Send food_id together with amount and unit")
         if "skipped" in body and not ("food_id" in body and body["food_id"] is not None):

@@ -1,11 +1,12 @@
 // Import Recipe (step 1: source, then a review draft) and Match Ingredients (step 2). The recipe is saved at the end of
 // step 1 with every ingredient unmatched, so leaving step 2 at any point keeps what was matched so far.
 import { api } from './api.js';
-import { h, clear, field, message, show, sourceBadge } from './dom.js';
+import { h, clear, field, message, show, select, sourceBadge } from './dom.js';
 import { toJpeg } from './ai.js';
 import { confirmClaude } from './notice.js';
 import { chips } from './saved.js';
-import { fmtNum, fmtAmount, amountText, centsText, sentence, parseAmount, MICROS, microValue, aiFeature, aiFeatureOff } from './util.js';
+import { stepsEditor } from './steps.js';
+import { fmtNum, fmtAmount, centsText, sentence, parseAmount, rowAmountText, matchedAmountText, MICROS, microValue, aiFeature, aiFeatureOff } from './util.js';
 import {
   parseIngredientText, reviewDraft, reviewBody, blankRow, matchState, matchCountText, nextUnmatched, toggleAll, toggleId,
   matchBatch, proposalText, matchWhat, importWhat,
@@ -146,6 +147,9 @@ export function renderReview(root, ctx) {
     name, servings,
     h('h2', null, 'Ingredients'), list,
     h('button', { class: 'btn', type: 'button', onclick: () => { draft.rows.push(blankRow()); paintRows(true); } }, 'Add Ingredient'),
+    h('h2', null, 'Steps'),
+    h('p', { class: 'sub' }, 'The method, in order. Steps are notes only and never change the nutrition.'),
+    stepsEditor(draft),
     h('h2', null, 'Meal Tags'),
     h('p', { class: 'sub' }, 'Tags decide where the recipe shows on Add. Untagged recipes show under every meal.'),
     chips(draft.meals, (m) => { draft.meals = m; }, status),
@@ -167,10 +171,11 @@ function totalsTable(meal) {
       h('td', null, per[k] == null ? '-' : k === 'kcal' ? fmtNum(per[k], 0) : microValue(per[k], unit) + ' ' + unit)))));
 }
 
+// "Wheat flour [USDA] - 1 cup, 125 g - 455 kcal". A Check Amount row shows its tentative amount without calories.
 function foodLine(it) {
   const f = it.food;
   return h('span', { class: 'item-sub' }, (f.brand ? f.name + ' (' + f.brand + ')' : f.name) + ' ', sourceBadge(f.source, true),
-    ' - ' + amountText(it.amount, it.unit) + ' - ' + fmtNum(it.kcal, 0) + ' kcal');
+    ' - ' + matchedAmountText(it.amount, it.unit, it.grams) + (it.check ? '' : ' - ' + fmtNum(it.kcal, 0) + ' kcal'));
 }
 
 // params: { mealId, saved? (just saved by Import, shows Step 2 of 2) }
@@ -209,7 +214,7 @@ export async function renderMatch(root, params, ctx) {
   async function accept(item, p) {
     try {
       const food = p.food.id ? p.food : await api.createFood(p.food);  // a Claude estimate becomes a food only now
-      await apply(item.id, { food_id: food.id, amount: p.amount, unit: p.unit });
+      await apply(item.id, { food_id: food.id, amount: p.amount, unit: p.unit, ...(p.check ? { check: true } : {}) });
     } catch (e) { fail(e); }
   }
   async function runMatch(ids) {
@@ -245,13 +250,48 @@ export async function renderMatch(root, params, ctx) {
         p.food ? null : h('button', { class: 'btn', type: 'button', onclick: () => apply(item.id, { skipped: true }) }, 'Skip')));
   }
 
+  // The food's units for the amount editor, fetched once per food.
+  const unitCache = {};
+  const unitsOf = (id) => unitCache[id] || (unitCache[id] = api.food(id).then((f) => f.units));
+  const editing = {};  // item id -> true while Edit Amount is open on a matched row
+
+  // Small inline amount and unit editor for one attached food: always open on a Check Amount row (Confirm Amount),
+  // opened by Edit Amount on a matched row (Save Amount, Cancel). Saving is a plain match, which clears Check Amount.
+  function amountEditor(item) {
+    const name = item.food.name;
+    const amt = field('Amount', { inputmode: 'decimal', autocomplete: 'off', value: rowAmountText(item.amount, item.unit),
+      'aria-label': 'Amount of ' + name });
+    const unitBox = h('label', { class: 'field unit-field' }, h('span', null, 'Unit'), h('span', { class: 'sub' }, 'Loading...'));
+    const save = h('button', { class: 'btn small primary', type: 'button', disabled: true }, item.check ? 'Confirm Amount' : 'Save Amount');
+    let unitSel = null;
+    unitsOf(item.food_id).then((units) => {
+      unitSel = select(units.map((u) => ({ value: u.unit, label: u.label + (u.estimated ? ' (estimated)' : '') })), item.unit, { 'aria-label': 'Unit of ' + name });
+      unitBox.replaceChild(unitSel, unitBox.lastChild);
+      save.disabled = false;
+    }, fail);
+    save.addEventListener('click', () => {
+      const a = parseAmount(amt.input.value);
+      if (a == null || a <= 0) { show(status, message('Enter an amount above zero for ' + name + '.', 'error')); amt.input.focus(); return; }
+      delete editing[item.id];
+      apply(item.id, { food_id: item.food_id, amount: a, unit: unitSel.value });
+    });
+    const noAmount = item.check && item.src && item.src.amount == null;
+    return h('div', { class: 'amount-check', role: 'group', 'aria-label': (item.check ? 'Check amount of ' : 'Amount of ') + name },
+      item.check ? h('p', { class: 'sub' }, noAmount ? 'The recipe gives no amount here. Enter one, or tap Skip.'
+        : 'The recipe amount could not be converted for this food. Enter the amount, then tap Confirm Amount.') : null,
+      h('div', { class: 'amount-edit' }, amt, unitBox, save,
+        item.check ? null : h('button', { class: 'btn small ghost', type: 'button', onclick: () => { delete editing[item.id]; paintRows(); } }, 'Cancel')));
+  }
+
   function rowNode(item, i) {
     const state = matchState(item);
     const label = (item.src && item.src.text) || (item.food && item.food.name) || 'Ingredient';
     const box = aiOn && !item.skipped ? h('input', { type: 'checkbox', checked: selected.indexOf(item.id) >= 0, 'aria-label': 'Select ' + label,
       onchange: () => { selected = toggleId(selected, item.id); keepSel(); paintHead(); } }) : null;
+    const chip = (text) => h('span', { class: 'match-state match-' + state }, text);
     const stateNode = state === 'matched' ? foodLine(item)
-      : h('span', { class: 'item-sub' }, h('span', { class: 'match-state match-' + state }, state === 'skipped' ? 'Skipped' : 'Unmatched'));
+      : state === 'check' ? h('span', { class: 'match-text' }, h('span', { class: 'item-sub' }, chip('Check Amount')), foodLine(item))
+        : h('span', { class: 'item-sub' }, chip(state === 'skipped' ? 'Skipped' : 'Unmatched'));
     const p = props[item.id];
     return h('li', { class: 'match-row' + (i === current ? ' current' : ''), id: 'ing-' + item.id, tabindex: '-1',
       'aria-current': i === current ? 'true' : null },
@@ -260,9 +300,16 @@ export async function renderMatch(root, params, ctx) {
       h('button', { class: 'btn small', type: 'button', onclick: () => ctx.flow.find(meal, item, 'search') }, 'Search'),
       h('button', { class: 'btn small', type: 'button', onclick: () => ctx.flow.find(meal, item, 'scan') }, 'Scan Barcode'),
       aiOn ? h('button', { class: 'btn small', type: 'button', onclick: () => runMatch([item.id]) }, 'Ask Claude') : null,
+      state === 'matched' && !editing[item.id] ? h('button', { class: 'btn small', type: 'button',
+        onclick: () => { editing[item.id] = true; paintRows(); focusIn(item.id, 'input'); } }, 'Edit Amount') : null,
       h('button', { class: 'btn small', type: 'button', 'aria-pressed': item.skipped ? 'true' : 'false',
         onclick: () => apply(item.id, { skipped: !item.skipped }) }, item.skipped ? 'Unskip' : 'Skip')),
+    state === 'check' || (state === 'matched' && editing[item.id]) ? amountEditor(item) : null,
     p ? proposalBox(item, p) : null);
+  }
+  function focusIn(id, sel) {
+    const el = document.querySelector('#ing-' + id + ' ' + sel);
+    if (el) el.focus();
   }
 
   function paintHead() {
@@ -280,7 +327,8 @@ export async function renderMatch(root, params, ctx) {
     show(totals, h('div', null,
       h('h2', null, 'Per Serving'),
       h('p', { class: 'sub' }, meal.complete ? 'For 1 of ' + fmtAmount(meal.servings) + ' servings.'
-        : 'For 1 of ' + fmtAmount(meal.servings) + ' servings, counting matched ingredients only.'),
+        : 'For 1 of ' + fmtAmount(meal.servings) + ' servings, counting matched ingredients only.'
+          + (meal.checks ? ' Rows marked Check Amount count once you confirm their amount.' : '')),
       totalsTable(meal),
       meal.complete ? message('Every ingredient is matched or skipped. Log the recipe from the Recipes tab.') : null));
   }

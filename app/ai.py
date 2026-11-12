@@ -251,7 +251,7 @@ def estimate_text_tokens(chars: int = MAX_TEXT) -> tuple[int, int]:
 RECIPE_TEXT_MAX = 20000
 RECIPE_MATCH_MAX = 15
 EST_TOKENS_RECIPE_PROMPT = 900
-EST_TOKENS_RECIPE_OUT = 1200
+EST_TOKENS_RECIPE_OUT = 1700  # ingredient list plus the method steps
 EST_TOKENS_MATCH_ROW_IN = 450  # the ingredient plus up to 6 database candidates
 EST_TOKENS_MATCH_ROW_OUT = 160
 

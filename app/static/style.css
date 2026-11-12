@@ -420,6 +420,25 @@ textarea { font: inherit; color: inherit; width: 100%; min-height: 160px; paddin
 .hinted > .field { margin-bottom: 4px; }
 .hinted > .field-hint { margin-top: 0; }
 .display-sec > .field { margin-top: 16px; }
+/* Recipe steps */
+.steps-edit { list-style: none; padding: 0; margin: 0 0 8px; }
+.step-row { padding: 8px 0; border-bottom: 1px solid var(--line); }
+.step-row:last-child { border-bottom: 0; }
+.step-num { display: block; font-size: .8125rem; font-weight: 600; color: var(--muted); margin: 0 0 2px; }
+.step-row textarea { min-height: 64px; }
+.step-tools { margin: 4px 0 0; gap: 6px; }
+.step-tools .btn:disabled { opacity: .45; cursor: default; }
+.steps-editor > .btn { margin: 0 0 12px; }
+.steps-list { margin: 0 0 12px; padding-left: 1.6em; }
+.steps-list li { margin: 0 0 8px; line-height: 1.45; }
+.recipe-ings { margin: 0 0 12px; }
+.recipe-ings .item-sub { display: block; }
+/* Check Amount on Match Ingredients */
+.match-check { border-color: var(--over); color: var(--text); background: var(--warn-bg); }
+.amount-edit { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px; margin: 8px 0 0; }
+.amount-edit .field { margin: 0; flex: 0 1 7em; }
+.amount-edit .field.unit-field { flex: 1 1 9em; }
+.amount-edit .field > span { font-size: .75rem; margin-bottom: 2px; }
 /* Recipes tab */
 .recipes-actions { margin-bottom: 12px; }
 .recipe-log { align-items: end; }

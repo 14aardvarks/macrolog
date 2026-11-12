@@ -41,16 +41,23 @@ test('pasted text drops headings and finds servings', () => {
 });
 
 test('review draft round trips into the import body', () => {
-  const d = reviewDraft({ name: 'Pancakes', servings: 4, ingredients: [{ amount: 1.5, unit: 'cup', name: 'flour', note: null, text: '1 1/2 cups flour' }] });
-  assert.deepEqual(d.rows[0], { amount: '1.5', unit: 'cup', name: 'flour', note: '', text: '1 1/2 cups flour' });
+  const d = reviewDraft({ name: 'Pancakes', servings: 4, ingredients: [{ amount: 1.5, unit: 'cup', name: 'flour', note: null, text: '1 1/2 cups flour' }],
+    steps: ['Mix.', 5, 'Fry.'] });
+  assert.deepEqual(d.rows[0], { amount: '1 1/2', unit: 'cup', name: 'flour', note: '', text: '1 1/2 cups flour' });
+  assert.deepEqual(d.steps, ['Mix.', 'Fry.']);
   d.meals = ['breakfast'];
   d.rows.push(blankRow());  // an empty row is ignored
   assert.deepEqual(reviewBody(d).body, { name: 'Pancakes', servings: 4, meals: ['breakfast'],
-    ingredients: [{ text: '1.5 cup flour', amount: 1.5, unit: 'cup', name: 'flour', note: null }] });
-  d.rows[0].amount = '1 1/2';
+    ingredients: [{ text: '1 1/2 cup flour', amount: 1.5, unit: 'cup', name: 'flour', note: null }], steps: ['Mix.', 'Fry.'] });
+  d.rows[0].amount = '1.5';
   d.rows[0].note = 'sifted';
   assert.equal(reviewBody(d).body.ingredients[0].amount, 1.5);
-  assert.equal(rowText(d.rows[0]), '1.5 cup flour, sifted');
+  assert.equal(rowText(d.rows[0]), '1 1/2 cup flour, sifted');
+  d.rows[0].unit = 'g';
+  d.rows[0].amount = '28.5';
+  assert.equal(rowText(d.rows[0]), '28.5 g flour, sifted');
+  d.steps = new Array(61).fill('Stir.');
+  assert.match(reviewBody(d).error, /at most 60 steps/);
 });
 
 test('review validation', () => {
@@ -93,6 +100,10 @@ test('Save and Next picks the next unmatched row, wrapping, skipping skipped row
   assert.equal(nextUnmatched(items, 4), 1);
   assert.equal(nextUnmatched([{ id: 1, food: {}, skipped: false }, { id: 2, food: null, skipped: true }], 0), -1);
   assert.equal(nextUnmatched([], null), -1);
+  const withCheck = [{ id: 1, food: {}, skipped: false }, { id: 2, food: {}, check: true, skipped: false }];
+  assert.equal(matchState(withCheck[1]), 'check');
+  assert.equal(nextUnmatched(withCheck, 0), 1);
+  assert.equal(matchCountText({ matched: 1, needed: 2, skipped: 1, checks: 1 }), '1 of 2 matched, 1 to check, 1 skipped');
 });
 
 test('selection helpers', () => {
@@ -109,7 +120,9 @@ test('selection helpers', () => {
 });
 
 test('proposal and notice wording', () => {
-  assert.equal(proposalText({ kind: 'candidate', food: { name: 'Flour', brand: 'Acme' }, amount: 1.5, unit: 'cup' }), 'Flour (Acme), 1.5 cup');
+  assert.equal(proposalText({ kind: 'candidate', food: { name: 'Flour', brand: 'Acme' }, amount: 1.5, unit: 'cup' }), 'Flour (Acme), 1 1/2 cup');
+  assert.equal(proposalText({ kind: 'candidate', food: { name: 'Flour' }, amount: 1.5, unit: 'cup', grams: 187.5 }), 'Flour, 1 1/2 cup, 188 g');
+  assert.equal(proposalText({ kind: 'estimate', food: { name: 'Flour' }, amount: 30, unit: 'g', grams: null, check: true }), 'Flour, 30 g (check the amount)');
   assert.equal(proposalText({ kind: 'none', food: null, note: 'Salt has no calories' }), 'Salt has no calories.');
   assert.match(proposalText({ kind: 'none', food: null, note: null }), /no match/);
   assert.equal(matchWhat(1), '1 ingredient with database candidates');

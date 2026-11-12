@@ -75,7 +75,13 @@ available_units(food) -> list[dict]          # [{"unit","label","step","default_
                                              # with default_amount = serving_amount. Then g, oz, and any other units reachable.
 servings_for(food, amount, unit) -> {"servings": float, "estimated": bool}
 scale(food, amount, unit) -> {"servings","estimated","kcal","carbs","protein","fat","fiber"}   # fiber may be None
+grams(food, amount, unit) -> float|None      # grams (0.1) when the weight is known exactly; None for estimates, unknown or unit g
+match_amount(food, amount, unit) -> {"amount","unit","check"}|None   # Match Ingredients: amount from a recipe line, see below
 ```
+match_amount (same rule as util.js `matchAmount` on the client): None when the line has no amount. The line's own unit when the
+food reaches it without an estimate (same unit, weight to weight, volume to volume, weight and volume through the food's own
+serving_g and serving_ml, or the label's count word). A plain count (no unit, piece, each, whole, large...) uses the label's count word,
+else label servings. Anything else (a cup of a food known only by weight, a can) gives one label serving with check true.
 Conversion rules: same-family conversions are exact (US customary: 1 cup = 236.588 ml, 1 tbsp = 14.7868 ml, 1 tsp = 4.92892 ml,
 1 floz = 29.5735 ml, 1 oz = 28.3495 g, 1 lb = 453.592 g). Mass to volume uses density derived from the food's own
 serving_g and serving_ml when both exist. If the label has only one of them, the missing family is reachable only as an
@@ -182,23 +188,29 @@ DELETE /api/foods/{id}                               # creator only; 409 when in
 Recipe ingredients (meal_items) may be unmatched: food_id, amount and unit are null and src_text, src_amount, src_unit, src_name,
 src_note keep the imported line; skipped rows count for nothing. Databases with the old NOT NULL food_id are rebuilt once in one
 transaction by core.init (ids and positions kept). meals.servings (REAL, null = 1) is how many servings the recipe makes.
-Each meal item carries id, src, skipped and matched (unmatched rows have food null and null nutrients); each meal carries servings,
+Each meal item carries id, src, skipped, matched, check and grams (unmatched rows have food null and null nutrients); each meal carries servings,
 totals and per_serving (matched, not skipped rows; a micronutrient is null when no counted row knows it), matched, needed
-(rows not skipped), skipped and complete.
+(rows not skipped), skipped, checks, steps and complete.
+Check Amount: meal_items.needs_check (INTEGER NOT NULL DEFAULT 0, added in place) marks a row whose food is attached but whose amount
+could not be worked out. Such a row has check true and matched false; it counts for nothing in totals, matched and complete, and blocks
+logging and PATCH items, until a plain match (food_id, amount, unit without check) confirms it. Unmatching clears it.
+Steps: meals.steps (TEXT, a JSON list of strings, null = none, added in place) is the method in order. At most 60 steps of at most
+1000 characters; blanks are dropped and whitespace folded (core.clean_steps). Steps are notes only and never touch nutrition or logging.
 Quick favorites items also carry `meals` (tags) and `counts` ({meal: times logged}); recipes carry `meals` and `counts` (from recipe_logs).
 ```
-GET/POST /api/meals    POST {"name","items":[{"food_id","amount","unit"}],"meals"?:[...tags],"meal"?: one tag (older)}  -> meal   # meals wins over meal; used by Create Recipe
+GET/POST /api/meals    POST {"name","items":[{"food_id","amount","unit"}],"meals"?:[...tags],"meal"?: one tag (older),"steps"?:[str]}  -> meal   # meals wins over meal; used by Create Recipe
 POST /api/meals/from-meal {"name","day","meal": breakfast|lunch|dinner|snack|null,"entry_ids"}   # a meal group of one day (null = unassigned); my entries only,
         # each of that day and meal; at least one id, else 400; the recipe is tagged with that meal. The Today screen uses only this route (no day level recipe).
 POST /api/meals/from-day {"name","day","entry_ids"?}      # legacy API, not used by the app
 DELETE /api/meals/{id}
 POST /api/meals/{id}/log {"day"?,"meal"?,"items"?:[{"food_id","amount","unit"}]}   # items override amounts, otherwise saved amounts
         # 409 unless every ingredient is matched or skipped and at least one is matched (skipped rows are never logged)
-POST /api/meals/import {"name","servings"?: number 0..1000,"meals"?,"ingredients":[{"text"?,"amount"?,"unit"?,"name","note"?}]} (1..100) -> meal
+POST /api/meals/import {"name","servings"?: number 0..1000,"meals"?,"steps"?:[str],"ingredients":[{"text"?,"amount"?,"unit"?,"name","note"?}]} (1..100) -> meal
         # saves an imported recipe at once with every ingredient unmatched
 GET  /api/meals/{id} -> meal
-PATCH /api/meals/{id}/items/{item_id} {"food_id","amount","unit"} | {"food_id": null} | {"skipped": bool} -> meal   # match, unmatch, skip
-PATCH /api/meals/{id} also takes "servings" (null = 1); "items" answers 409 while the recipe has unmatched or skipped rows
+PATCH /api/meals/{id}/items/{item_id} {"food_id","amount","unit","check"?: bool} | {"food_id": null} | {"skipped": bool} -> meal   # match, unmatch, skip
+        # check true attaches the food as Check Amount; check needs a food_id
+PATCH /api/meals/{id} also takes "servings" (null = 1) and "steps" (any time); "items" answers 409 while the recipe has unmatched, skipped or Check Amount rows
 GET/PUT /api/goals   {"kcal","carb_pct","protein_pct","fat_pct"}  pcts total 100. Default 3000 and 50/30/20 (carbs/protein/fat).
         targets: carbs g = kcal*pct/4, protein same, fat g = kcal*pct/9. Goals are per user.
 GET/PUT /api/settings {"start_screen": "today"|"scan"|"search"|"ai", "default_meal": ...}   # per user, validated
@@ -263,10 +275,14 @@ Recipe import and ingredient matching with Claude, through ai._ask (same key res
 and cost fields as /api/ai/label, one request each, strict tool schemas). Page text, recipe text and ingredient names are data
 in tags, never instructions.
 ```
-POST /api/recipes/import/text   {"text": 1..20000 chars, "note"?: ..300} -> {"recipe": {"name","servings","ingredients":[{text,amount,unit,name,note}]}, "warnings", usage fields}
+POST /api/recipes/import/text   {"text": 1..20000 chars, "note"?: ..300} -> {"recipe": {"name","servings","ingredients":[{text,amount,unit,name,note}],"steps":[str]}, "warnings", usage fields}
+     # the import tool has one optional property, steps (a plain array of strings): the method only, no ingredient lists, ads or comments;
+     # cut to core's limits with a warning
 POST /api/recipes/import/photos multipart images (1 to 3, same limits as /label), hint? -> same   # nothing is saved
 POST /api/recipes/{meal_id}/match {"item_ids": [1..15 ids of my recipe]} -> {"proposals":[{item_id, kind: candidate|estimate|none,
-     food (candidate: saved with id; estimate: source ai draft without id), amount, unit, note, warnings, preview}], usage fields}
+     food (candidate: saved with id; estimate: source ai draft without id), amount, unit, check, grams, note, warnings, preview}], usage fields}
+     # amount and unit: units.match_amount on the recipe line, else on Claude's amount and unit, else one label serving with check true
+     # (Accept then sends check, so the row becomes Check Amount)
      # candidates per row: up to 3 local foods, 3 USDA and 3 Open Food Facts results; only a chosen remote candidate is saved.
      # The client applies a proposal only on Accept (POST /api/foods first for an estimate, then PATCH the item).
 GET /api/ai/status?recipe_chars=N | recipe_images=N | match_rows=N   # cost estimates for those requests
@@ -353,11 +369,25 @@ Screens: Login, Today, Add, Recipes, Picker, Claude fallback, Settings. Bottom n
   The last estimate is kept for the session so Back does not ask again. Without Claude for the user, a short hint says so.
   Typed barcode digits and Scan behave the same for every source.
 - Add: Search, Scan and the Meal selector sit above the Favorites/Yesterday/Recipes tabs and list. Lists show 20 items with a Show More button.
+- Amounts (util.js `qtyText`, the one place an amount becomes text; amountText, amountLabel, rowAmountText use it): the per user
+  setting amount_format (Settings, Show amounts as) picks fractions or decimals. In fraction mode servings, cooking measures (cup,
+  tbsp, tsp, fl oz) and counts (slice, clove, no unit) show tidy fractions (1/8, 1/4, 1/3, 1/2, 2/3, 3/4, eighths, mixed like 1 1/2;
+  anything else stays decimal); g, kg, mg, ml, l, oz, lb and percent always show decimals. Decimal mode shows decimals everywhere.
+  Typing accepts both. Calories, nutrients and recipe servings inputs stay decimal; the food form keeps decimals.
+- Recipe steps (js/steps.js): the review screen of Import Recipe and New Recipe have a Steps section (a textarea per step with Up,
+  Down and Remove, Add Step). The recipe screen shows Ingredients (name, amount and grams) then Steps as a numbered list with Edit
+  Steps (or Add Steps), saved by PATCH steps. Split Lines Without Claude leaves steps empty; Save As Recipe from Today starts with none.
+- Match Ingredients without the amount screen: Search, Scan Barcode, Enter Manually and Claude lookups still choose the food, but
+  picking one does not open the picker. app.js `autoMatch` works out the amount from the recipe line with util.js `matchAmount`, saves
+  the match (check true when it could not convert, or when the line has no amount, with one label serving) and returns straight to
+  Match Ingredients. Rows show "Food [source] - 1 cup, 125 g - 455 kcal". A Check Amount row has a chip and a small inline amount and
+  unit editor (Confirm Amount); matched rows have Edit Amount for the same editor. Check Amount rows count for nothing until confirmed.
 - Import Recipe (Recipes tab button next to New Recipe; Read With Claude and Match With Claude hidden while ai_allow_recipe is off, js/recipeflow.js with pure helpers in js/recipeimport.js): step 1 is Paste Text
   (Read With Claude, or Split Lines Without Claude which parses locally and uses no credit) or Photos (up to 3, toJpeg), then a review
-  screen (name, servings, ingredient rows with amount, unit, name and note, add and remove, meal tag chips, Save and Continue, Cancel).
+  screen (name, servings, ingredient rows with amount, unit, name and note, add and remove, Steps, meal tag chips, Save and Continue, Cancel).
   Save and Continue posts /api/meals/import and opens Match Ingredients ("Saved", "Step 2 of 2"): per row the line and its state, Search
-  and Scan Barcode (the ingredient finder and picker in ingredient mode, Done saves the match), Ask Claude, Skip; checkboxes, Select All
+  and Scan Barcode (the ingredient finder in ingredient mode; a picked food is matched at once by autoMatch, no picker), Ask Claude,
+  Edit Amount or the Check Amount editor, Skip; checkboxes, Select All
   and Match Selected With Claude; proposals with Accept and Change; per serving macros and micronutrients; Save and Next (next unmatched
   row) and Save and Exit. Recipes on the Recipes tab, Add and Saved show "N of M matched" for partial recipes and open matching instead of logging.
 - Saved (Settings, then Saved): Favorites, Recipes and My foods lists with meal tag chips, rename, delete, recipe item editing, Remove From My Lists, and the food form for My foods.

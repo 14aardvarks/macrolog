@@ -3,7 +3,7 @@ import { api } from './api.js';
 import { h, clear, field, message, show, select, sourceBadge } from './dom.js';
 import { refreshAllControl } from './refresh.js';
 import { recipeSubText } from './recipeimport.js';
-import { MEALS, MEAL_LABELS, toggleMeal, parseAmount, fmtAmount, unitLabel, fmtNum, amountText, SAVED_FILTERS, SAVED_FILTER_LABELS, filterSavedItems, pageOf, PAGE_SIZE } from './util.js';
+import { MEALS, MEAL_LABELS, toggleMeal, parseAmount, rowAmountText, unitLabel, fmtNum, amountText, SAVED_FILTERS, SAVED_FILTER_LABELS, filterSavedItems, pageOf, PAGE_SIZE } from './util.js';
 
 const title = (f) => (f.brand ? f.name + ' (' + f.brand + ')' : f.name);
 
@@ -56,7 +56,7 @@ export function recipeRow(rec, again, ctx, opts) {
     let foods;
     try { foods = await Promise.all(rec.items.map((it) => api.food(it.food_id))); } catch (e) { fail(e); return; }
     const rows = rec.items.map((it, i) => {
-      const amt = h('input', { type: 'text', inputmode: 'decimal', value: fmtAmount(it.amount), 'aria-label': 'Amount of ' + it.food.name });
+      const amt = h('input', { type: 'text', inputmode: 'decimal', value: rowAmountText(it.amount, it.unit), 'aria-label': 'Amount of ' + it.food.name });
       const unit = select(foods[i].units.map((u) => ({ value: u.unit, label: unitLabel(u.unit) })), it.unit, { 'aria-label': 'Unit of ' + it.food.name });
       const li = h('li', { class: 'item meal-item' }, h('span', { class: 'item-title' }, it.food.name), amt, unit,
         h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Remove ' + it.food.name, onclick: () => { li.remove(); row.gone = true; } }, '×'));

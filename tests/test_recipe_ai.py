@@ -124,7 +124,7 @@ def test_import_upstream_failure_releases_the_reservation(env):
 def test_import_with_no_ingredients_warns(env):
     env["reply"] = reply(recipe_ai.IMPORT_TOOL_NAME, {"name": None, "servings": -2, "ingredients": [], "confidence": ""})
     body = env["c"].post("/api/recipes/import/text", json={"text": "hello"}).json()
-    assert body["recipe"] == {"name": "", "servings": None, "ingredients": []}
+    assert body["recipe"] == {"name": "", "servings": None, "ingredients": [], "steps": []}
     assert "no ingredients" in body["warnings"][0]
 
 
@@ -146,8 +146,8 @@ def test_status_estimates_for_recipes(env, monkeypatch):
     monkeypatch.setenv("AI_PRICE_IN_PER_MTOK", "1")
     monkeypatch.setenv("AI_PRICE_OUT_PER_MTOK", "5")
     get = lambda **q: env["c"].get("/api/ai/status", params=q).json()["est_cost_label"]  # noqa: E731
-    assert get(recipe_chars=4000) == pytest.approx((900 + 1000) / 1e6 + 1200 * 5 / 1e6)
-    assert get(recipe_images=2) == pytest.approx((2 * 1600 + 900) / 1e6 + 1200 * 5 / 1e6)
+    assert get(recipe_chars=4000) == pytest.approx((900 + 1000) / 1e6 + 1700 * 5 / 1e6)
+    assert get(recipe_images=2) == pytest.approx((2 * 1600 + 900) / 1e6 + 1700 * 5 / 1e6)
     assert get(match_rows=3) == pytest.approx((900 + 3 * 450) / 1e6 + 3 * 160 * 5 / 1e6)
     assert env["c"].get("/api/ai/status", params={"match_rows": 99}).status_code == 422
 
@@ -235,3 +235,59 @@ def test_match_bad_estimate_becomes_none(env):
         "estimate": {"name": "", "serving_text": "", "serving_g": None, "kcal": -1, "carbs": 0, "protein": 0, "fat": 0, "fiber": None}, "note": None}]})
     p = env["c"].post(f"/api/recipes/{m['id']}/match", json={"item_ids": [m["items"][0]["id"]]}).json()["proposals"]
     assert p[0]["kind"] == "none"
+
+
+# ---------- steps and amounts worked out from the line ----------
+
+def test_import_schema_has_optional_steps_and_returns_them(env):
+    schema = recipe_ai.IMPORT_TOOL["input_schema"]
+    assert schema["properties"]["steps"] == {"type": "array", "items": {"type": "string"}, "description": schema["properties"]["steps"]["description"]}
+    assert "steps" not in schema["required"]
+    env["reply"] = reply(recipe_ai.IMPORT_TOOL_NAME, {**RECIPE, "steps": ["  Mix   flour and eggs. ", "", 5, "Fry."]})
+    body = env["c"].post("/api/recipes/import/text", json={"text": "x"}).json()
+    assert body["recipe"]["steps"] == ["Mix flour and eggs.", "Fry."]
+    text = env["requests"][0]["messages"][0]["content"][0]["text"]
+    assert "steps" in text and "ads" in text
+    env["reply"] = reply(recipe_ai.IMPORT_TOOL_NAME, RECIPE)  # an answer without steps
+    assert env["c"].post("/api/recipes/import/text", json={"text": "x"}).json()["recipe"]["steps"] == []
+    files = [("images", ("a.jpg", JPEG, "image/jpeg"))]
+    env["reply"] = reply(recipe_ai.IMPORT_TOOL_NAME, {**RECIPE, "steps": ["Bake."]})
+    assert env["c"].post("/api/recipes/import/photos", files=files).json()["recipe"]["steps"] == ["Bake."]
+
+
+def test_import_steps_are_cut_to_the_limits(env):
+    many = ["Step."] * (core.MAX_STEPS + 5) + ["x" * (core.MAX_STEP_LEN + 50)]
+    steps, warns = recipe_ai.clean_steps(many)
+    assert len(steps) == core.MAX_STEPS and len(warns) == 1
+    steps, warns = recipe_ai.clean_steps(["y" * (core.MAX_STEP_LEN + 50)])
+    assert len(steps[0]) == core.MAX_STEP_LEN and "cut" in warns[0]
+    assert recipe_ai.clean_steps("nope") == ([], [])
+    # what the import returns can be saved as it is
+    m = env["c"].post("/api/meals/import", json={"name": "R", "ingredients": [{"name": "x"}], "steps": steps}).json()
+    assert m["steps"] == steps
+
+
+def test_match_amounts_come_from_the_recipe_line(env):
+    rows = [{"text": "2 cups flour", "amount": 2, "unit": "cups", "name": "flour"},
+            {"text": "1 can flour", "amount": 1, "unit": "can", "name": "flour"},
+            {"text": "3 eggs", "amount": 3, "name": "egg"}]
+    m = saved_recipe(env, rows)
+    ids = [i["id"] for i in m["items"]]
+    env["reply"] = reply(recipe_ai.MATCH_TOOL_NAME, {"matches": [
+        {"row": 1, "choice": 1, "amount": 250, "unit": "g", "estimate": None, "note": None},  # the line's own unit wins
+        {"row": 2, "choice": 1, "amount": 2, "unit": "can", "estimate": None, "note": None},  # nothing works: Check Amount
+        {"row": 3, "choice": 1, "amount": None, "unit": None, "estimate": None, "note": None}]})
+    p = env["c"].post(f"/api/recipes/{m['id']}/match", json={"item_ids": ids}).json()["proposals"]
+    assert (p[0]["amount"], p[0]["unit"], p[0]["check"], p[0]["grams"]) == (2, "cup", False, 250)
+    assert (p[1]["amount"], p[1]["unit"], p[1]["check"]) == (1, "cup", True) and "label serving" in p[1]["warnings"][0]
+    assert (p[2]["amount"], p[2]["unit"], p[2]["check"], p[2]["grams"]) == (3, "egg", False, 150)
+    # Accept of a Check Amount proposal attaches the food with the flag
+    r = env["c"].patch(f"/api/meals/{m['id']}/items/{ids[1]}", json={"food_id": p[1]["food"]["id"], "amount": 1, "unit": "cup", "check": True}).json()
+    assert r["items"][1]["check"] and r["checks"] == 1 and r["matched"] == 0
+
+
+def test_match_without_a_line_amount_uses_claudes(env):
+    m = saved_recipe(env, [{"text": "flour for dusting", "name": "flour"}])
+    env["reply"] = reply(recipe_ai.MATCH_TOOL_NAME, {"matches": [{"row": 1, "choice": 1, "amount": 2, "unit": "tbsp", "estimate": None, "note": None}]})
+    p = env["c"].post(f"/api/recipes/{m['id']}/match", json={"item_ids": [m["items"][0]["id"]]}).json()["proposals"]
+    assert (p[0]["amount"], p[0]["unit"], p[0]["check"]) == (2, "tbsp", False)  # cup label: tbsp is exact
