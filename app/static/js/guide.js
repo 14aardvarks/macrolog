@@ -123,6 +123,7 @@ export const GUIDE = [
   { heading: 'Today', bullets: [
     'The chart splits your calories, with your goal in the middle.',
     'Macro Nutrients bars show eaten, goal, percent and what is left.',
+    'Bars turn orange past 75% with Near Limit, and red past 100% with Over.',
     'A thin bar under each food shows its carbs, protein and fat share.',
     'Tap an entry to change it.',
     'Tap X to remove it.',
@@ -140,7 +141,7 @@ export const GUIDE = [
   { heading: 'Micro Nutrients', bullets: [
     'Fiber, sugars, sodium, vitamins and minerals sit under the macro bars.',
     'Tap the arrow to open or close the section. It stays as you left it.',
-    'Goals are amounts to reach. Limits turn orange once you pass them.',
+    'Goals are amounts to reach. Limit bars turn orange past 75% and red past 100%.',
     'Totals count only foods with data. A note shows how many had it.',
     'A dash means unknown, not zero.',
     'Set your targets in Settings under Daily Goals.',

@@ -173,3 +173,24 @@ test('only Claude foods are estimates and carry the note', () => {
   for (const s of ['off', 'fdc', 'custom', undefined]) { assert.equal(isEstimate(s), false); assert.equal(sourceNote(s), ''); }
   assert.equal(sourceNote('ai'), 'Values are estimates from Claude. Check them against the label.');
 });
+
+test('barLevel boundaries: 75 and 100 stay in the lower level', async () => {
+  const { barLevel, barState } = await import('../../app/static/js/util.js');
+  assert.equal(barLevel(0), 'ok');
+  assert.equal(barLevel(74.9), 'ok');
+  assert.equal(barLevel(75), 'ok');
+  assert.equal(barLevel(75.01), 'near');
+  assert.equal(barLevel(100), 'near');
+  assert.equal(barLevel(100.01), 'over');
+  assert.equal(barLevel(250), 'over');
+  assert.equal(barLevel(null), 'ok');
+  assert.equal(barLevel(undefined), 'ok');
+  assert.equal(barLevel(NaN), 'ok');
+  assert.deepEqual(barState(75, 100), { level: 'ok', cue: '' });
+  assert.deepEqual(barState(76, 100), { level: 'near', cue: 'Near Limit' });
+  assert.deepEqual(barState(100, 100), { level: 'near', cue: 'Near Limit' });
+  assert.deepEqual(barState(100.4, 100), { level: 'over', cue: 'Over' });
+  assert.deepEqual(barState(50, 0), { level: 'ok', cue: '' });
+  assert.deepEqual(barState(50, null), { level: 'ok', cue: '' });
+  assert.deepEqual(barState(null, 2300), { level: 'ok', cue: '' });
+});

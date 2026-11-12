@@ -466,6 +466,24 @@ export function remainingText(remaining, unit = '') {
 // Bar fill width, 0..100
 export function barWidth(percent) { return clamp(Number(percent) || 0, 0, 100); }
 
+// Bar color level by percent of goal: ok up to and including 75, near above 75, over above 100.
+export const NEAR_PERCENT = 75;
+export const OVER_PERCENT = 100;
+export function barLevel(pct) {
+  const p = Number(pct);
+  if (!Number.isFinite(p)) return 'ok';
+  return p > OVER_PERCENT ? 'over' : p > NEAR_PERCENT ? 'near' : 'ok';
+}
+
+// { level, cue } for a bar. No goal (no target, or an unknown total) gives ok and no cue. The percent comes from the exact
+// total and target, so rounding for display never moves a bar across a line.
+export function barState(total, target) {
+  const t = Number(target);
+  if (total == null || !(t > 0)) return { level: 'ok', cue: '' };
+  const level = barLevel(Number(total) / t * 100);
+  return { level, cue: level === 'over' ? 'Over' : level === 'near' ? 'Near Limit' : '' };
+}
+
 export function pctTotal(a, b, c) { return roundTo((a || 0) + (b || 0) + (c || 0), 2); }
 
 // ---------- misc ----------

@@ -2,7 +2,7 @@ import { api, setUnauthorizedHandler } from './api.js';
 import { h, clear, select, field, message, show, cameraIcon, sourceBadge } from './dom.js';
 import {
   MEALS, MEAL_LABELS, parseDecimal, parseAmount, amountText, servingText, qtyText, amountMemo, setAmountFormat, unitLabel, fmtNum, fmtAmount, groupByMeal, mealGroupsAll, quickLabel, checkedItems, canSaveRecipe, rowAmountText, applyRowPick, draftFits, localDate, progressText, remainingText,
-  sentence, matchAmount, newRecipeDraft, recipeAddRow, recipeSetRow, stepsBack, barWidth, debounce, digitsOnly, guessMeal, pctTotal, latestGuard, MEAL_FILTERS, MEAL_FILTER_LABELS, filterByMeal, filterSaved, pageOf, PAGE_SIZE, emptyText,
+  sentence, matchAmount, newRecipeDraft, recipeAddRow, recipeSetRow, stepsBack, barWidth, barState, debounce, digitsOnly, guessMeal, pctTotal, latestGuard, MEAL_FILTERS, MEAL_FILTER_LABELS, filterByMeal, filterSaved, pageOf, PAGE_SIZE, emptyText,
   entryKey, todayHold, holdFresh, holdTarget, DEFAULT_DISPLAY, searchSource, searchAction, searchHint, DESCRIPTION_TEXT, aiFeature, aiFeatureOff, searchSources, startSource,
   ownerText, groupRecipesByMeal, pageGroups, MAX_AI_TEXT, CLAUDE_CAP_NOTE, FALLBACK_TEXT, FALLBACK_FAILED,
 } from './util.js';
@@ -382,11 +382,12 @@ async function todayScreen(root) {
   const d = await api.day(localDate());
   const bars = [['kcal', 'Calories', ''], ['carbs', 'Carbs', ' g'], ['protein', 'Protein', ' g'], ['fat', 'Fat', ' g']].map(([k, label, unit]) => {
     const text = progressText(d.totals[k], d.targets[k], d.percent[k], unit);
+    const { level, cue } = barState(d.totals[k], d.targets[k]);
     return h('div', { class: 'bar-row' },
-      h('div', { class: 'bar-head' }, h('span', null, label), h('span', null, text)),
+      h('div', { class: 'bar-head' }, h('span', null, label), h('span', null, cue ? h('span', { class: 'cue ' + level }, cue) : null, text)),
       h('div', { class: 'track', role: 'progressbar', 'aria-label': label, 'aria-valuemin': '0', 'aria-valuemax': '100',
-        'aria-valuenow': String(barWidth(d.percent[k])), 'aria-valuetext': text },
-      h('div', { class: 'fill' + (d.percent[k] > 100 ? ' over' : ''), style: 'width:' + barWidth(d.percent[k]) + '%' })),
+        'aria-valuenow': String(barWidth(d.percent[k])), 'aria-valuetext': text + (cue ? ', ' + cue : '') },
+      h('div', { class: 'fill ' + level, style: 'width:' + barWidth(d.percent[k]) + '%' })),
       h('div', { class: 'bar-left' }, remainingText(d.remaining[k], unit)));
   });
   const status = h('div', { 'aria-live': 'polite' });

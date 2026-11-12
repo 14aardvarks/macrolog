@@ -2,6 +2,7 @@
   --bg: #f6f7f6; --card: #ffffff; --text: #1b1f1d; --muted: #5d6762; --line: #d9dedb;
   --accent: #2f7d57; --accent-text: #ffffff; --danger: #b3261e; --warn-bg: #fff4d6; --track: #e3e8e5;
   --over: #c76a1d;
+  --bar-near: #c76a1d; --bar-over: #c62828; --cue-near: #8f4a0a; --cue-over: #b3261e;
   --row: 44px;
   --c-carbs: #7b9bd1; --c-protein: #7fb28f; --c-fat: #d98578;
 }
@@ -10,6 +11,7 @@
     --bg: #121614; --card: #1b211e; --text: #eef2ef; --muted: #a2aca6; --line: #323b36;
     --accent: #55b587; --accent-text: #0b1510; --danger: #ff8a80; --warn-bg: #3b3317; --track: #2a322e;
     --over: #f0a05a;
+    --bar-near: #f0a05a; --bar-over: #ff6b6b; --cue-near: #f0a05a; --cue-over: #ff8a80;
     --c-carbs: #86a4d8; --c-protein: #84bd96; --c-fat: #e08d80;
   }
 }
@@ -98,7 +100,11 @@ input[type=checkbox] { width: 24px; height: 24px; flex: none; accent-color: var(
 .bar-head { display: flex; justify-content: space-between; gap: 8px; font-weight: 600; }
 .track { height: 12px; border-radius: 6px; background: var(--track); overflow: hidden; margin: 4px 0 2px; }
 .fill { height: 100%; background: var(--accent); border-radius: 6px; }
-.fill.over { background: var(--over); }
+.fill.near { background: var(--bar-near); }
+.fill.over { background: var(--bar-over); }
+.cue { margin-right: 8px; font-size: .8125rem; font-weight: 700; }
+.cue.near { color: var(--cue-near); }
+.cue.over { color: var(--cue-over); }
 .bar-left { color: var(--muted); font-size: .875rem; }
 .track.thin { height: 8px; }
 .micro-row { margin-bottom: 10px; }

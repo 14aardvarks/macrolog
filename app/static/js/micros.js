@@ -1,5 +1,5 @@
 import { h, field, select } from './dom.js';
-import { SEARCH_SOURCES, searchSource, AUTO_MATCHES, autoMatch, MICROS, shownMicros, microValue, microText, microNote, microOver, barWidth, toggleMicro, parseDecimal, fmtAmount, sentence } from './util.js';
+import { SEARCH_SOURCES, searchSource, AUTO_MATCHES, autoMatch, MICROS, shownMicros, microValue, microText, microNote, barWidth, barState, toggleMicro, parseDecimal, fmtAmount, sentence } from './util.js';
 
 let seq = 0;
 
@@ -26,11 +26,13 @@ export function microSection(d, display, onToggle) {
     const text = microText(m, meta.unit);
     const note = microNote(m);
     const kind = meta.kind === 'limit' ? 'Limit' : 'Goal';
+    // Only limits warn. Reaching or passing a goal (fiber, vitamins) is fine, so goal bars stay the normal color.
+    const { level, cue } = meta.kind === 'limit' ? barState(m.total, m.target) : { level: 'ok', cue: '' };
     return h('div', { class: 'bar-row micro-row' },
-      h('div', { class: 'bar-head' }, h('span', null, meta.label), h('span', null, text)),
+      h('div', { class: 'bar-head' }, h('span', null, meta.label), h('span', null, cue ? h('span', { class: 'cue ' + level }, cue) : null, text)),
       h('div', { class: 'track thin', role: 'progressbar', 'aria-label': meta.label + ' (' + kind.toLowerCase() + ')', 'aria-valuemin': '0', 'aria-valuemax': '100',
-        'aria-valuenow': String(barWidth(m.percent)), 'aria-valuetext': text + (note ? ', ' + note : '') },
-      h('div', { class: 'fill' + (microOver(m) ? ' over' : ''), style: 'width:' + barWidth(m.percent) + '%' })),
+        'aria-valuenow': String(barWidth(m.percent)), 'aria-valuetext': text + (note ? ', ' + note : '') + (cue ? ', ' + cue : '') },
+      h('div', { class: 'fill ' + level, style: 'width:' + barWidth(m.percent) + '%' })),
       h('div', { class: 'bar-left' }, kind + (note ? ' · ' + note : '')));
   });
   return collapsible('Micro Nutrients', !!(display && display.micros_open), h('div', { class: 'bars micro-bars' }, rows), onToggle);
