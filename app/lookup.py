@@ -313,8 +313,9 @@ async def barcode(raw):
     return {"food": None, "note": "; ".join(notes), "valid": info["valid"]}
 
 
-async def search(query, limit=8):
-    """USDA FoodData Central text search. Returns [] on empty query or network trouble."""
+async def search(query, limit=8, state=None):
+    """USDA FoodData Central text search. Returns [] on empty query or network trouble. A caller that wants to know about
+    the shared USDA rate limit passes a dict as state; a 429 sets state["limited"] to True (the result is still [])."""
     if not str(query or "").strip():
         return []
     try:
@@ -322,7 +323,9 @@ async def search(query, limit=8):
             r = await client.get(FDC_URL, params=_fdc_params(query=query.strip(), pageSize=limit))
             r.raise_for_status()
             foods = [fdc_food(i) for i in r.json().get("foods") or []]
-    except (httpx.HTTPError, ValueError):
+    except (httpx.HTTPError, ValueError) as e:
+        if state is not None and getattr(getattr(e, "response", None), "status_code", None) == 429:
+            state["limited"] = True
         return []
     return [f for f in foods if f][:limit]
 

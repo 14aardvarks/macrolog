@@ -610,6 +610,11 @@ export const SEARCH_SOURCES = [
   { value: 'fdc', label: 'USDA' }, { value: 'ai', label: 'Claude' },
 ];
 export function searchSource(v) { return SEARCH_SOURCES.some((s) => s.value === v) ? v : 'all'; }
+
+// Settings, Display, Auto-Match After Import: what happens on Match Ingredients right after an import. Search (default) is the free
+// name search, never Claude. Same values as core.AUTO_MATCHES.
+export const AUTO_MATCHES = [{ value: 'search', label: 'Search' }, { value: 'off', label: 'Off' }];
+export const autoMatch = (v) => (v === 'off' ? 'off' : 'search');
 export const MAX_AI_TEXT = 200;  // same as ai.MAX_TEXT on the server
 
 // What one search does. remote is true for Enter or the Search button, false while typing.
@@ -674,7 +679,7 @@ export const MICROS = [
 
 // What the screens show before /api/settings/display answers. Matches the server defaults.
 export const DEFAULT_DISPLAY = { show_macros: true, show_micros: true, show_split: true, show_macro_bar: true, show_table: true,
-  micros_open: false, micros_shown: MICROS.map((m) => m.key), today_view: 'list' };
+  micros_open: false, micros_shown: MICROS.map((m) => m.key), today_view: 'list', auto_match: 'search' };
 
 // The nutrients to list, in order. Empty when the section is switched off.
 export function shownMicros(display) {

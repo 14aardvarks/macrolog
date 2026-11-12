@@ -177,7 +177,8 @@ def test_works_without_claude_and_never_calls_it(env, monkeypatch):
     assert env["c"].post(f"/api/recipes/{m['id']}/match", json={"item_ids": [m["items"][0]["id"]]}).status_code in (403, 503)
     r = search(env, m)
     assert r.status_code == 200 and r.json()["proposals"][0]["food"]["name"] == "Wheat flour"
-    assert set(r.json()) == {"proposals", "method"}  # no usage or cost fields
+    assert set(r.json()) == {"proposals", "method", "rate_limited"}  # no usage or cost fields
+    assert r.json()["rate_limited"] is False
     no_claude(env)
 
 
@@ -215,3 +216,32 @@ def test_search_proposals_use_the_row_text_when_there_is_no_name(env):
     with db.conn() as c:
         c.execute("UPDATE meal_items SET src_name=NULL, src_text='flour' WHERE id=?", (m["items"][0]["id"],))
     assert search(env, m).json()["proposals"][0]["food"]["name"] == "Wheat flour"
+
+
+def test_usda_rate_limit_stops_usda_and_marks_skipped_rows(env, monkeypatch):
+    from app import lookup
+    calls = []
+
+    async def limited(q, limit=8, state=None):
+        calls.append(q)
+        if state is not None:
+            state["limited"] = True
+        return []
+
+    monkeypatch.setattr(lookup, "search", limited)
+    env["off"]["egg"] = [EGG_OFF]
+    rows = [{"amount": 1, "unit": "cup", "name": "flour"}, {"amount": 2, "name": "egg"}] + [{"name": f"thing {i}"} for i in range(10)]
+    m = saved_recipe(env, rows)
+    r = search(env, m).json()
+    assert r["rate_limited"] is True
+    assert len(calls) <= recipe_ai.SEARCH_CONCURRENCY  # after the 429 the rows still waiting never ask USDA
+    p = r["proposals"]
+    assert all(x["skipped"] for x in p) and p[0]["note"] == "Not searched." and p[1]["food"]["name"]  # Open Food Facts still answers
+    no_claude(env)
+
+
+def test_no_rate_limit_means_no_skipped_rows(env):
+    env["fdc"]["flour"] = [FLOUR]
+    m = saved_recipe(env)
+    r = search(env, m).json()
+    assert r["rate_limited"] is False and not any("skipped" in x for x in r["proposals"])

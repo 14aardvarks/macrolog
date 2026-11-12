@@ -99,6 +99,7 @@ CREATE TABLE IF NOT EXISTS micro_targets(
 DISPLAY_FLAGS = {"show_macros": 1, "show_micros": 1, "show_split": 1, "show_macro_bar": 1, "show_table": 1, "micros_open": 0}
 TODAY_VIEWS = ("list", "table")  # the Today tab's default view, stored as settings.today_view
 START_SOURCES = ("all", "off", "fdc", "ai")  # the Add search Source to start with, stored as settings.search_source
+AUTO_MATCHES = ("search", "off")  # Auto-Match After Import: the free Search runs on a new import (default) or nothing runs, stored as settings.auto_match
 SCHEMA = SCHEMA.replace("{MEAL_ITEMS_BODY}", MEAL_ITEMS_BODY)
 
 
@@ -157,6 +158,8 @@ def init(c: sqlite3.Connection) -> None:
         c.execute("ALTER TABLE settings ADD COLUMN today_view TEXT NOT NULL DEFAULT 'list'")
     if "search_source" not in cols:  # databases made before the Default Search Source setting
         c.execute("ALTER TABLE settings ADD COLUMN search_source TEXT NOT NULL DEFAULT 'all'")
+    if "auto_match" not in cols:  # databases made before Auto-Match After Import
+        c.execute("ALTER TABLE settings ADD COLUMN auto_match TEXT NOT NULL DEFAULT 'search'")
     for table in ("foods", "entries"):  # databases made before micronutrients: old rows stay null (unknown)
         have = {r[1] for r in c.execute(f"PRAGMA table_info({table})")}
         for key in NEW_MICROS:
@@ -582,13 +585,14 @@ def put_settings(user: CurrentUser, body: dict = Body(...)):
 # ---------- display settings and micronutrient targets ----------
 
 def read_display(c, uid: int) -> dict:
-    row = c.execute(f"SELECT {', '.join(DISPLAY_FLAGS)}, micros_hidden, today_view, search_source FROM settings WHERE user_id=?",
+    row = c.execute(f"SELECT {', '.join(DISPLAY_FLAGS)}, micros_hidden, today_view, search_source, auto_match FROM settings WHERE user_id=?",
                     (uid,)).fetchone()
     out = {k: bool(row[k]) if row else bool(v) for k, v in DISPLAY_FLAGS.items()}
     hidden = set((row["micros_hidden"] if row else "").split(","))
     out["micros_shown"] = [k for k in MICROS if k not in hidden]
     out["today_view"] = row["today_view"] if row and row["today_view"] in TODAY_VIEWS else "list"
     out["search_source"] = row["search_source"] if row and row["search_source"] in START_SOURCES else "all"
+    out["auto_match"] = row["auto_match"] if row and row["auto_match"] in AUTO_MATCHES else "search"
     return out
 
 
@@ -601,8 +605,8 @@ def get_display(user: CurrentUser):
 @router.put("/settings/display")
 def put_display(user: CurrentUser, body: dict = Body(...)):
     """Per user show/hide switches. Send any subset; micros_shown is the list of nutrients to show."""
-    if not (set(DISPLAY_FLAGS) | {"micros_shown", "today_view", "search_source"}) & body.keys():
-        raise bad("Nothing to update: send " + ", ".join(DISPLAY_FLAGS) + ", micros_shown, today_view or search_source")
+    if not (set(DISPLAY_FLAGS) | {"micros_shown", "today_view", "search_source", "auto_match"}) & body.keys():
+        raise bad("Nothing to update: send " + ", ".join(DISPLAY_FLAGS) + ", micros_shown, today_view, search_source or auto_match")
     with db.conn() as c:
         d = read_display(c, user["id"])
         for key in DISPLAY_FLAGS:
@@ -623,9 +627,13 @@ def put_display(user: CurrentUser, body: dict = Body(...)):
             if body["search_source"] not in START_SOURCES:
                 raise bad("search_source must be " + ", ".join(START_SOURCES))
             d["search_source"] = body["search_source"]
-        cols = [*DISPLAY_FLAGS, "micros_hidden", "today_view", "search_source"]
+        if "auto_match" in body:
+            if body["auto_match"] not in AUTO_MATCHES:
+                raise bad("auto_match must be " + " or ".join(AUTO_MATCHES))
+            d["auto_match"] = body["auto_match"]
+        cols = [*DISPLAY_FLAGS, "micros_hidden", "today_view", "search_source", "auto_match"]
         vals = [int(d[k]) for k in DISPLAY_FLAGS] + [",".join(k for k in MICROS if k not in d["micros_shown"]), d["today_view"],
-                                                     d["search_source"]]
+                                                     d["search_source"], d["auto_match"]]
         c.execute("INSERT OR IGNORE INTO settings(user_id) VALUES(?)", (user["id"],))
         c.execute(f"UPDATE settings SET {', '.join(k + '=?' for k in cols)} WHERE user_id=?", [*vals, user["id"]])
         return read_display(c, user["id"])

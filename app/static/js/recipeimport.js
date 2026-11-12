@@ -1,5 +1,5 @@
 // Pure helpers for Import Recipe and Match Ingredients. No DOM access, safe to import from node.
-import { parseAmount, fmtAmount, qtyText, servingText, matchedAmountText, sentence, stepsCheck, MEALS, MEAL_LABELS } from './util.js';
+import { parseAmount, fmtAmount, qtyText, servingText, matchedAmountText, sentence, stepsCheck, MEALS, MEAL_LABELS, autoMatch } from './util.js';
 
 // Unit words found at the start of an ingredient line, mapped to the server's canonical units or a count word.
 const UNIT_WORDS = {
@@ -203,6 +203,30 @@ export function matchDoneText(method, proposals, restCount, costText) {
 
 // The heading of a waiting proposal: Search suggestions say so, so nobody mistakes them for a Claude answer.
 export const proposalHead = (p) => (p && p.method === 'search' ? (p.food ? 'Suggested Match' : 'Search Result') : 'Claude Suggests');
+
+// ---------- Auto-Match After Import ----------
+// Right after Save and Continue the page runs the free Search once on the unmatched rows (never Claude), so proposals are waiting.
+
+export const AUTO_MATCH_LOADING = 'Finding Matches...';
+export const AUTO_MATCH_FAILED = sentence('Suggestions could not be found just now. Match Selected With Search tries again');
+export const RATE_LIMIT_NOTE = sentence('USDA lookup limit reached. Rows below were not searched');
+
+// Auto-Match runs for the Search setting (the default) and not for Off.
+export const autoMatchOn = (display) => autoMatch(display && display.auto_match) === 'search';
+
+// The rows to search: every unmatched row, up to the Search cap (rows beyond it stay ticked for a manual Match Selected).
+export const autoMatchIds = (items) => methodBatch('search', unmatchedIds(items)).send;
+
+// What to do with the answer. Rows that were matched or skipped while it ran are left alone. found: rows that got a food (these
+// are un-ticked); the rest stay ticked. fresh: the proposals to keep waiting.
+export function autoMatchResult(items, proposals) {
+  const open = new Set(unmatchedIds(items));
+  const fresh = (proposals || []).filter((p) => open.has(p.item_id));
+  return { fresh, found: fresh.filter((p) => p.food).map((p) => p.item_id) };
+}
+
+// The quiet note when the shared USDA rate limit skipped rows, else ''.
+export const rateLimitNote = (r) => (r && (r.rate_limited || (r.proposals || []).some((p) => p.skipped)) ? RATE_LIMIT_NOTE : '');
 
 // Proposal lines: "Wheat flour, 1 1/2 cup, 188 g" with the kind as a word, so color is never the only cue. A proposal whose
 // amount could not be worked out says so; Accept then attaches it as Check Amount.

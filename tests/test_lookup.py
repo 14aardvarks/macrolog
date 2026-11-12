@@ -259,3 +259,13 @@ async def test_search_off_builds_foods_and_never_raises(monkeypatch):
     install(monkeypatch, off_error=True)
     assert await lookup.search_off("rice") == []
     assert await lookup.search_off("  ") == []
+
+
+async def test_search_reports_a_usda_rate_limit_only_through_state(monkeypatch):
+    monkeypatch.setattr(lookup, "_transport", httpx.MockTransport(lambda r: httpx.Response(429, json={})))
+    assert await lookup.search("milk") == []  # callers that pass no state see no difference
+    state = {}
+    assert await lookup.search("milk", state=state) == [] and state == {"limited": True}
+    monkeypatch.setattr(lookup, "_transport", httpx.MockTransport(lambda r: httpx.Response(500, json={})))
+    state = {}
+    assert await lookup.search("milk", state=state) == [] and state == {}  # other failures are not a rate limit

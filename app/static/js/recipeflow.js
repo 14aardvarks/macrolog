@@ -13,6 +13,7 @@ import {
   parseIngredientText, parseIngredientLine, reviewDraft, reviewBody, blankRow, matchState, matchCountText, toggleAll, toggleId,
   proposalText, matchWhat, importWhat, matchSnapshot, restoreBody, changedSince, nextUnmatched, pendingProposals,
   acceptAllText, notMatchedText, saveChoice, canSaveWithout, SAVE_WITHOUT_NONE, unmatchedIds, photoPick, PHOTOS_TEXT, MATCH_METHODS, matchMethod, matchRunText, methodBatch, matchDoneText, proposalHead,
+  AUTO_MATCH_LOADING, AUTO_MATCH_FAILED, autoMatchIds, autoMatchResult, rateLimitNote,
 } from './recipeimport.js';
 import { servingSizeEditor } from './servingsize.js';
 
@@ -202,6 +203,8 @@ export async function renderMatch(root, params, ctx) {
   let selected = opened ? unmatchedIds(meal.items) : ctx.flow.selection(meal.id).filter((id) => meal.items.some((i) => i.id === id && !i.skipped));
   let current = meal.items.findIndex((i) => i.id === ctx.flow.takeFocus());
   const status = h('div', { 'aria-live': 'polite' });
+  const limitNote = h('div', { 'aria-live': 'polite' });  // the quiet USDA rate limit note, kept above the rows until the next search
+  let busy = false;  // Auto-Match After Import is running
   const count = h('p', { class: 'match-count', 'aria-live': 'polite' });
   const list = h('ul', { class: 'list match-list' });
   const totals = h('div');
@@ -269,12 +272,37 @@ export async function renderMatch(root, params, ctx) {
       show(status, message(rows.length + (rows.length === 1 ? ' suggestion accepted.' : ' suggestions accepted.')));
     } catch (e) { fail(e); } finally { acceptBtn.disabled = false; }
   }
+  const showLimit = (r) => { const t = rateLimitNote(r); show(limitNote, t ? h('p', { class: 'sub match-limit', role: 'status' }, t) : null); };
+  // Auto-Match After Import: the free Search on the unmatched rows, once, right after the import. It never blocks: the page is
+  // already usable, and a failure only leaves the rows unmatched (and ticked) with a quiet note.
+  async function autoRun() {
+    const ids = autoMatchIds(meal.items);
+    if (!ids.length) return;
+    busy = true;
+    status.setAttribute('aria-busy', 'true');
+    paintHead();
+    show(status, message(AUTO_MATCH_LOADING));
+    try {
+      const r = await api.matchSearch(meal.id, ids, ctx.flow.searchSource());
+      const { fresh, found } = autoMatchResult(meal.items, r.proposals);
+      fresh.forEach((p) => { props[p.item_id] = p; });
+      selected = selected.filter((id) => found.indexOf(id) < 0);  // rows without a suggestion stay ticked for a manual Match
+      keepSel();
+      busy = false;  // before the repaint, so Match Selected is enabled again
+      paintRows();
+      showLimit(r);
+      show(status, message(matchDoneText('search', fresh, 0, '')));
+    } catch (e) {
+      show(status, message(AUTO_MATCH_FAILED));
+    } finally { busy = false; status.removeAttribute('aria-busy'); paintHead(); }
+  }
   // how: the method for this run. The button uses the switch, Ask Claude on a row always uses Claude.
   async function runMatch(ids, how) {
     const m = how || method;
     const b = methodBatch(m, ids);
     if (!b.send.length) { show(status, message('Tick at least one ingredient first.', 'error')); return; }
     matchBtn.disabled = true;
+    show(limitNote, null);
     try {
       let r;
       if (m === 'claude') {
@@ -286,6 +314,7 @@ export async function renderMatch(root, params, ctx) {
         r = await api.matchSearch(meal.id, b.send, ctx.flow.searchSource());
       }
       r.proposals.forEach((p) => { props[p.item_id] = p; });
+      if (m === 'search') showLimit(r);
       selected = selected.filter((id) => b.send.indexOf(id) < 0);
       keepSel();
       paintRows();
@@ -474,7 +503,7 @@ export async function renderMatch(root, params, ctx) {
     count.textContent = matchCountText(meal);
     const open = meal.items.filter((i) => matchState(i) === 'unmatched').map((i) => i.id);
     allBox.checked = open.length > 0 && open.every((id) => selected.indexOf(id) >= 0);
-    matchBtn.disabled = !selected.length;
+    matchBtn.disabled = busy || !selected.length;
     matchHint.hidden = selected.length > 0;
     jumpBtn.hidden = nextUnmatched(meal.items, current) < 0;
     const pending = pendingProposals(meal.items, props).length;
@@ -515,13 +544,14 @@ export async function renderMatch(root, params, ctx) {
     h('div', { class: 'row wrap match-bulk' }, h('label', { class: 'check', for: 'match-all' }, allBox, ' Select All')),
     h('div', { class: 'row wrap match-run' }, methodSwitch, matchBtn, matchHint),
     aiOn ? null : noAi,
-    status, list,
+    status, limitNote, list,
     addBtn, addBox,
     h('h2', null, 'Serving Size'), size.el,
     totals, choiceBox,
     h('div', { class: 'row wrap match-foot' }, backBtn, saveBtn)));
   paintRows();
   paintTotals();
+  if (params.saved && ctx.flow.takeAuto(meal.id)) autoRun();
   if (current >= 0) {
     const id = meal.items[current].id;
     root.addEventListener('mounted', () => { const el = document.getElementById('ing-' + id); if (el) { el.scrollIntoView({ block: 'center' }); el.focus({ preventScroll: true }); } });

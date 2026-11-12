@@ -136,7 +136,8 @@ def test_migration_adds_micro_columns_and_display_settings(tmp_path):
     assert row["fiber"] == 2 and all(row[k] is None for k in core.NEW_MICROS)
     assert set(core.NEW_MICROS) <= {r[1] for r in c.execute("PRAGMA table_info(foods)")}
     assert core.read_display(c, 1) == {**{k: bool(v) for k, v in core.DISPLAY_FLAGS.items()}, "micros_shown": list(core.MICROS),
-                                            "today_view": "list", "search_source": "all"}
+                                            "today_view": "list", "search_source": "all",
+                                            "auto_match": "search"}
     assert c.execute("SELECT start_screen FROM settings").fetchone()[0] == "scan"
 
 
@@ -146,7 +147,7 @@ def test_display_defaults_keep_screens_as_before(a):
     d = a.get("/api/settings/display").json()
     assert d == {"show_macros": True, "show_micros": True, "show_split": True, "show_macro_bar": True, "show_table": True,
                  "micros_open": False, "micros_shown": list(core.MICROS), "today_view": "list",
-                 "search_source": "all"}
+                 "search_source": "all", "auto_match": "search"}
 
 
 def test_display_put_partial_per_user_and_other_settings_kept(a, b):
@@ -236,3 +237,35 @@ def test_search_source_default_save_and_isolation(a, b):
 def test_search_source_validation(a, value):
     assert a.put("/api/settings/display", json={"search_source": value}).status_code == 400
     assert a.get("/api/settings/display").json()["search_source"] == "all"
+
+
+# ---------- auto-match after import ----------
+
+def test_auto_match_default_save_and_isolation(a, b):
+    assert a.get("/api/settings/display").json()["auto_match"] == "search"
+    for v in ("off", "search", "off"):
+        assert a.put("/api/settings/display", json={"auto_match": v}).json()["auto_match"] == v
+    a.put("/api/settings/display", json={"show_split": False, "search_source": "fdc"})  # other display saves keep it
+    assert a.get("/api/settings/display").json()["auto_match"] == "off"
+    assert b.get("/api/settings/display").json()["auto_match"] == "search"
+
+
+@pytest.mark.parametrize("value", ["claude", "", None, True, 1, ["off"], {"a": 1}, "OFF", "Search"])
+def test_auto_match_validation(a, value):
+    assert a.put("/api/settings/display", json={"auto_match": value}).status_code == 400
+    assert a.get("/api/settings/display").json()["auto_match"] == "search"
+
+
+def test_auto_match_migrates_old_settings_table(tmp_path, monkeypatch):
+    import sqlite3
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "old.db"))
+    c = sqlite3.connect(tmp_path / "old.db")
+    c.executescript("CREATE TABLE settings(user_id INTEGER PRIMARY KEY, start_screen TEXT NOT NULL DEFAULT 'today', default_meal TEXT,"
+                    " use_last INTEGER NOT NULL DEFAULT 1); INSERT INTO settings(user_id) VALUES(1);")
+    c.row_factory = sqlite3.Row
+    core.init(c)
+    core.init(c)  # safe to run twice
+    assert c.execute("SELECT auto_match FROM settings").fetchone()[0] == "search"
+    assert core.read_display(c, 1)["auto_match"] == "search"
+    c.execute("UPDATE settings SET auto_match='bogus'")  # a bad stored value reads as the default
+    assert core.read_display(c, 1)["auto_match"] == "search"

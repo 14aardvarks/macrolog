@@ -30,7 +30,7 @@ def env(tmp_path, monkeypatch):
         calls["barcode"].append(raw)
         return calls.get("barcode_result") or {"food": None, "note": "Not found", "valid": True}
 
-    async def fake_search(query, limit=8):
+    async def fake_search(query, limit=8, state=None):
         calls["search"].append(query)
         return calls.get("search_result", [])
 

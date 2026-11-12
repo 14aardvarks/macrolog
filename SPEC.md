@@ -232,11 +232,13 @@ PATCH /api/meals/{id} also takes "servings" (null = 1), "yield" ({"amount","unit
 GET/PUT /api/goals   {"kcal","carb_pct","protein_pct","fat_pct"}  pcts total 100. Default 3000 and 50/30/20 (carbs/protein/fat).
         targets: carbs g = kcal*pct/4, protein same, fat g = kcal*pct/9. Goals are per user.
 GET/PUT /api/settings {"start_screen": "today"|"scan"|"search"|"ai", "default_meal": ...}   # per user, validated
-GET/PUT /api/settings/display {"show_macros","show_micros","show_split","show_macro_bar","show_table","micros_open": bool, "micros_shown": [nutrient...], "today_view": "list"|"table", "search_source": "all"|"off"|"fdc"|"ai"}
+GET/PUT /api/settings/display {"show_macros","show_micros","show_split","show_macro_bar","show_table","micros_open": bool, "micros_shown": [nutrient...], "today_view": "list"|"table", "search_source": "all"|"off"|"fdc"|"ai", "auto_match": "search"|"off"}
         # per user, stored in the settings table (micros_hidden comma list). PUT takes any subset, booleans only (today_view is the string list or table), 400 otherwise.
         # today_view is the Today tab's view, column settings.today_view TEXT NOT NULL DEFAULT 'list', added in place by core.init.
         # Defaults: everything shown, micros_open false (the new section starts collapsed), so existing users see no change.
         # search_source is the Default Search Source (column settings.search_source TEXT NOT NULL DEFAULT 'all', added in place).
+        # auto_match is Auto-Match After Import (column settings.auto_match TEXT NOT NULL DEFAULT 'search', added in place; core.AUTO_MATCHES;
+        # anything else is 400, a bad stored value reads as search). See "Auto-Match After Import" below.
 GET/PUT /api/goals/micros  GET -> {"micros": [{"key","label","unit","kind": "goal"|"limit","default","target"}]}
         PUT {"targets": {nutrient: number > 0 and <= 100000}} (any subset). Table micro_targets(user_id, nutrient, target).
         Defaults and kinds (fixed): fiber 28 g, potassium 4700 mg, calcium 1300 mg, iron 18 mg, vitamin D 20 mcg are goals;
@@ -499,7 +501,7 @@ Every module ships with tests that run offline in under 10 seconds. No secrets i
   Search is used when Claude is off or not set up). The button reads Match Selected With Search or With Claude. Checkboxes and Select All show on every
   row that is not skipped, with or without Claude. Claude keeps its confirm dialog, cost and 15 rows per request; Search has no confirm, uses no
   credit and takes up to 40 rows (the rest stay ticked, and the note says so). Ask Claude on a row always uses Claude.
-- `POST /api/recipes/{meal_id}/match-search` {"item_ids": 1..40, "source"?: all|off|fdc} -> {"proposals", "method": "search"} (recipe_ai.py). No key,
+- `POST /api/recipes/{meal_id}/match-search` {"item_ids": 1..40, "source"?: all|off|fdc} -> {"proposals", "method": "search", "rate_limited": bool} (recipe_ai.py). No key,
   feature switch or cap is checked and Claude is never called. Candidates per row: my own foods (favorites, past foods that are not hidden, foods I
   made), then foods saved on the server, USDA and Open Food Facts (top 5 each; source off or fdc restricts all of them, own foods included). Scoring
   (`name_score`, `pick_best`) is word overlap with light singulars; the part of a name before its first comma counts as its own name ("Butter, salted"
@@ -518,3 +520,24 @@ Every module ships with tests that run offline in under 10 seconds. No secrets i
   searched again. The match snapshot keeps each row's line; Back (restoreBody: remove, add with position, items, meal) deletes rows added since, puts
   removed rows back in place and restores the rest. The old checklist (js/app.js mealScreen) is only for logging from Add, Recipes.
 - Add screen order, top to bottom: Enter Manually and Scan Barcode (equal width), Search, Source, Meal (not in ingredient mode), the tabs and lists.
+
+
+## Auto-Match After Import
+
+- Settings, Display has Auto-Match After Import (select, Search | Off, saved at once like the other Display choices, per user, default Search) with a hint
+  that Search is the default, is the free Search and never uses Claude. Server: `settings.auto_match`, `core.AUTO_MATCHES`, returned and validated by
+  GET/PUT /api/settings/display. Client: util.js `AUTO_MATCHES`, `autoMatch`, `DEFAULT_DISPLAY.auto_match`.
+- Save and Continue (ctx.flow.saved in app.js) sets a one-shot in memory (`state.autoMatch` = the new meal id) when the setting is Search. Match Ingredients
+  takes it once (`ctx.flow.takeAuto`, params.saved only), so reopening a recipe, a return from the food finder, Back and a reload never search again.
+  Nothing is stored for it.
+- The page renders at once with every unmatched row ticked, then `autoRun` (recipeflow.js) calls POST /api/recipes/{id}/match-search on the unmatched rows
+  (recipeimport.js `autoMatchIds`: the same 40 row cap, the Default Search Source or the Source chosen on Add). Status "Finding Matches..." while it runs,
+  with Match Selected disabled and the rest of the page usable. Claude is never asked, no credit is used. Proposals are kept like a manual Search (Suggested
+  Match with source badge, amount and unit from units.match_amount, Estimated Conversion or Check Amount where relevant) and "Accept N Suggested Matches"
+  appears. `autoMatchResult` drops answers for rows that were matched or skipped while it ran; only rows that got a food are un-ticked, rows without one stay
+  ticked for a manual Match Selected. On a failure the rows stay unmatched and ticked and a quiet note says suggestions could not be found (never an error,
+  never blocks).
+- USDA rate limit: `lookup.search(query, limit, state=None)` sets state["limited"] on a 429. match-search shares one state per request: after a 429 rows
+  still waiting skip USDA (checked inside the concurrency gate, so up to SEARCH_CONCURRENCY lookups already in flight may also be refused), they still use
+  my foods and Open Food Facts, carry "skipped": true (and "Not searched." when nothing was found) and the response has "rate_limited": true. The page shows the
+  quiet note "USDA lookup limit reached. Rows below were not searched." above the rows (`rateLimitNote`), for manual Search runs too, cleared by the next search.

@@ -1,5 +1,5 @@
 import { h, field, select } from './dom.js';
-import { SEARCH_SOURCES, searchSource, MICROS, shownMicros, microValue, microText, microNote, microOver, barWidth, toggleMicro, parseDecimal, fmtAmount } from './util.js';
+import { SEARCH_SOURCES, searchSource, AUTO_MATCHES, autoMatch, MICROS, shownMicros, microValue, microText, microNote, microOver, barWidth, toggleMicro, parseDecimal, fmtAmount } from './util.js';
 
 let seq = 0;
 
@@ -81,12 +81,20 @@ export function displaySection(display, sources, save) {
     const want = srcSel.value;
     try { source = (await save({ search_source: want })).search_source; } catch (e) { srcSel.value = source; }
   });
+  let auto = autoMatch(display.auto_match);
+  const autoSel = select(AUTO_MATCHES, auto, { id: 'disp-auto', 'aria-describedby': 'disp-auto-help' });
+  autoSel.addEventListener('change', async () => {
+    const want = autoSel.value;
+    try { auto = (await save({ auto_match: want })).auto_match; } catch (e) { autoSel.value = auto; }
+  });
   return h('div', { class: 'display-sec' }, h('h2', null, 'Display'),
     h('p', { class: 'sub' }, 'Choose what Today, the lists and the picker show. Changes apply at once.'),
     flags.map(([k, label]) => switchRow('disp-' + k, label, display[k] !== false, (on) => save({ [k]: on }))),
     h('p', { class: 'field-cap' }, 'Micro nutrients to show'), chips,
     h('label', { class: 'field', for: 'disp-source' }, h('span', null, 'Default Search Source'), srcSel),
-    h('p', { class: 'sub', id: 'disp-source-help' }, 'Where the search on Add looks first. All Sources by default. Changing Source on Add lasts until the app is reloaded.'));
+    h('p', { class: 'sub', id: 'disp-source-help' }, 'Where the search on Add looks first. All Sources by default. Changing Source on Add lasts until the app is reloaded.'),
+    h('label', { class: 'field', for: 'disp-auto' }, h('span', null, 'Auto-Match After Import'), autoSel),
+    h('p', { class: 'sub', id: 'disp-auto-help' }, 'Search by default. After an import, the free Search fills in suggested matches for you to review. It never uses Claude. Off leaves every ingredient for you to match.'));
 }
 
 // Settings, Goals: one field per nutrient. read() returns { targets } or { error }.

@@ -275,15 +275,26 @@ def local_candidates(query: str, per: int = CANDIDATES_PER_SOURCE, source: str =
 
 
 async def find_candidates(query: str, gate: asyncio.Semaphore, per: int = CANDIDATES_PER_SOURCE, source: str = "all",
-                          limit: int = MAX_CANDIDATES) -> list[dict]:
+                          limit: int = MAX_CANDIDATES, usda: Optional[dict] = None) -> list[dict]:
     """Up to `limit` foods for one ingredient: local first, then USDA and Open Food Facts (source off or fdc keeps only that
-    one). Remote ones are normalized but not saved (only an accepted one is). Search trouble just means fewer candidates."""
+    one). Remote ones are normalized but not saved (only an accepted one is). Search trouble just means fewer candidates.
+    usda is the shared rate limit state of one run: after a USDA 429 ("limited") later lookups skip USDA, and a row that
+    skipped it is listed in "skipped" (both keys must be present)."""
     found = local_candidates(query, per, source)
     if query.split():
+        mine: dict = {}
         async with gate:
-            results = await asyncio.gather(lookup.search(query, limit=per) if source in ("all", "fdc") else _none(),
+            use_fdc = source in ("all", "fdc")
+            if usda is not None and use_fdc and usda["limited"]:  # checked inside the gate, so rows that waited see an earlier 429
+                use_fdc = False
+                usda["skipped"].add(query)
+            results = await asyncio.gather((lookup.search(query, limit=per) if usda is None else lookup.search(query, limit=per, state=mine))
+                                           if use_fdc else _none(),
                                            lookup.search_off(query, limit=per) if source in ("all", "off") else _none(),
                                            return_exceptions=True)
+        if mine.get("limited"):  # this lookup was refused: later rows skip USDA, this one was not searched there
+            usda["limited"] = True
+            usda["skipped"].add(query)
         for group in results:
             for raw in group if isinstance(group, list) else []:
                 try:
@@ -483,11 +494,15 @@ def own_foods(user_id: int, source: str = "all") -> list[dict]:
         return [core.food_dict(r) for r in c.execute(sql + " ORDER BY f.name", params)]
 
 
-def search_proposal(it, food: Optional[dict], own: bool = False, cls: int = 0) -> dict:
+def search_proposal(it, food: Optional[dict], own: bool = False, cls: int = 0, skipped: bool = False) -> dict:
     """A pending proposal for one row, shaped like Claude's (kind candidate or none), with method search. No estimates."""
     out = {"item_id": it["id"], "kind": "none", "food": None, "amount": None, "unit": None, "check": False, "grams": None,
            "note": "No match found.", "warnings": [], "preview": None, "method": "search"}
+    if skipped:
+        out["skipped"] = True  # USDA was not asked for this row because of the rate limit
     if food is None:
+        if skipped:
+            out["note"] = "Not searched."
         return out
     if food.get("id") is None:  # a remote candidate is saved only now that it was chosen
         with db.conn() as c:
@@ -504,8 +519,10 @@ def search_proposal(it, food: Optional[dict], own: bool = False, cls: int = 0) -
 
 @router.post("/{meal_id}/match-search")
 async def match_search(meal_id: int, user: CurrentUser, body: Any = Body(None)):
-    """{"item_ids": [...] (1..40 ingredients of my recipe), "source"?: all|off|fdc} -> {"proposals": [...], "method": "search"}.
-    Never calls Claude and works without a key. Nothing is applied until the client accepts a proposal."""
+    """{"item_ids": [...] (1..40 ingredients of my recipe), "source"?: all|off|fdc} -> {"proposals": [...], "method": "search",
+    "rate_limited": bool}. Never calls Claude and works without a key. Nothing is applied until the client accepts a proposal.
+    USDA answers 429 for everyone sharing the key: the run then stops asking USDA, rows it could not ask carry "skipped": true
+    and rate_limited is true when any row was skipped (rows still get the best match from your foods and Open Food Facts)."""
     if (not isinstance(body, dict) or not set(body) <= {"item_ids", "source"} or "item_ids" not in body
             or not isinstance(body["item_ids"], list)):
         raise HTTPException(400, "Send {\"item_ids\": [...]} (source optional)")
@@ -527,11 +544,12 @@ async def match_search(meal_id: int, user: CurrentUser, body: Any = Body(None)):
     items = [found[i] for i in ids]
     mine = [(f, True) for f in own_foods(user["id"], source)]
     gate = asyncio.Semaphore(SEARCH_CONCURRENCY)
+    usda: dict = {"limited": False, "skipped": set()}
 
     async def best(query):
         pick = pick_best(query, mine)
         if pick is None or pick[2] < 2:  # an exact name among my own foods needs no network
-            more = await find_candidates(query, gate, SEARCH_PER_SOURCE, source, limit=4 * SEARCH_PER_SOURCE)
+            more = await find_candidates(query, gate, SEARCH_PER_SOURCE, source, limit=4 * SEARCH_PER_SOURCE, usda=usda)
             pick = pick_best(query, [*mine, *((f, False) for f in more)])
         return pick
 
@@ -540,5 +558,6 @@ async def match_search(meal_id: int, user: CurrentUser, body: Any = Body(None)):
         if item_query(it) not in tasks:
             tasks[item_query(it)] = asyncio.ensure_future(best(item_query(it)))
     picks = [await tasks[item_query(it)] for it in items]
-    return {"proposals": [search_proposal(it, *p) if p else search_proposal(it, None) for it, p in zip(items, picks)],
-            "method": "search"}
+    skipped = usda["skipped"]
+    return {"proposals": [search_proposal(it, *(p or (None,)), skipped=item_query(it) in skipped) for it, p in zip(items, picks)],
+            "method": "search", "rate_limited": bool(skipped)}

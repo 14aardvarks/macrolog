@@ -130,3 +130,53 @@ test('portionAmount converts a share into a unit, rounded for the box', () => {
   assert.equal(portionAmount(logMeal(), 0.25, 'serving'), 1);
   assert.equal(portionAmount(logMeal(), 0.25, 'cup'), null);
 });
+
+// ---------- Auto-Match After Import ----------
+import {
+  autoMatchOn, autoMatchIds, autoMatchResult, rateLimitNote, RATE_LIMIT_NOTE, AUTO_MATCH_LOADING, AUTO_MATCH_FAILED,
+} from '../../app/static/js/recipeimport.js';
+import { AUTO_MATCHES, autoMatch, DEFAULT_DISPLAY, sentence } from '../../app/static/js/util.js';
+
+const amRow = (id, over) => ({ id, food: null, food_id: null, skipped: false, check: false, src: { text: 'r' + id }, ...over });
+
+test('Auto-Match After Import: Search by default, Off turns it off, anything odd means Search', () => {
+  assert.deepEqual(AUTO_MATCHES.map((o) => o.value), ['search', 'off']);
+  assert.equal(DEFAULT_DISPLAY.auto_match, 'search');
+  assert.equal(autoMatch('off'), 'off');
+  for (const v of ['search', undefined, null, '', 'claude', 'OFF']) assert.equal(autoMatch(v), 'search');
+  assert.equal(autoMatchOn({ auto_match: 'search' }), true);
+  assert.equal(autoMatchOn({ auto_match: 'off' }), false);
+  assert.equal(autoMatchOn({}), true);
+  assert.equal(autoMatchOn(undefined), true);
+});
+
+test('auto-match searches unmatched rows only, up to the Search cap of 40', () => {
+  const items = [amRow(1), amRow(2, { food: { id: 9 }, food_id: 9 }), amRow(3, { skipped: true }), amRow(4, { food: { id: 9 }, check: true }), amRow(5)];
+  assert.deepEqual(autoMatchIds(items), [1, 5]);
+  const many = Array.from({ length: 45 }, (_, i) => amRow(i + 1));
+  assert.equal(autoMatchIds(many).length, 40);
+  assert.deepEqual(autoMatchIds([]), []);
+});
+
+test('auto-match answers for rows matched or skipped meanwhile are dropped, and only rows with a food are un-ticked', () => {
+  const items = [amRow(1), amRow(2), amRow(3, { food: { id: 9 }, food_id: 9 }), amRow(4, { skipped: true }), amRow(5)];
+  const proposals = [{ item_id: 1, food: { id: 7 } }, { item_id: 2, food: null }, { item_id: 3, food: { id: 7 } }, { item_id: 4, food: { id: 7 } }, { item_id: 5, food: { id: 8 } }];
+  const r = autoMatchResult(items, proposals);
+  assert.deepEqual(r.fresh.map((p) => p.item_id), [1, 2, 5]);
+  assert.deepEqual(r.found, [1, 5]);
+  assert.deepEqual(autoMatchResult(items, undefined), { fresh: [], found: [] });
+});
+
+test('the USDA rate limit note is one quiet sentence, only when rows were skipped', () => {
+  assert.equal(RATE_LIMIT_NOTE, 'USDA lookup limit reached. Rows below were not searched.');
+  assert.equal(sentence(RATE_LIMIT_NOTE), RATE_LIMIT_NOTE);
+  assert.equal(rateLimitNote({ rate_limited: true, proposals: [] }), RATE_LIMIT_NOTE);
+  assert.equal(rateLimitNote({ proposals: [{ skipped: true }] }), RATE_LIMIT_NOTE);
+  assert.equal(rateLimitNote({ rate_limited: false, proposals: [{ item_id: 1 }] }), '');
+  assert.equal(rateLimitNote(null), '');
+});
+
+test('loading and failure texts follow the house style', () => {
+  assert.equal(AUTO_MATCH_LOADING, 'Finding Matches...');
+  assert.ok(!AUTO_MATCH_FAILED.includes('—') && /\.$/.test(AUTO_MATCH_FAILED));
+});

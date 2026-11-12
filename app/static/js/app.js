@@ -21,7 +21,7 @@ import { renderSaved } from './saved.js';
 import { renderRecipe } from './recipe.js';
 import { renderRecipes, renderRecipeView } from './recipes.js';
 import { renderImport, renderReview, renderMatch } from './recipeflow.js';
-import { recipeSubText, notCounted, notCountedText, portionUnits, portionFraction, portionItems, portionNote, portionAmount } from './recipeimport.js';
+import { recipeSubText, notCounted, notCountedText, portionUnits, portionFraction, portionItems, portionNote, portionAmount, autoMatchOn } from './recipeimport.js';
 import { renderClaudeSection, renderSignIn } from './claudekey.js';
 import { refreshLoggedControl } from './refresh.js';
 import { startUpdates } from './update.js';
@@ -29,7 +29,7 @@ import { startUpdates } from './update.js';
 const main = document.getElementById('main');
 const nav = document.getElementById('nav');
 const state = { user: null, settings: { start_screen: 'today', default_meal: null, use_last: true, confirm_ai: true, amount_format: 'fraction' }, display: DEFAULT_DISPLAY, cleanup: null, depth: 0, tab: 'favorites', addMeal: null, draft: null, recipe: null, source: null, aiSt: null, claude: null,
-  importInput: null, importDraft: null, importBase: 0, proposals: {}, selections: {}, matchFocus: null, matchBase: {}, matchMethod: 'search' };  // Import Recipe and Match Ingredients  // addMeal, source (null = the Default Search Source setting), aiSt (last /api/ai/status) and claude (last Claude estimate) live for the session only
+  importInput: null, importDraft: null, importBase: 0, proposals: {}, selections: {}, matchFocus: null, matchBase: {}, matchMethod: 'search', autoMatch: null };  // Import Recipe and Match Ingredients  // addMeal, source (null = the Default Search Source setting), aiSt (last /api/ai/status) and claude (last Claude estimate) live for the session only
 const NAV_OF = { today: 'today', settings: 'settings', admin: 'settings', saved: 'settings', editfood: 'settings',
   recipes: 'recipes', recipeview: 'recipes', recipe: 'recipes', import: 'recipes', importreview: 'recipes', match: 'recipes' };  // every other screen belongs to Add
 const FINDER = ['add', 'picker', 'scan', 'lookup', 'manual', 'ai'];  // screens New Recipe and Match Ingredients borrow from Add
@@ -82,6 +82,7 @@ const ctx = {
     saved(meal) {
       state.importDraft = null;
       state.importInput = null;
+      state.autoMatch = autoMatchOn(state.display) ? meal.id : null;  // Auto-Match After Import runs once, on this opening only
       backThen(state.depth - state.importBase, () => go('match', { mealId: meal.id, saved: true }));
     },
     cancel() { state.importDraft = null; state.importInput = null; backThen(state.depth - state.importBase, () => {}); },
@@ -94,6 +95,9 @@ const ctx = {
     get method() { return state.matchMethod; },
     set method(m) { state.matchMethod = m === 'claude' ? 'claude' : 'search'; },
     searchSource() { const s = state.source == null ? state.display.search_source : state.source; return s === 'off' || s === 'fdc' ? s : 'all'; },
+    // True once for the recipe that was just imported when Auto-Match After Import is on. Held in memory only, so reopening the recipe
+    // later, a return from the food finder or a reload never searches again.
+    takeAuto(id) { const on = state.autoMatch === id; state.autoMatch = null; return on; },
     takeFocus() { const f = state.matchFocus; state.matchFocus = null; return f; },
     // One visit of Match Ingredients, kept in its history entry, so a return from the food finder is the same visit.
     visit(params) {

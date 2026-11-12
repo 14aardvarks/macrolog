@@ -44,7 +44,7 @@ def env(tmp_path, monkeypatch):
         r = st["reply"]
         return r if isinstance(r, httpx.Response) else httpx.Response(200, json=r)
 
-    async def fake_search(q, limit=8):
+    async def fake_search(q, limit=8, state=None):
         st["searches"].append(("fdc", q, limit))
         return st["fdc"].get(q, [])
 
