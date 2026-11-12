@@ -5,7 +5,7 @@ import { h, clear, field, message, show, select } from './dom.js';
 import { MEALS, MEAL_LABELS, fmtNum, pageOf, PAGE_SIZE, matchedAmountText, stepsCheck, qtyText } from './util.js';
 import { recipeListSub, servingsText, perServingText, tagsText, portionUnits, portionFraction, portionAmount, yieldText } from './recipeimport.js';
 import { servingSizeEditor } from './servingsize.js';
-import { recipeRow, deleteRecipe } from './saved.js';
+import { chips, renameRecipe, deleteRecipe } from './saved.js';
 import { stepsList, stepsEditor } from './steps.js';
 
 // The recipe's ingredients as a read only list: "Wheat flour" over "1 1/2 cup, 188 g". Skipped lines keep their own text.
@@ -74,8 +74,9 @@ export async function renderRecipes(root, ctx) {
     listBox));
 }
 
-// params: { mealId }. Log (meal and how much: servings, % of the recipe or a yield unit, worked out by the server), or Adjust
-// Items for the checklist; then Serving Size and the Saved tools.
+// params: { mealId }. Log (meal and how much: servings, % of the recipe or a yield unit, worked out by the server); the
+// ingredients with Edit Ingredients (the Match Ingredients page); meal tags, Rename, Steps, Serving Size and Delete Recipe.
+// The checklist with Adjust is only for logging a recipe from Add.
 export async function renderRecipeView(root, params, ctx) {
   const meal = await api.meal(params.mealId);
   if (!meal.complete) { await ctx.go('match', { mealId: meal.id }, true); return; }
@@ -118,16 +119,13 @@ export async function renderRecipeView(root, params, ctx) {
       show(status, message(e.message, 'error'));
     }
   } }, 'Log');
-  const adjust = h('button', { class: 'btn', type: 'button', onclick: () => {
-    const r = portionFraction(meal, amount.input.value, unitSel.value);
-    if (r.error) { show(status, message(r.error, 'error')); return; }
-    ctx.go('meal', { mealId: meal.id, meal: mealSel.value, amount: r.amount, unit: unitSel.value, nav: 'recipes' });
-  } }, 'Adjust Items');
   const deleteStatus = h('div', { 'aria-live': 'polite' });
   async function removeRecipe() {  // back to the Recipes tab list, which sits just below this screen
     try { if (await deleteRecipe(meal)) await ctx.back(); } catch (e) { show(deleteStatus, message(e.message, 'error')); }
   }
-  const again = () => ctx.go('recipeview', { mealId: meal.id }, true);  // rename, tags and items repaint from fresh data
+  const again = () => ctx.go('recipeview', { mealId: meal.id }, true);  // rename and tags repaint from fresh data
+  const tagStatus = h('div', { 'aria-live': 'polite' });
+  const renameBox = h('div');
   root.appendChild(h('section', { class: 'screen recipe-view' },
     h('div', { class: 'bar' }, h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back')),
     h('h1', null, meal.name),
@@ -136,16 +134,20 @@ export async function renderRecipeView(root, params, ctx) {
     h('label', { class: 'field' }, h('span', null, 'Meal'), mealSel),
     h('div', { class: 'grid2 recipe-log' }, amount, h('label', { class: 'field' }, h('span', null, 'Of the recipe'), unitSel)),
     status,
-    h('div', { class: 'row wrap' }, logBtn, adjust),
-    h('p', { class: 'sub' }, 'Adjust Items lets you untick ingredients or change amounts for this log only.'),
+    h('div', { class: 'row wrap' }, logBtn),
     h('h2', null, 'Ingredients'),
     ingredientList(meal),
+    h('button', { class: 'btn', type: 'button', onclick: () => ctx.go('match', { mealId: meal.id, edit: true }) }, 'Edit Ingredients'),
+    h('h2', null, 'Meal Tags'),
+    chips(meal.meals, async (m) => { await api.patchMeal(meal.id, { meals: m }); meal.meals = m; sub.textContent = subText(); }, tagStatus),
+    tagStatus,
+    h('h2', null, 'Recipe Name'),
+    h('div', { class: 'row wrap' }, h('button', { class: 'btn', type: 'button', onclick: () => renameRecipe(meal, renameBox, again, (e) => show(renameBox, message(e.message, 'error'))) }, 'Rename')),
+    renameBox,
     h('h2', null, 'Steps'),
     stepsSection(meal),
     h('h2', null, 'Serving Size'),
     servingSizeEditor(meal, { onSaved: sizeSaved }).el,
-    h('h2', null, 'Edit'),
-    h('ul', { class: 'list' }, recipeRow(meal, again, ctx, { noDelete: true })),
     deleteStatus,
     h('button', { class: 'btn danger', type: 'button', onclick: removeRecipe }, 'Delete Recipe')));
 }

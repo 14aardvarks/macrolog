@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import re
 from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile
@@ -34,6 +35,9 @@ MAX_CANDIDATES = 6
 SEARCH_CONCURRENCY = 4
 IMPORT_MAX_TOKENS = 6000
 MATCH_TOKENS_PER_ROW = 320
+SEARCH_MAX_ROWS = 40  # Match With Search takes this many rows per request (no Claude, no cost)
+SEARCH_PER_SOURCE = 5
+SEARCH_SOURCES = ("all", "off", "fdc")
 
 _NSTR = {"type": ["string", "null"]}
 _NNUM = {"type": ["number", "null"]}
@@ -258,24 +262,28 @@ def item_query(it) -> str:
     return (it["src_name"] or it["src_text"] or "").strip()[:100]
 
 
-def local_candidates(query: str) -> list[dict]:
+def local_candidates(query: str, per: int = CANDIDATES_PER_SOURCE, source: str = "all") -> list[dict]:
     if not query.split():
         return []
     where, params = core.like_filter(query)
+    if source != "all":
+        where, params = f"{where} AND f.source=?", [*params, source]
     with db.conn() as c:
         rows = c.execute(f"SELECT f.* FROM foods f WHERE {where} ORDER BY length(f.name), f.name LIMIT ?",
-                         [*params, CANDIDATES_PER_SOURCE]).fetchall()
+                         [*params, per]).fetchall()
     return [core.food_dict(r) for r in rows]
 
 
-async def find_candidates(query: str, gate: asyncio.Semaphore) -> list[dict]:
-    """Up to MAX_CANDIDATES foods for one ingredient: local first, then USDA and Open Food Facts. Remote ones are
-    normalized but not saved (only an accepted one is). Search trouble just means fewer candidates."""
-    found = local_candidates(query)
+async def find_candidates(query: str, gate: asyncio.Semaphore, per: int = CANDIDATES_PER_SOURCE, source: str = "all",
+                          limit: int = MAX_CANDIDATES) -> list[dict]:
+    """Up to `limit` foods for one ingredient: local first, then USDA and Open Food Facts (source off or fdc keeps only that
+    one). Remote ones are normalized but not saved (only an accepted one is). Search trouble just means fewer candidates."""
+    found = local_candidates(query, per, source)
     if query.split():
         async with gate:
-            results = await asyncio.gather(lookup.search(query, limit=CANDIDATES_PER_SOURCE),
-                                           lookup.search_off(query, limit=CANDIDATES_PER_SOURCE), return_exceptions=True)
+            results = await asyncio.gather(lookup.search(query, limit=per) if source in ("all", "fdc") else _none(),
+                                           lookup.search_off(query, limit=per) if source in ("all", "off") else _none(),
+                                           return_exceptions=True)
         for group in results:
             for raw in group if isinstance(group, list) else []:
                 try:
@@ -288,7 +296,11 @@ async def find_candidates(query: str, gate: asyncio.Semaphore) -> list[dict]:
         if key not in seen:
             seen.add(key)
             out.append(f)
-    return out[:MAX_CANDIDATES]
+    return out[:limit]
+
+
+async def _none() -> list:
+    return []
 
 
 def candidate_line(n: int, f: dict) -> str:
@@ -398,3 +410,135 @@ async def match(meal_id: int, user: CurrentUser, body: Any = Body(None)):
         if isinstance(m, dict) and isinstance(m.get("row"), int) and m["row"] not in by_row:
             by_row[m["row"]] = m
     return {"proposals": [proposal(it, cs, by_row.get(n)) for n, it, cs in rows], **out}
+
+
+# ---------- Match With Search: the same candidates, no Claude ----------
+# Each ticked row gets the best name match among the user's own foods (favorites, past foods, foods they made), the foods
+# already saved on this server, USDA and Open Food Facts. Ranking is plain token overlap, so it needs no key and costs nothing.
+
+_STOP = {"a", "an", "the", "of", "and", "with", "or"}
+
+
+def _words(text: str) -> frozenset:
+    """Lowercase word set with light singulars (eggs, berries, tomatoes), articles dropped."""
+    out = set()
+    for w in re.findall(r"[a-z0-9]+", (text or "").lower()):
+        if w in _STOP:
+            continue
+        if len(w) > 4 and w.endswith("ies"):
+            w = w[:-3] + "y"
+        elif len(w) > 4 and w.endswith("oes"):
+            w = w[:-2]
+        elif len(w) > 3 and w.endswith("s") and not w.endswith("ss"):
+            w = w[:-1]
+        out.add(w)
+    return frozenset(out)
+
+
+def _overlap(q: frozenset, n: frozenset):
+    ov = len(q & n)
+    if not ov or not n:
+        return None
+    cov, prec = ov / len(q), ov / len(n)
+    cls = 2 if q == n else 1 if cov == 1 else 0 if cov >= 0.5 else None  # same words, all the query's words, at least half
+    return None if cls is None else (cls, round(0.6 * cov + 0.4 * prec, 4))
+
+
+def name_score(query: str, name: str):
+    """(class, score) of a food name for an ingredient name, or None when it is not a candidate. class 2 is the same words,
+    1 holds every query word, 0 at least half of them. The name before its first comma counts too, so USDA's "Butter, salted"
+    is a Butter. "butter" scores 2 for "Butter" and 1 for "Peanut butter", so the plain food wins."""
+    q = _words(query)
+    if not q:
+        return None
+    full = _overlap(q, _words(name))
+    head = _overlap(q, _words(name.split(",")[0])) if "," in name else None
+    return max((x for x in (full, head) if x), default=None)
+
+
+def pick_best(query: str, found: list[tuple[dict, bool]]):
+    """The best food for an ingredient from [(food, is_own)] in source order, or None. Order of preference: closer name match
+    first (same words, then all of them, then half), then the user's own foods, then the higher overlap score, then the shorter
+    name (before any comma), then the earlier one (the user's lists, foods on this server, USDA, Open Food Facts)."""
+    best, best_key = None, None
+    for i, (food, own) in enumerate(found):
+        sc = name_score(query, food.get("name") or "")
+        if sc is None:
+            continue
+        key = (sc[0], own, sc[1], -len(food["name"].split(",")[0]), -i)
+        if best_key is None or key > best_key:
+            best, best_key = (food, own), key
+    return (*best, best_key[0]) if best else None
+
+
+def own_foods(user_id: int, source: str = "all") -> list[dict]:
+    """My favorites, my past foods (not hidden) and the foods I made, once each."""
+    sql = ("SELECT f.* FROM foods f WHERE (f.id IN (SELECT food_id FROM favorites WHERE user_id=?)"
+           " OR (f.id IN (SELECT food_id FROM last_used WHERE user_id=?) AND f.id NOT IN (SELECT food_id FROM hidden_foods WHERE user_id=?))"
+           " OR f.created_by=?)")
+    params: list = [user_id] * 4
+    if source != "all":
+        sql, params = sql + " AND f.source=?", [*params, source]
+    with db.conn() as c:
+        return [core.food_dict(r) for r in c.execute(sql + " ORDER BY f.name", params)]
+
+
+def search_proposal(it, food: Optional[dict], own: bool = False, cls: int = 0) -> dict:
+    """A pending proposal for one row, shaped like Claude's (kind candidate or none), with method search. No estimates."""
+    out = {"item_id": it["id"], "kind": "none", "food": None, "amount": None, "unit": None, "check": False, "grams": None,
+           "note": "No match found.", "warnings": [], "preview": None, "method": "search"}
+    if food is None:
+        return out
+    if food.get("id") is None:  # a remote candidate is saved only now that it was chosen
+        with db.conn() as c:
+            food = core.save_food(c, food)
+    amount, unit, warn, check = fit_amount(food, [(it["src_amount"], it["src_unit"])])
+    where = "your foods" if own else {"fdc": "USDA", "off": "Open Food Facts"}.get(food["source"], "foods on this server")
+    out.update(kind="candidate", food=food, amount=amount, unit=unit, check=check, grams=units.grams(food, amount, unit),
+               preview=core.macros(food, amount, unit),
+               note=("Same name in " if cls == 2 else "Closest name in ") + where)
+    if warn:
+        out["warnings"].append(warn)
+    return out
+
+
+@router.post("/{meal_id}/match-search")
+async def match_search(meal_id: int, user: CurrentUser, body: Any = Body(None)):
+    """{"item_ids": [...] (1..40 ingredients of my recipe), "source"?: all|off|fdc} -> {"proposals": [...], "method": "search"}.
+    Never calls Claude and works without a key. Nothing is applied until the client accepts a proposal."""
+    if (not isinstance(body, dict) or not set(body) <= {"item_ids", "source"} or "item_ids" not in body
+            or not isinstance(body["item_ids"], list)):
+        raise HTTPException(400, "Send {\"item_ids\": [...]} (source optional)")
+    source = body.get("source", "all")
+    if source not in SEARCH_SOURCES:
+        raise HTTPException(400, "source must be all, off or fdc")
+    ids = [core.whole_id(i, "item_ids") for i in body["item_ids"]]
+    if not ids:
+        raise HTTPException(400, "Choose at least one ingredient")
+    ids = list(dict.fromkeys(ids))
+    if len(ids) > SEARCH_MAX_ROWS:
+        raise HTTPException(400, f"Match at most {SEARCH_MAX_ROWS} ingredients at a time")
+    with db.conn() as c:
+        core.own_meal(c, user["id"], meal_id)
+        marks = ",".join("?" * len(ids))
+        found = {r["id"]: r for r in c.execute(f"SELECT * FROM meal_items WHERE meal_id=? AND id IN ({marks})", (meal_id, *ids))}
+    if set(ids) - set(found):
+        raise HTTPException(404, "Ingredient not found")
+    items = [found[i] for i in ids]
+    mine = [(f, True) for f in own_foods(user["id"], source)]
+    gate = asyncio.Semaphore(SEARCH_CONCURRENCY)
+
+    async def best(query):
+        pick = pick_best(query, mine)
+        if pick is None or pick[2] < 2:  # an exact name among my own foods needs no network
+            more = await find_candidates(query, gate, SEARCH_PER_SOURCE, source, limit=4 * SEARCH_PER_SOURCE)
+            pick = pick_best(query, [*mine, *((f, False) for f in more)])
+        return pick
+
+    tasks: dict = {}  # one lookup per distinct ingredient name
+    for it in items:
+        if item_query(it) not in tasks:
+            tasks[item_query(it)] = asyncio.ensure_future(best(item_query(it)))
+    picks = [await tasks[item_query(it)] for it in items]
+    return {"proposals": [search_proposal(it, *p) if p else search_proposal(it, None) for it, p in zip(items, picks)],
+            "method": "search"}

@@ -9,9 +9,9 @@ import { chips } from './saved.js';
 import { stepsEditor } from './steps.js';
 import { fmtNum, fmtAmount, centsText, sentence, parseAmount, rowAmountText, matchedAmountText, MICROS, microValue, aiFeature, aiFeatureOff } from './util.js';
 import {
-  parseIngredientText, reviewDraft, reviewBody, blankRow, matchState, matchCountText, toggleAll, toggleId,
-  matchBatch, proposalText, matchWhat, importWhat, matchSnapshot, restoreBody, changedSince, nextStep, pendingProposals,
-  acceptAllText, skipAllIds, photoPick, PHOTOS_TEXT,
+  parseIngredientText, parseIngredientLine, reviewDraft, reviewBody, blankRow, matchState, matchCountText, toggleAll, toggleId,
+  proposalText, matchWhat, importWhat, matchSnapshot, restoreBody, changedSince, nextStep, pendingProposals,
+  acceptAllText, skipAllIds, photoPick, PHOTOS_TEXT, MATCH_METHODS, matchMethod, matchRunText, methodBatch, matchDoneText, proposalHead,
 } from './recipeimport.js';
 import { servingSizeEditor } from './servingsize.js';
 
@@ -183,8 +183,9 @@ function foodLine(it) {
     ' - ' + matchedAmountText(it.amount, it.unit, it.grams) + (it.check ? '' : ' - ' + fmtNum(it.kcal, 0) + ' kcal'));
 }
 
-// params: { mealId, saved? (just saved by Import, shows Step 2 of 2), visit? (set on the first render, so coming back from
-// the food finder keeps the same last saved state) }
+// params: { mealId, saved? (just saved by Import, shows Step 2 of 2), edit? (opened to change a finished recipe: the same page,
+// every row can be searched again, rescanned, re-amounted, skipped or removed, and rows can be added), visit? (set on the first
+// render, so coming back from the food finder keeps the same last saved state) }
 export async function renderMatch(root, params, ctx) {
   const visit = ctx.flow.visit(params);
   let meal = await api.meal(params.mealId);
@@ -201,7 +202,18 @@ export async function renderMatch(root, params, ctx) {
   const list = h('ul', { class: 'list match-list' });
   const totals = h('div');
   const allBox = h('input', { type: 'checkbox', id: 'match-all', onchange: () => { selected = toggleAll(meal.items, selected); keepSel(); paintRows(); } });
-  const matchBtn = h('button', { class: 'btn', type: 'button', onclick: () => runMatch(selected) }, 'Match Selected With Claude');
+  let method = matchMethod(ctx.flow.method, aiOn);  // Search (default) or Claude; Claude only when it is on for this user
+  const matchBtn = h('button', { class: 'btn', type: 'button', onclick: () => runMatch(selected) }, matchRunText(method));
+  const methodBtns = MATCH_METHODS.map(([k, label]) => h('button', { class: 'seg-btn', type: 'button', 'data-method': k,
+    'aria-pressed': k === method ? 'true' : 'false', onclick: () => setMethod(k) }, label));
+  const methodSwitch = aiOn ? h('div', { class: 'method-switch', role: 'group', 'aria-label': 'Match With' },
+    h('span', { class: 'method-label', 'aria-hidden': 'true' }, 'Match With:'), h('div', { class: 'segmented' }, methodBtns)) : null;
+  function setMethod(k) {
+    method = matchMethod(k, aiOn);
+    ctx.flow.method = method;
+    methodBtns.forEach((b) => b.setAttribute('aria-pressed', b.dataset.method === method ? 'true' : 'false'));
+    matchBtn.textContent = matchRunText(method);
+  }
   const acceptBtn = h('button', { class: 'btn primary', type: 'button', onclick: acceptAll }, '');
   const acceptRow = h('div', { class: 'row wrap match-bulk' }, acceptBtn);
   const skipAllBtn = h('button', { class: 'btn', type: 'button', onclick: skipAll }, 'Skip All');
@@ -264,22 +276,73 @@ export async function renderMatch(root, params, ctx) {
       paintAll();
     } catch (e) { fail(e); } finally { skipAllBtn.disabled = false; }
   }
-  async function runMatch(ids) {
-    const b = matchBatch(ids);
+  // how: the method for this run. The button uses the switch, Ask Claude on a row always uses Claude.
+  async function runMatch(ids, how) {
+    const m = how || method;
+    const b = methodBatch(m, ids);
     if (!b.send.length) { show(status, message('Tick at least one ingredient first.', 'error')); return; }
     matchBtn.disabled = true;
     try {
-      if (!(await confirmClaude(ctx.settings, { what: matchWhat(b.send.length), query: { match_rows: b.send.length } }))) return;
-      show(status, message('Claude is matching ' + b.send.length + (b.send.length === 1 ? ' ingredient...' : ' ingredients...')));
-      const r = await api.matchIngredients(meal.id, b.send);
+      let r;
+      if (m === 'claude') {
+        if (!(await confirmClaude(ctx.settings, { what: matchWhat(b.send.length), query: { match_rows: b.send.length } }))) return;
+        show(status, message('Claude is matching ' + b.send.length + (b.send.length === 1 ? ' ingredient...' : ' ingredients...')));
+        r = await api.matchIngredients(meal.id, b.send);
+      } else {
+        show(status, message('Searching for ' + b.send.length + (b.send.length === 1 ? ' ingredient...' : ' ingredients...')));
+        r = await api.matchSearch(meal.id, b.send, ctx.flow.searchSource());
+      }
       r.proposals.forEach((p) => { props[p.item_id] = p; });
       selected = selected.filter((id) => b.send.indexOf(id) < 0);
       keepSel();
       paintRows();
-      const left = b.rest.length ? ' ' + b.rest.length + ' more are still ticked. Tap Match Selected With Claude again for them.' : '';
-      show(status, message('Check the suggestions, then accept them all or one by one.' + (r.cost != null ? ' This cost about ' + centsText(r.cost) + '.' : '') + left));
+      show(status, message(matchDoneText(m, r.proposals, b.rest.length, m === 'claude' && r.cost != null ? 'This cost about ' + centsText(r.cost) + '.' : '')));
     } catch (e) { fail(e); } finally { matchBtn.disabled = !selected.length; }
   }
+
+  // Keep the highlighted row after rows were added or removed: current is an index, so find the same row again.
+  function keepCurrent(fn) {
+    const id = current >= 0 && meal.items[current] ? meal.items[current].id : null;
+    fn();
+    current = id == null ? -1 : meal.items.findIndex((i) => i.id === id);
+  }
+  async function removeRow(item, label) {
+    try {
+      const i = meal.items.findIndex((x) => x.id === item.id);
+      const m = await api.deleteMealItem(meal.id, item.id);
+      keepCurrent(() => setMeal(m));
+      drop([item.id]);
+      delete editing[item.id];
+      paintAll(m.items.length ? m.items[Math.min(i, m.items.length - 1)].id : null);
+      show(status, message('Removed ' + label + '. Back undoes it until you tap Next.'));
+    } catch (e) { fail(e); }
+  }
+  // Add Ingredient: one typed line ("1 tbsp olive oil"), split like Import does, added as an unmatched row at the end.
+  async function addRow(line, search) {
+    const row = parseIngredientLine(line);
+    if (!row) { show(status, message('Type the ingredient first.', 'error')); return false; }
+    try {
+      const { added, ...m } = await api.addMealItem(meal.id, { src: { text: row.text.slice(0, 300), amount: row.amount, unit: row.unit, name: row.name.slice(0, 200), note: row.note } });
+      keepCurrent(() => setMeal(m));
+      show(addBox, null);
+      paintAll(search ? null : added);
+      const item = m.items.find((x) => x.id === added);
+      if (search && item) ctx.flow.find(m, item, 'search');
+      else show(status, message('Added ' + row.text + '. Match it to a food.'));
+      return true;
+    } catch (e) { fail(e); return false; }
+  }
+  const addBox = h('div', { class: 'match-add' });
+  function addForm() {
+    const line = field('Ingredient line', { autocomplete: 'off', maxlength: '300', placeholder: 'e.g. 1 tbsp olive oil' });
+    show(addBox, h('form', { class: 'sheet', onsubmit: (e) => { e.preventDefault(); addRow(line.input.value, false); } },
+      line,
+      h('div', { class: 'row wrap' }, h('button', { class: 'btn primary', type: 'submit' }, 'Add'),
+        h('button', { class: 'btn', type: 'button', onclick: () => addRow(line.input.value, true) }, 'Add and Search'),
+        h('button', { class: 'btn ghost', type: 'button', onclick: () => { show(addBox, null); addBtn.focus(); } }, 'Cancel'))));
+    line.input.focus();
+  }
+  const addBtn = h('button', { class: 'btn', type: 'button', onclick: addForm }, 'Add Ingredient');
 
   // Next saves: what the screen shows now becomes the state Back returns to. On the last open row it is Done and leaves.
   function next() {
@@ -296,10 +359,12 @@ export async function renderMatch(root, params, ctx) {
   // Back does not save: after Discard Changes? it writes the last saved state back, then leaves.
   async function leave() {
     const r = restoreBody(base(), meal);
-    if (r.items.length || r.meal) {
-      if (!window.confirm('Discard Changes? Matches, amounts, skips and serving size changes since you last tapped Next are undone.')) return;
+    if (r.items.length || r.meal || r.remove.length || r.add.length) {
+      if (!window.confirm('Discard Changes? Matches, amounts, skips, added or removed ingredients and serving size changes since you last tapped Next are undone.')) return;
       backBtn.disabled = true;
       try {
+        for (const id of r.remove) await api.deleteMealItem(meal.id, id);  // rows added since, then rows removed since, back in place
+        for (const body of r.add) await api.addMealItem(meal.id, body);
         if (r.items.length) await api.matchItems(meal.id, r.items);
         if (r.meal) await api.patchMeal(meal.id, r.meal);
       } catch (e) { backBtn.disabled = false; fail(e); return; }
@@ -311,9 +376,10 @@ export async function renderMatch(root, params, ctx) {
   function proposalBox(item, p) {
     const est = p.kind === 'estimate';
     const kcal = p.preview ? ' - ' + fmtNum(p.preview.kcal, 0) + ' kcal' : '';
-    return h('div', { class: 'proposal', role: 'group', 'aria-label': 'Claude suggestion' },
-      h('p', { class: 'proposal-head' }, 'Claude Suggests ', p.food ? sourceBadge(p.food.source, true) : null,
-        p.kind === 'candidate' ? h('span', { class: 'src-est' }, ' Database Match') : null),
+    const bySearch = p.method === 'search';
+    return h('div', { class: 'proposal', role: 'group', 'aria-label': bySearch ? 'Search suggestion' : 'Claude suggestion' },
+      h('p', { class: 'proposal-head' }, proposalHead(p) + ' ', p.food ? sourceBadge(p.food.source, true) : null,
+        p.kind === 'candidate' && !bySearch ? h('span', { class: 'src-est' }, ' Database Match') : null),
       h('p', null, proposalText(p) + (p.food ? kcal : '')),
       p.food && p.note ? h('p', { class: 'sub' }, sentence(p.note)) : null,
       est && !p.food.id ? h('p', { class: 'sub' }, 'No database food fitted, so this is an estimate. Accept saves it as a Claude food.') : null,
@@ -360,7 +426,7 @@ export async function renderMatch(root, params, ctx) {
   function rowNode(item, i) {
     const state = matchState(item);
     const label = (item.src && item.src.text) || (item.food && item.food.name) || 'Ingredient';
-    const box = aiOn && !item.skipped ? h('input', { type: 'checkbox', checked: selected.indexOf(item.id) >= 0, 'aria-label': 'Select ' + label,
+    const box = !item.skipped ? h('input', { type: 'checkbox', checked: selected.indexOf(item.id) >= 0, 'aria-label': 'Select ' + label,
       onchange: () => { selected = toggleId(selected, item.id); keepSel(); paintHead(); } }) : null;
     const chip = (text) => h('span', { class: 'match-state match-' + state }, text);
     const stateNode = state === 'matched' ? foodLine(item)
@@ -373,11 +439,12 @@ export async function renderMatch(root, params, ctx) {
     h('div', { class: 'row wrap match-actions' },
       h('button', { class: 'btn small', type: 'button', onclick: () => ctx.flow.find(meal, item, 'search') }, 'Search'),
       h('button', { class: 'btn small', type: 'button', onclick: () => ctx.flow.find(meal, item, 'scan') }, 'Scan Barcode'),
-      aiOn ? h('button', { class: 'btn small', type: 'button', onclick: () => runMatch([item.id]) }, 'Ask Claude') : null,
+      aiOn ? h('button', { class: 'btn small', type: 'button', onclick: () => runMatch([item.id], 'claude') }, 'Ask Claude') : null,
       state === 'matched' && !editing[item.id] ? h('button', { class: 'btn small', type: 'button',
         onclick: () => { editing[item.id] = true; paintRows(); focusIn(item.id, 'input'); } }, 'Edit Amount') : null,
       h('button', { class: 'btn small', type: 'button', 'aria-pressed': item.skipped ? 'true' : 'false',
-        onclick: () => apply(item.id, { skipped: !item.skipped }) }, item.skipped ? 'Unskip' : 'Skip')),
+        onclick: () => apply(item.id, { skipped: !item.skipped }) }, item.skipped ? 'Unskip' : 'Skip'),
+      meal.items.length > 1 ? h('button', { class: 'btn small', type: 'button', 'aria-label': 'Remove ' + label, onclick: () => removeRow(item, label) }, 'Remove') : null),
     state === 'check' || (state === 'matched' && editing[item.id]) ? amountEditor(item) : null,
     p && !item.skipped ? proposalBox(item, p) : null);
   }
@@ -420,17 +487,21 @@ export async function renderMatch(root, params, ctx) {
   }
 
   const noAi = h('p', { class: 'sub' }, (aiFeatureOff(st, 'recipe') ? 'Claude recipe import is turned off on this server' : 'Claude is not set up for you')
-    + ', so use Search or Scan Barcode for each ingredient.');
+    + ', so Match Selected uses Search.');
   root.appendChild(h('section', { class: 'screen match' },
     h('div', { class: 'bar' }, h('button', { class: 'btn ghost', type: 'button', onclick: leave }, 'Back')),
     h('h1', null, 'Match Ingredients'),
     params.saved ? h('p', { class: 'saved-note', role: 'status' }, h('span', { class: 'saved-tag' }, 'Saved'), h('span', null, 'Step 2 of 2')) : null,
-    h('p', { class: 'sub' }, 'The recipe is saved. Match each ingredient to a food, then tap Next to save and move on. Back leaves without the changes made since the last Next.'),
+    h('p', { class: 'sub' }, params.edit
+      ? 'Change any ingredient: search again, scan a barcode, edit the amount, skip it or remove it, or add a new one. Tap Next to save and move on. Back leaves without the changes made since the last Next.'
+      : 'The recipe is saved. Match each ingredient to a food, then tap Next to save and move on. Back leaves without the changes made since the last Next.'),
     h('h2', null, meal.name), count,
     acceptRow,
-    aiOn ? h('div', { class: 'row wrap match-bulk' }, h('label', { class: 'check', for: 'match-all' }, allBox, ' Select All'), matchBtn, skipAllBtn)
-      : [noAi, h('div', { class: 'row wrap match-bulk' }, skipAllBtn)],
+    h('div', { class: 'row wrap match-bulk' }, h('label', { class: 'check', for: 'match-all' }, allBox, ' Select All'), skipAllBtn),
+    h('div', { class: 'row wrap match-run' }, methodSwitch, matchBtn),
+    aiOn ? null : noAi,
     status, list,
+    addBtn, addBox,
     h('h2', null, 'Serving Size'), lastHint, size.el,
     totals,
     h('div', { class: 'row wrap match-foot' }, backBtn, nextBtn)));

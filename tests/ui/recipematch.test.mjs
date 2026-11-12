@@ -22,7 +22,7 @@ test('restoreBody writes back only the rows and sizes that changed since the las
   ]);
   assert.deepEqual(r.meal, { servings: 2, yield: null });
   assert.equal(changedSince(base, now), true);
-  assert.deepEqual(restoreBody(base, meal([un(1), ok(2), un(3), ok(4, { skipped: true })])), { items: [], meal: null });
+  assert.deepEqual(restoreBody(base, meal([un(1), ok(2), un(3), ok(4, { skipped: true })])), { remove: [], add: [], items: [], meal: null });
   assert.equal(changedSince(base, meal([un(1), ok(2), un(3), ok(4, { skipped: true })])), false);
 });
 
@@ -31,7 +31,7 @@ test('the snapshot is a copy, and a Check Amount row restores with check', () =>
   const base = matchSnapshot(m);
   m.yield.amount = 2;
   m.items[0].check = false;
-  assert.deepEqual(restoreBody(base, m), { items: [{ id: 1, food_id: 9, amount: 2, unit: 'cup', check: true, skipped: false }], meal: { yield: { amount: 1, unit: 'l' } } });
+  assert.deepEqual(restoreBody(base, m), { remove: [], add: [], items: [{ id: 1, food_id: 9, amount: 2, unit: 'cup', check: true, skipped: false }], meal: { yield: { amount: 1, unit: 'l' } } });
 });
 
 test('nextStep moves to the next open row and is Done on the last one', () => {

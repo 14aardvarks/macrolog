@@ -3,7 +3,7 @@ import { api } from './api.js';
 import { h, clear, field, message, show, select, sourceBadge } from './dom.js';
 import { refreshAllControl } from './refresh.js';
 import { recipeSubText } from './recipeimport.js';
-import { MEALS, MEAL_LABELS, toggleMeal, parseAmount, rowAmountText, unitLabel, fmtNum, amountText, SAVED_FILTERS, SAVED_FILTER_LABELS, filterSavedItems, pageOf, PAGE_SIZE } from './util.js';
+import { MEALS, MEAL_LABELS, toggleMeal, fmtNum, amountText, SAVED_FILTERS, SAVED_FILTER_LABELS, filterSavedItems, pageOf, PAGE_SIZE } from './util.js';
 
 const title = (f) => (f.brand ? f.name + ' (' + f.brand + ')' : f.name);
 
@@ -44,58 +44,34 @@ export async function deleteRecipe(rec) {
   return true;
 }
 
-// One recipe with its tags, Rename, Edit Items (or Match Ingredients) and Delete. Also used by the recipe screen on the
-// Recipes tab. opts.onDeleted runs after a delete instead of again(); opts.noDelete leaves the Delete button out (the recipe screen has its own Delete Recipe).
+// The Rename form of a recipe, shown in `body`. again() runs after a save; fail(error) shows a problem.
+export function renameRecipe(rec, body, again, fail) {
+  const name = field('Recipe name', { value: rec.name, autocomplete: 'off' });
+  show(body, h('form', { class: 'row', onsubmit: async (e) => {
+    e.preventDefault();
+    if (!name.input.value.trim()) return;
+    try { await api.patchMeal(rec.id, { name: name.input.value.trim() }); await again(); } catch (err) { fail(err); }
+  } }, name, h('button', { class: 'btn primary', type: 'submit' }, 'Save'), h('button', { class: 'btn ghost', type: 'button', onclick: () => show(body, null) }, 'Cancel')));
+  name.input.focus();
+}
+
+// One recipe with its tags, Rename, Edit Ingredients (or Match Ingredients for one still being matched) and Delete.
+// Both open the Match Ingredients page. opts.onDeleted runs after a delete instead of again().
 export function recipeRow(rec, again, ctx, opts) {
   const status = h('div', { 'aria-live': 'polite' });
   const body = h('div');
   const fail = (e) => show(status, message(e.message, 'error'));
-  const rename = () => {
-    const name = field('Recipe name', { value: rec.name, autocomplete: 'off' });
-    show(body, h('form', { class: 'row', onsubmit: async (e) => {
-      e.preventDefault();
-      if (!name.input.value.trim()) return;
-      try { await api.patchMeal(rec.id, { name: name.input.value.trim() }); await again(); } catch (err) { fail(err); }
-    } }, name, h('button', { class: 'btn primary', type: 'submit' }, 'Save'), h('button', { class: 'btn ghost', type: 'button', onclick: () => show(body, null) }, 'Cancel')));
-    name.input.focus();
-  };
-  const items = async () => {
-    let foods;
-    try { foods = await Promise.all(rec.items.map((it) => api.food(it.food_id))); } catch (e) { fail(e); return; }
-    const rows = rec.items.map((it, i) => {
-      const amt = h('input', { type: 'text', inputmode: 'decimal', value: rowAmountText(it.amount, it.unit), 'aria-label': 'Amount of ' + it.food.name });
-      const unit = select(foods[i].units.map((u) => ({ value: u.unit, label: unitLabel(u.unit) })), it.unit, { 'aria-label': 'Unit of ' + it.food.name });
-      const li = h('li', { class: 'item meal-item' }, h('span', { class: 'item-title' }, it.food.name), amt, unit,
-        h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Remove ' + it.food.name, onclick: () => { li.remove(); row.gone = true; } }, '×'));
-      const row = { it, amt, unit, gone: false };
-      return { row, li };
-    });
-    const save = async () => {
-      const out = [];
-      for (const { row } of rows) {
-        if (row.gone) continue;
-        const a = parseAmount(row.amt.value);
-        if (a == null || a <= 0) { show(status, message('Check the amount for ' + row.it.food.name + '.', 'error')); return; }
-        out.push({ food_id: row.it.food_id, amount: a, unit: row.unit.value });
-      }
-      if (!out.length) { show(status, message('A recipe needs at least one item. Delete the recipe instead.', 'error')); return; }
-      try { await api.patchMeal(rec.id, { items: out }); await again(); } catch (e) { fail(e); }
-    };
-    show(body, h('div', null, h('ul', { class: 'list' }, rows.map((r) => r.li)),
-      h('div', { class: 'row' }, h('button', { class: 'btn primary', type: 'button', onclick: save }, 'Save Items'),
-        h('button', { class: 'btn ghost', type: 'button', onclick: () => show(body, null) }, 'Cancel'))));
-  };
   const del = async () => {
     try { if (await deleteRecipe(rec)) await (opts && opts.onDeleted ? opts.onDeleted() : again()); } catch (e) { fail(e); }
   };
   return h('li', { class: 'saved-item' }, h('span', { class: 'item-title' }, rec.name),
     h('span', { class: 'item-sub' }, recipeSubText(rec, fmtNum(rec.kcal, 0))),
     chips(rec.meals, async (m) => { await api.patchMeal(rec.id, { meals: m }); rec.meals = m; }, status),
-    h('div', { class: 'row wrap' }, h('button', { class: 'btn', type: 'button', onclick: rename }, 'Rename'),
-      // An imported recipe with unmatched or skipped ingredients is edited on Match Ingredients, which keeps the recipe's own lines.
-      rec.complete && !rec.skipped ? h('button', { class: 'btn', type: 'button', onclick: items }, 'Edit Items')
-        : h('button', { class: 'btn', type: 'button', onclick: () => ctx.go('match', { mealId: rec.id }) }, 'Match Ingredients'),
-      opts && opts.noDelete ? null : h('button', { class: 'btn', type: 'button', onclick: del }, 'Delete')),
+    h('div', { class: 'row wrap' }, h('button', { class: 'btn', type: 'button', onclick: () => renameRecipe(rec, body, again, fail) }, 'Rename'),
+      // Every recipe is edited on Match Ingredients, which keeps an imported recipe's own lines.
+      h('button', { class: 'btn', type: 'button', onclick: () => ctx.go('match', { mealId: rec.id, edit: true }) },
+        rec.complete && !rec.skipped ? 'Edit Ingredients' : 'Match Ingredients'),
+      h('button', { class: 'btn', type: 'button', onclick: del }, 'Delete')),
     body, status);
 }
 

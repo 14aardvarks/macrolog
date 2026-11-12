@@ -179,6 +179,31 @@ export const toggleId = (selected, id) => (selected.indexOf(id) >= 0 ? selected.
 // One Claude request takes at most `max` rows. The rest stay ticked for the next tap.
 export function matchBatch(ids, max = 15) { return { send: ids.slice(0, max), rest: ids.slice(max) }; }
 
+// Match Selected works by Search (the default: no Claude, no credit) or by Claude. Rows per request, as the server allows.
+export const MATCH_METHODS = [['search', 'Search'], ['claude', 'Claude']];
+export const MATCH_MAX = { search: 40, claude: 15 };  // same as recipe_ai.SEARCH_MAX_ROWS and ai.RECIPE_MATCH_MAX
+
+// The method to use: Claude only when it is on for this user, else Search.
+export const matchMethod = (want, aiOn) => (want === 'claude' && aiOn ? 'claude' : 'search');
+
+export const matchRunText = (method) => 'Match Selected With ' + (method === 'claude' ? 'Claude' : 'Search');
+
+// The rows to send now and the ones left ticked for the next tap.
+export const methodBatch = (method, ids) => matchBatch(ids, MATCH_MAX[method === 'claude' ? 'claude' : 'search']);
+
+// The note after a run: how many rows are still ticked, and how many Search found nothing for.
+export function matchDoneText(method, proposals, restCount, costText) {
+  const none = (proposals || []).filter((p) => !p.food).length;
+  const found = (proposals || []).length - none;
+  const lead = method === 'search' && !found ? 'No suggestions were found.' : 'Check the suggestions, then accept them all or one by one.';
+  return lead + (method === 'search' && found && none ? ' ' + none + (none === 1 ? ' ingredient had' : ' ingredients had') + ' no match.' : '')
+    + (costText ? ' ' + costText : '')
+    + (restCount ? ' ' + restCount + ' more are still ticked. Tap ' + matchRunText(method) + ' again for them.' : '');
+}
+
+// The heading of a waiting proposal: Search suggestions say so, so nobody mistakes them for a Claude answer.
+export const proposalHead = (p) => (p && p.method === 'search' ? (p.food ? 'Suggested Match' : 'Search Result') : 'Claude Suggests');
+
 // Proposal lines: "Wheat flour, 1 1/2 cup, 188 g" with the kind as a word, so color is never the only cue. A proposal whose
 // amount could not be worked out says so; Accept then attaches it as Check Amount.
 export function proposalText(p) {
@@ -227,9 +252,9 @@ export function logAmountText(want, per) {
 
 // ---------- Match Ingredients: last saved state, Back and Next ----------
 
-// The part of a row that Match Ingredients can change.
+// The part of a row that Match Ingredients can change, with its imported line so a removed row can be put back.
 const rowState = (it) => ({ id: it.id, food_id: it.food_id == null ? null : it.food_id, amount: it.food_id == null ? null : it.amount,
-  unit: it.food_id == null ? null : it.unit, skipped: !!it.skipped, check: !!it.check });
+  unit: it.food_id == null ? null : it.unit, skipped: !!it.skipped, check: !!it.check, src: it.src ? { ...it.src } : null });
 const sameYield = (a, b) => (!a && !b) || (!!a && !!b && a.amount === b.amount && a.unit === b.unit);
 
 // What the recipe looked like at the last save (opening the screen, or Next). Back writes this back.
@@ -239,23 +264,38 @@ export function matchSnapshot(meal) {
 
 const sameRow = (a, b) => a.food_id === b.food_id && a.amount === b.amount && a.unit === b.unit && a.skipped === b.skipped && a.check === b.check;
 
-// What Back has to write to undo every change since the snapshot: { items: [bulk rows], meal: PATCH body or null }.
-// Nothing to undo gives { items: [], meal: null }.
+// The POST /api/meals/{id}/items body that puts a removed row back at its place.
+const addBody = (b, position) => {
+  const out = { position };
+  if (b.src) out.src = { ...b.src };
+  if (b.food_id != null) { out.food_id = b.food_id; out.amount = b.amount; out.unit = b.unit; if (b.check) out.check = true; }
+  if (b.skipped) out.skipped = true;
+  return out;
+};
+
+// What Back has to write to undo every change since the snapshot: { remove: [row ids added since], add: [bodies of rows
+// removed since, in list order, each with its place], items: [bulk rows], meal: PATCH body or null }. Remove first, then add,
+// then items. Nothing to undo gives empty lists and a null meal.
 export function restoreBody(base, meal) {
   const now = {};
   (meal.items || []).forEach((it) => { now[it.id] = rowState(it); });
+  const had = {};
+  base.items.forEach((b) => { had[b.id] = true; });
+  const remove = (meal.items || []).filter((it) => !had[it.id]).map((it) => it.id);
+  const add = [];
+  base.items.forEach((b, i) => { if (!now[b.id]) add.push(addBody(b, i)); });
   const items = base.items.filter((b) => now[b.id] && !sameRow(b, now[b.id])).map((b) => (b.food_id == null
     ? { id: b.id, food_id: null, skipped: b.skipped }
     : { id: b.id, food_id: b.food_id, amount: b.amount, unit: b.unit, check: b.check, skipped: b.skipped }));
   const patch = {};
   if (base.servings !== meal.servings) patch.servings = base.servings;
   if (!sameYield(base.yield, meal.yield)) patch.yield = base.yield;
-  return { items, meal: Object.keys(patch).length ? patch : null };
+  return { remove, add, items, meal: Object.keys(patch).length ? patch : null };
 }
 
 export function changedSince(base, meal) {
   const r = restoreBody(base, meal);
-  return r.items.length > 0 || r.meal != null;
+  return r.items.length > 0 || r.meal != null || r.remove.length > 0 || r.add.length > 0;
 }
 
 // Next moves to the next unmatched or Check Amount row. When no other row is left it becomes Done (save and leave).

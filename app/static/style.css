@@ -183,7 +183,7 @@ nav button[aria-current=page] { color: var(--accent); box-shadow: inset 0 3px 0 
 .tab-list .list, .tab-list .msg { margin-bottom: 8px; }
 .tab-list .group { font-size: .9rem; margin: 8px 4px 4px; }
 .meal-pick { display: flex; align-items: center; gap: 12px; margin: 0 0 8px; }
-.meal-pick > span { font-size: .875rem; font-weight: 600; color: var(--muted); }
+.meal-pick > span { min-width: 3.5rem; font-size: .875rem; font-weight: 600; color: var(--muted); }
 .meal-pick > select { flex: 1; min-width: 0; min-height: 48px; font-size: 1.05rem; font-weight: 600; }
 .scan-btn { flex: 1; gap: 8px; }
 .row > .btn { flex: none; }
@@ -400,6 +400,13 @@ textarea { font: inherit; color: inherit; width: 100%; min-height: 160px; paddin
 .match-count { font-weight: 600; margin: 0 0 8px; }
 .match-bulk { margin: 0 0 8px; }
 .match-bulk .check { margin: 0; flex: none; }
+.match-run { gap: 8px 12px; margin: 0 0 8px; }
+.method-switch { display: flex; align-items: center; gap: 8px; }
+.method-label { font-size: .875rem; font-weight: 600; color: var(--muted); }
+.segmented { display: inline-flex; padding: 3px; gap: 3px; background: var(--track); border-radius: 12px; }
+.seg-btn { min-height: 44px; min-width: 72px; padding: 6px 14px; border: 0; border-radius: 9px; background: transparent; color: var(--muted); font: inherit; font-weight: 600; cursor: pointer; }
+.seg-btn[aria-pressed=true] { background: var(--card); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.25), inset 0 -3px 0 var(--accent); }
+.match-add { margin: 8px 0 12px; }
 .match-row { display: block; padding: 10px 4px; border-bottom: 1px solid var(--line); border-radius: 8px; }
 .match-row.current { box-shadow: inset 4px 0 0 var(--accent); background: var(--card); }
 .match-top { display: flex; align-items: flex-start; gap: 10px; }

@@ -29,7 +29,7 @@ import { startUpdates } from './update.js';
 const main = document.getElementById('main');
 const nav = document.getElementById('nav');
 const state = { user: null, settings: { start_screen: 'today', default_meal: null, use_last: true, confirm_ai: true, amount_format: 'fraction' }, display: DEFAULT_DISPLAY, cleanup: null, depth: 0, tab: 'favorites', addMeal: null, draft: null, recipe: null, source: null, aiSt: null, claude: null,
-  importInput: null, importDraft: null, importBase: 0, proposals: {}, selections: {}, matchFocus: null, matchBase: {} };  // Import Recipe and Match Ingredients  // addMeal, source (null = the Default Search Source setting), aiSt (last /api/ai/status) and claude (last Claude estimate) live for the session only
+  importInput: null, importDraft: null, importBase: 0, proposals: {}, selections: {}, matchFocus: null, matchBase: {}, matchMethod: 'search' };  // Import Recipe and Match Ingredients  // addMeal, source (null = the Default Search Source setting), aiSt (last /api/ai/status) and claude (last Claude estimate) live for the session only
 const NAV_OF = { today: 'today', settings: 'settings', admin: 'settings', saved: 'settings', editfood: 'settings',
   recipes: 'recipes', recipeview: 'recipes', recipe: 'recipes', import: 'recipes', importreview: 'recipes', match: 'recipes' };  // every other screen belongs to Add
 const FINDER = ['add', 'picker', 'scan', 'lookup', 'manual', 'ai'];  // screens New Recipe and Match Ingredients borrow from Add
@@ -89,6 +89,11 @@ const ctx = {
     proposals(id) { return state.proposals[id] || (state.proposals[id] = {}); },
     selection(id) { return state.selections[id] || []; },
     setSelection(id, ids) { state.selections[id] = ids; },
+    // Match Selected With: search (default) or claude, kept for the session. searchSource is what Search looks in: the Source
+    // chosen on Add (else the Default Search Source), as all, off or fdc; Claude estimates are not a database source, so ai means all.
+    get method() { return state.matchMethod; },
+    set method(m) { state.matchMethod = m === 'claude' ? 'claude' : 'search'; },
+    searchSource() { const s = state.source == null ? state.display.search_source : state.source; return s === 'off' || s === 'fdc' ? s : 'all'; },
     takeFocus() { const f = state.matchFocus; state.matchFocus = null; return f; },
     // One visit of Match Ingredients, kept in its history entry, so a return from the food finder is the same visit.
     visit(params) {
@@ -491,17 +496,17 @@ function addScreen(root, params) {
     } catch (e) { show(listBox, message(e.message, 'error')); }
   }
 
-  // Search, scan and the meal filter sit above the lists so a long list never pushes them off screen.
+  // Enter Manually and Scan Barcode, Search, Source and the meal filter sit above the lists, in that order, so a long list never pushes them off screen.
   root.appendChild(h('section', { class: 'screen wide add' },
     ing ? h('div', { class: 'bar' }, h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back')) : null,
     ing ? h('h1', null, matching ? 'Find Ingredient' : 'Add Ingredient') : null,
     matching && matching.label ? h('p', { class: 'sub' }, 'For: ' + matching.label) : null,
-    srcPick, srcNote,
-    h('form', { class: 'row add-search', role: 'search', onsubmit: (e) => { e.preventDefault(); liveSearch.cancel(); search(true); } },
-      q, h('button', { class: 'btn', type: 'submit' }, 'Search')),
     h('div', { class: 'row add-scan' },
       h('button', { class: 'btn', type: 'button', onclick: () => go('manual', {}) }, 'Enter Manually'),
       h('button', { class: 'btn primary scan-btn', type: 'button', onclick: () => go('scan', { autostart: true }) }, cameraIcon(), 'Scan Barcode')),
+    h('form', { class: 'row add-search', role: 'search', onsubmit: (e) => { e.preventDefault(); liveSearch.cancel(); search(true); } },
+      q, h('button', { class: 'btn', type: 'submit' }, 'Search')),
+    srcPick, srcNote,
     ing ? null : mealPick, tabBar, h('div', { class: 'tab-list' }, listBox)));
   if (state.source === 'ai' && state.claude) q.value = state.claude.text;  // back from the draft: the estimate is still here, no second request
   if (matching && params.q && state.source !== 'ai') { q.value = params.q; search(true); loadAi(); }  // the ingredient's name, searched at once

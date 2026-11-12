@@ -97,8 +97,11 @@ export const api = {
   meal: (id) => get('/api/meals/' + id),
   importMeal: (body) => send('POST', '/api/meals/import', body),
   matchItem: (mealId, itemId, body) => send('PATCH', '/api/meals/' + mealId + '/items/' + itemId, body),
+  addMealItem: (mealId, body) => send('POST', '/api/meals/' + mealId + '/items', body),
+  deleteMealItem: (mealId, itemId) => request('DELETE', '/api/meals/' + mealId + '/items/' + itemId),
   matchItems: (mealId, items) => send('PATCH', '/api/meals/' + mealId + '/items', { items }),
   recipeFromText: (text, note) => send('POST', '/api/recipes/import/text', note ? { text, note } : { text }),
   recipeFromPhotos: (form) => request('POST', '/api/recipes/import/photos', { form }),
+  matchSearch: (mealId, ids, source) => send('POST', '/api/recipes/' + mealId + '/match-search', source ? { item_ids: ids, source } : { item_ids: ids }),
   matchIngredients: (mealId, ids) => send('POST', '/api/recipes/' + mealId + '/match', { item_ids: ids }),
 };

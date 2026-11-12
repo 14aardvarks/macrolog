@@ -226,3 +226,80 @@ def test_old_databases_get_steps_and_needs_check(tmp_path, monkeypatch):
         assert m["steps"] == [] and m["items"][0]["check"] is False and m["checks"] == 0
         c.execute("UPDATE meals SET steps='not json' WHERE id=3")
         assert core.meal_dict(c, c.execute("SELECT * FROM meals WHERE id=3").fetchone())["steps"] == []
+
+
+# ---------- editing a finished recipe on Match Ingredients: add, remove, unmatch ----------
+
+def finished(a, count=2):
+    bread, pb = food(a), food(a, PB)
+    items = [{"food_id": bread["id"], "amount": 2, "unit": "slice"}, {"food_id": pb["id"], "amount": 4, "unit": "tbsp"}][:count]
+    return a.post("/api/meals", json={"name": "Toast", "items": items}).json(), bread, pb
+
+
+def test_unmatching_a_hand_built_row_keeps_a_line_to_search_for(a):
+    m, bread, pb = finished(a)
+    assert m["items"][0]["src"] is None
+    r = a.patch(f"/api/meals/{m['id']}/items/{m['items'][0]['id']}", json={"food_id": None}).json()
+    it = r["items"][0]
+    assert it["food"] is None and it["src"] == {"text": "Bread", "amount": 2, "unit": "slice", "name": "Bread", "note": None}
+    assert (r["matched"], r["needed"], r["complete"]) == (1, 2, False)
+    # an imported row keeps its own line
+    imp = imported(a)
+    i0 = imp["items"][0]
+    a.patch(f"/api/meals/{imp['id']}/items/{i0['id']}", json={"food_id": bread["id"], "amount": 2, "unit": "slice"})
+    back = a.patch(f"/api/meals/{imp['id']}/items/{i0['id']}", json={"food_id": None}).json()["items"][0]
+    assert back["src"]["text"] == "2 slices bread"
+
+
+def test_add_a_line_a_matched_row_and_position(a, b):
+    m, bread, pb = finished(a)
+    url = f"/api/meals/{m['id']}/items"
+    r = a.post(url, json={"src": {"name": "olive oil", "amount": 1, "unit": "tbsp"}})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert [i["id"] for i in body["items"]][-1] == body["added"] and len(body["items"]) == 3
+    new = body["items"][2]
+    assert new["food"] is None and new["src"]["text"] == "1 tbsp olive oil" and new["src"]["name"] == "olive oil"
+    assert (body["matched"], body["needed"], body["complete"]) == (2, 3, False)
+    # a matched row, put in at a position
+    r = a.post(url, json={"food_id": bread["id"], "amount": 1, "unit": "slice", "position": 0, "src": {"name": "bread", "text": "1 slice bread"}}).json()
+    assert [i["id"] for i in r["items"]][0] == r["added"] and r["items"][0]["matched"] and r["items"][0]["src"]["text"] == "1 slice bread"
+    assert [i["food_id"] for i in r["items"]] == [bread["id"], bread["id"], pb["id"], None]
+    # skipped and check restore
+    r = a.post(url, json={"food_id": pb["id"], "amount": 1, "unit": "tbsp", "check": True, "skipped": True, "position": 99}).json()
+    last = r["items"][-1]
+    assert last["id"] == r["added"] and last["check"] and last["skipped"]
+    assert b.post(url, json={"src": {"name": "x"}}).status_code == 404
+    assert a.get(f"/api/meals/{m['id']}").json()["items"][0]["src"]["text"] == "1 slice bread"
+
+
+@pytest.mark.parametrize("body", [{}, {"amount": 1}, {"src": {}}, {"src": {"name": ""}}, {"src": {"name": "x", "evil": 1}}, {"src": "x"},
+                                  {"src": {"name": "x"}, "position": -1}, {"src": {"name": "x"}, "position": "a"}, {"src": {"name": "x"}, "skipped": "y"},
+                                  {"src": {"name": "x"}, "check": True}, {"src": {"name": "x"}, "amount": 1}, {"food_id": 999, "amount": 1, "unit": "slice"},
+                                  {"food_id": 1, "amount": 1, "unit": "banana"}, {"src": {"name": "x"}, "extra": 1}])
+def test_add_item_validation(a, body):
+    m, bread, pb = finished(a)
+    assert a.post(f"/api/meals/{m['id']}/items", json=body).status_code in (400, 404)
+    assert len(a.get(f"/api/meals/{m['id']}").json()["items"]) == 2
+
+
+def test_add_item_cap_and_remove(a, b):
+    m, bread, pb = finished(a)
+    url = f"/api/meals/{m['id']}/items"
+    ids = [i["id"] for i in m["items"]]
+    r = a.delete(f"{url}/{ids[0]}")
+    assert r.status_code == 200 and [i["id"] for i in r.json()["items"]] == [ids[1]] and r.json()["kcal"] == 380
+    assert a.delete(f"{url}/{ids[1]}").status_code == 409  # the last row stays
+    assert a.delete(f"{url}/{ids[0]}").status_code == 404
+    assert b.delete(f"{url}/{ids[1]}").status_code == 404
+    full = a.post("/api/meals/import", json={"name": "Big", "ingredients": [{"name": f"x{i}"} for i in range(100)]}).json()
+    assert a.post(f"/api/meals/{full['id']}/items", json={"src": {"name": "one more"}}).status_code == 409
+
+
+def test_a_removed_row_can_be_put_back_where_it_was(a):
+    m, bread, pb = finished(a)
+    ids = [i["id"] for i in m["items"]]
+    url = f"/api/meals/{m['id']}/items"
+    a.delete(f"{url}/{ids[0]}")
+    r = a.post(url, json={"food_id": bread["id"], "amount": 2, "unit": "slice", "position": 0}).json()
+    assert [i["food_id"] for i in r["items"]] == [bread["id"], pb["id"]] and r["kcal"] == 560 and r["complete"]

@@ -1243,6 +1243,13 @@ def apply_item(c, item_id: int, body: dict) -> None:
     """Match ({food_id, amount, unit, check?}), unmatch ({food_id: null}) and or skip ({skipped}) one checked row.
     A match clears skipped unless skipped is sent too; skipped is applied last."""
     if "food_id" in body and body["food_id"] is None:
+        row = c.execute("SELECT mi.src_text, mi.src_name, mi.amount, mi.unit, f.name FROM meal_items mi LEFT JOIN foods f ON f.id=mi.food_id "
+                        "WHERE mi.id=?", (item_id,)).fetchone()
+        if row and row["src_text"] is None and row["src_name"] is None and row["name"]:
+            # A row of a recipe built by hand has no imported line. Unmatching must not leave a row with no name, so the food's
+            # name and amount become its line, and the row can be searched again on Match Ingredients.
+            c.execute("UPDATE meal_items SET src_text=?, src_name=?, src_amount=?, src_unit=? WHERE id=?",
+                      (row["name"][:300], row["name"][:200], row["amount"], row["unit"], item_id))
         c.execute("UPDATE meal_items SET food_id=NULL, amount=NULL, unit=NULL, needs_check=0 WHERE id=?", (item_id,))
     elif "food_id" in body:
         food = need_food(c, whole_id(body["food_id"], "food_id"))
@@ -1294,6 +1301,57 @@ def patch_meal_items(meal_id: int, user: CurrentUser, body: dict = Body(...)):
             except HTTPException as e:
                 raise HTTPException(e.status_code, f"row {i}: {e.detail}")
         return meal_dict(c, own_meal(c, user["id"], meal_id))
+
+
+ADD_KEYS = {"src", "food_id", "amount", "unit", "check", "skipped", "position"}
+
+
+@router.post("/meals/{meal_id}/items")
+def add_meal_item(meal_id: int, user: CurrentUser, body: dict = Body(...)):
+    """Add one ingredient row to my recipe (Match Ingredients). {"src": {text?, amount?, unit?, name, note?}} adds an unmatched line;
+    "food_id" with "amount" and "unit" (and "check"?) attaches a food; both may be sent (Back on Match Ingredients puts a removed
+    row back this way, with "skipped" and "position", the 0 based place in the list). The row goes last without a position.
+    Answers the recipe plus "added", the new row's id."""
+    if not body or set(body) - ADD_KEYS or ("src" not in body and "food_id" not in body):
+        raise bad("Send src (the ingredient line) and or food_id with amount and unit")
+    if "skipped" in body and not isinstance(body["skipped"], bool):
+        raise bad("skipped must be true or false")
+    if "check" in body and (not isinstance(body["check"], bool) or body.get("food_id") is None):
+        raise bad("check must be true or false and needs food_id")
+    if "food_id" not in body and {"amount", "unit"} & body.keys():
+        raise bad("Send food_id together with amount and unit")
+    src = import_row(body["src"]) if "src" in body else (None,) * 5
+    pos = body.get("position")
+    if pos is not None and (isinstance(pos, bool) or not isinstance(pos, int) or pos < 0):
+        raise bad("position must be a whole number of 0 or more")
+    with db.conn() as c:
+        row = own_meal(c, user["id"], meal_id)
+        ids = [r["id"] for r in c.execute("SELECT id FROM meal_items WHERE meal_id=? ORDER BY position, id", (meal_id,))]
+        if len(ids) >= MAX_IMPORT_ROWS:
+            raise HTTPException(409, f"A recipe can have at most {MAX_IMPORT_ROWS} ingredients")
+        food_id = amount = unit = None
+        if body.get("food_id") is not None:
+            food = need_food(c, whole_id(body["food_id"], "food_id"))
+            amount, unit = check_amount_unit(food, body.get("amount"), body.get("unit"))
+            food_id = food["id"]
+        cur = c.execute("INSERT INTO meal_items(meal_id, food_id, amount, unit, position, src_text, src_amount, src_unit, src_name, src_note,"
+                        " skipped, needs_check) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (meal_id, food_id, amount, unit, len(ids), *src, int(body.get("skipped") is True), int(body.get("check") is True)))
+        ids.insert(len(ids) if pos is None else min(pos, len(ids)), cur.lastrowid)
+        c.executemany("UPDATE meal_items SET position=? WHERE id=?", [(i, x) for i, x in enumerate(ids)])
+        return {**meal_dict(c, row), "added": cur.lastrowid}
+
+
+@router.delete("/meals/{meal_id}/items/{item_id}")
+def delete_meal_item(meal_id: int, item_id: int, user: CurrentUser):
+    """Remove one ingredient row from my recipe. The last row cannot be removed (delete the recipe instead)."""
+    with db.conn() as c:
+        row = own_meal(c, user["id"], meal_id)
+        own_item(c, meal_id, item_id)
+        if c.execute("SELECT COUNT(*) FROM meal_items WHERE meal_id=?", (meal_id,)).fetchone()[0] <= 1:
+            raise HTTPException(409, "A recipe needs at least one ingredient. Delete the recipe instead.")
+        c.execute("DELETE FROM meal_items WHERE id=?", (item_id,))
+        return meal_dict(c, row)
 
 
 @router.post("/meals/{meal_id}/log")

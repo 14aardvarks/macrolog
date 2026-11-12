@@ -344,11 +344,10 @@ Screens: Login, Today, Add, Recipes, Picker, Claude fallback, Settings. Bottom n
 - Recipes tab (js/recipes.js, helpers in js/recipeimport.js): New Recipe and Import Recipe buttons, then my recipes with "3 of 8 matched"
   or "N items - kcal", servings and meal tags. A partial recipe opens Match Ingredients; a complete one opens the recipe screen: Log
   (Meal, Amount and a unit from meal.portions: servings, % of recipe, and the yield units when a yield is set; POST /api/meals/{id}/log
-  with amount and unit, so the server scales it), Adjust Items (the log checklist, starting at that share), Serving Size (js/servingsize.js:
+  with amount and unit, so the server scales it), the Ingredients list with Edit Ingredients (opens Match Ingredients with edit true), Meal Tags, Rename, Steps, Serving Size (js/servingsize.js:
   servings, Total yield amount and unit, Use Total of Ingredients when the yield is blank and ingredient_grams is known, which fills it
-  in grams and saves at once; Save Serving Size) and the Saved tools (tags, Rename, Edit Items; saved.js recipeRow with noDelete), then a Delete Recipe button (btn danger, after the
-  Edit list; only on this screen, not on Match Ingredients). It asks "Delete This Recipe?" (saved.js `deleteRecipe`, the same confirm and DELETE /api/meals/{id} as Saved's Delete) and then goes back to the Recipes tab list.
-  The log checklist (Add, Recipes sub-tab, and Adjust Items) has the same Amount and unit at the top; changing them scales every row by
+  in grams and saves at once; Save Serving Size), then a Delete Recipe button (btn danger, last; only on this screen, not on Match Ingredients). It asks "Delete This Recipe?" (saved.js `deleteRecipe`, the same confirm and DELETE /api/meals/{id} as Saved's Delete) and then goes back to the Recipes tab list.
+  The log checklist (Add, Recipes sub-tab only; the recipe screen no longer has Adjust Items) has the same Amount and unit at the top; changing them scales every row by
   the same factor, so amounts changed by hand keep their ratio, and switching units keeps the same share of the recipe. New Recipe,
   Import, Match Ingredients and the recipe screen mark the Recipes tab; Save, Save and Continue, Cancel, Back and Done come back to it.
 - Start screen is a per-user setting (`today`, `scan`, `search`, `ai`) fetched from /api/settings after login. Today = running macros.
@@ -451,7 +450,7 @@ Screens: Login, Today, Add, Recipes, Picker, Claude fallback, Settings. Bottom n
   When one is installed and waiting while another controls the page (or a new worker took over by itself), a sticky bar at the top of the app
   reads "Update Available" with a Reload button (role status, light and dark). Reload posts `{type: 'SKIP_WAITING'}` to the waiting worker (sw.js
   answers with skipWaiting), then reloads on controllerchange (with a short timer as a fallback). A fresh install, with no earlier controller,
-  shows nothing. The page also asks the registration for a newer worker whenever it becomes visible. Bump the sw.js cache name (now v41) with
+  shows nothing. The page also asks the registration for a newer worker whenever it becomes visible. Bump the sw.js cache name (now v42) with
   every change to the shell and list new js files in SHELL.
 - Do not ship a mock server. Test pure helpers (picker math, number formatting, day grouping) with node scripts in tests/ui,
   run with `node --test tests/ui`. Keep those helpers in their own module (js/util.js) so node can import them.
@@ -478,3 +477,30 @@ Maximize compatibility. Every feature needs a working fallback, and nothing may 
 ## Quality bar
 
 Every module ships with tests that run offline in under 10 seconds. No secrets in code. No print debugging. Clear error messages. Keep functions short.
+
+## Match With Search, editing on Match Ingredients, Add order (v42)
+
+- Match Selected has a method switch "Match With: Search | Claude" (js/recipeflow.js, helpers in recipeimport.js `MATCH_METHODS`, `matchMethod`,
+  `methodBatch`, `matchDoneText`; segmented buttons with aria-pressed, session state ctx.flow.method, default Search; the switch is hidden and
+  Search is used when Claude is off or not set up). The button reads Match Selected With Search or With Claude. Checkboxes and Select All show on every
+  row that is not skipped, with or without Claude. Claude keeps its confirm dialog, cost and 15 rows per request; Search has no confirm, uses no
+  credit and takes up to 40 rows (the rest stay ticked, and the note says so). Ask Claude on a row always uses Claude.
+- `POST /api/recipes/{meal_id}/match-search` {"item_ids": 1..40, "source"?: all|off|fdc} -> {"proposals", "method": "search"} (recipe_ai.py). No key,
+  feature switch or cap is checked and Claude is never called. Candidates per row: my own foods (favorites, past foods that are not hidden, foods I
+  made), then foods saved on the server, USDA and Open Food Facts (top 5 each; source off or fdc restricts all of them, own foods included). Scoring
+  (`name_score`, `pick_best`) is word overlap with light singulars; the part of a name before its first comma counts as its own name ("Butter, salted"
+  is Butter). Class 2 is the same words, 1 holds every query word, 0 at least half; nothing else is a candidate. Order: class, then my own foods, then
+  overlap score, then the shorter name before any comma, then source order (own, server, USDA, Open Food Facts). So "butter" picks Butter over
+  Peanut butter, and my own food wins only against an equal class. An exact name among my own foods skips the network; a repeated name is looked up
+  once. Proposals have the Claude shape (kind candidate or none, food, amount and unit through units.match_amount on the recipe line, check, grams,
+  preview, warnings) plus method "search" and a note ("Same name in USDA", "Closest name in your foods"). No candidate gives kind none with
+  "No match found." and nothing is saved; a chosen remote food is saved like Claude's. Accept, Accept N Suggested Matches, Change and Skip work as before;
+  the heading reads Suggested Match (Search Result when none).
+- Editing: Edit Ingredients on the recipe screen and in Saved opens Match Ingredients with params.edit (same page, a different intro; Back and Next unchanged).
+  Every row has Search, Scan Barcode, Ask Claude, Edit Amount, Skip and Remove (not when one row is left); Add Ingredient takes a typed line
+  (split by parseIngredientLine) with Add or Add and Search. `POST /api/meals/{id}/items` {"src"?, "food_id"?, "amount"?, "unit"?, "check"?,
+  "skipped"?, "position"?} adds a row (409 past 100) and answers the recipe plus "added"; `DELETE /api/meals/{id}/items/{item_id}` removes one
+  (409 for the last). Unmatching a row that has no imported line (a recipe built by hand) keeps the food's name and amount as its line, so it can be
+  searched again. The match snapshot keeps each row's line; Back (restoreBody: remove, add with position, items, meal) deletes rows added since, puts
+  removed rows back in place and restores the rest. The old checklist (js/app.js mealScreen) is only for logging from Add, Recipes.
+- Add screen order, top to bottom: Enter Manually and Scan Barcode (equal width), Search, Source, Meal (not in ingredient mode), the tabs and lists.
