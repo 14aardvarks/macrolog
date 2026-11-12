@@ -188,6 +188,12 @@ DELETE /api/foods/{id}                               # creator only; 409 when in
 Recipe ingredients (meal_items) may be unmatched: food_id, amount and unit are null and src_text, src_amount, src_unit, src_name,
 src_note keep the imported line; skipped rows count for nothing. Databases with the old NOT NULL food_id are rebuilt once in one
 transaction by core.init (ids and positions kept). meals.servings (REAL, null = 1) is how many servings the recipe makes.
+Total yield: meals.yield_amount (REAL) and meals.yield_unit (TEXT), both null = not set, added in place by core.init. The unit is a
+weight or volume unit (core.YIELD_UNITS: g kg oz lb ml l floz cup tbsp tsp), the amount above 0 and at most 1000000. Each meal carries
+`yield` ({"amount","unit"} or null), `portions` ([{"unit","label","whole"}]: serving (whole = servings), pct (percent of the recipe,
+whole = 100, always), and with a yield its unit first, then the other units of the same family converted exactly) and
+`ingredient_grams` (the total weight of a complete recipe when every counted row has an exact weight, a weight unit or the food's own
+serving_g, else null; the client offers it as Use Total of Ingredients).
 Each meal item carries id, src, skipped, matched, check and grams (unmatched rows have food null and null nutrients); each meal carries servings,
 totals and per_serving (matched, not skipped rows; a micronutrient is null when no counted row knows it), matched, needed
 (rows not skipped), skipped, checks, steps and complete.
@@ -203,14 +209,18 @@ POST /api/meals/from-meal {"name","day","meal": breakfast|lunch|dinner|snack|nul
         # each of that day and meal; at least one id, else 400; the recipe is tagged with that meal. The Today screen uses only this route (no day level recipe).
 POST /api/meals/from-day {"name","day","entry_ids"?}      # legacy API, not used by the app
 DELETE /api/meals/{id}
-POST /api/meals/{id}/log {"day"?,"meal"?,"items"?:[{"food_id","amount","unit"}]}   # items override amounts, otherwise saved amounts
+POST /api/meals/{id}/log {"day"?,"meal"?,"items"?:[{"food_id","amount","unit"}],"amount"?,"unit"?}   # items override amounts, otherwise saved amounts
+        # amount and unit (one of the meal's portions units) log that share of the whole recipe: amount / whole, at most 100
+        # whole recipes, every saved amount scaled by it (core.recipe_fraction). Without them the whole saved recipe, as before.
         # 409 unless every ingredient is matched or skipped and at least one is matched (skipped rows are never logged)
 POST /api/meals/import {"name","servings"?: number 0..1000,"meals"?,"steps"?:[str],"ingredients":[{"text"?,"amount"?,"unit"?,"name","note"?}]} (1..100) -> meal
         # saves an imported recipe at once with every ingredient unmatched
 GET  /api/meals/{id} -> meal
 PATCH /api/meals/{id}/items/{item_id} {"food_id","amount","unit","check"?: bool} | {"food_id": null} | {"skipped": bool} -> meal   # match, unmatch, skip
-        # check true attaches the food as Check Amount; check needs a food_id
-PATCH /api/meals/{id} also takes "servings" (null = 1) and "steps" (any time); "items" answers 409 while the recipe has unmatched, skipped or Check Amount rows
+        # check true attaches the food as Check Amount; check needs a food_id; skipped sent with a match is applied after it
+PATCH /api/meals/{id}/items {"items":[{"id", ...same body as one row}]} (1..100 rows, each once) -> meal   # all or nothing, used by
+        # Accept All, Skip All and Back on Match Ingredients
+PATCH /api/meals/{id} also takes "servings" (null = 1), "yield" ({"amount","unit"} or null) and "steps" (any time); "items" answers 409 while the recipe has unmatched, skipped or Check Amount rows
 GET/PUT /api/goals   {"kcal","carb_pct","protein_pct","fat_pct"}  pcts total 100. Default 3000 and 50/30/20 (carbs/protein/fat).
         targets: carbs g = kcal*pct/4, protein same, fat g = kcal*pct/9. Goals are per user.
 GET/PUT /api/settings {"start_screen": "today"|"scan"|"search"|"ai", "default_meal": ...}   # per user, validated
@@ -333,9 +343,13 @@ Mobile first, one-hand use, also fine on desktop. Plain ES modules, under about 
 Screens: Login, Today, Add, Recipes, Picker, Claude fallback, Settings. Bottom nav: Today, Add, Recipes, Settings.
 - Recipes tab (js/recipes.js, helpers in js/recipeimport.js): New Recipe and Import Recipe buttons, then my recipes with "3 of 8 matched"
   or "N items - kcal", servings and meal tags. A partial recipe opens Match Ingredients; a complete one opens the recipe screen: Log
-  (Meal and Servings, POST /api/meals/{id}/log with every matched, not skipped item scaled to the servings), Adjust Items (the log
-  checklist, starting at the chosen servings) and the Saved tools (tags, Rename, Edit Items, Delete; saved.js recipeRow). New Recipe,
-  Import, Match Ingredients and the recipe screen mark the Recipes tab; Save, Save and Continue, Cancel and Save and Exit come back to it.
+  (Meal, Amount and a unit from meal.portions: servings, % of recipe, and the yield units when a yield is set; POST /api/meals/{id}/log
+  with amount and unit, so the server scales it), Adjust Items (the log checklist, starting at that share), Serving Size (js/servingsize.js:
+  servings, Total yield amount and unit, Use Total of Ingredients when the yield is blank and ingredient_grams is known, which fills it
+  in grams and saves at once; Save Serving Size) and the Saved tools (tags, Rename, Edit Items, Delete; saved.js recipeRow).
+  The log checklist (Add, Recipes sub-tab, and Adjust Items) has the same Amount and unit at the top; changing them scales every row by
+  the same factor, so amounts changed by hand keep their ratio, and switching units keeps the same share of the recipe. New Recipe,
+  Import, Match Ingredients and the recipe screen mark the Recipes tab; Save, Save and Continue, Cancel, Back and Done come back to it.
 - Start screen is a per-user setting (`today`, `scan`, `search`, `ai`) fetched from /api/settings after login. Today = running macros.
 - Today: Calorie Split chart, then the Macro Nutrients heading with bars for calories, carbs, protein, fat showing `value / target (percent)`,
   then a Micro Nutrients section (heading with a small arrow button, aria-expanded, open state saved as micros_open) with one thin bar row per
@@ -383,13 +397,24 @@ Screens: Login, Today, Add, Recipes, Picker, Claude fallback, Settings. Bottom n
   Match Ingredients. Rows show "Food [source] - 1 cup, 125 g - 455 kcal". A Check Amount row has a chip and a small inline amount and
   unit editor (Confirm Amount); matched rows have Edit Amount for the same editor. Check Amount rows count for nothing until confirmed.
 - Import Recipe (Recipes tab button next to New Recipe; Read With Claude and Match With Claude hidden while ai_allow_recipe is off, js/recipeflow.js with pure helpers in js/recipeimport.js): step 1 is Paste Text
-  (Read With Claude, or Split Lines Without Claude which parses locally and uses no credit) or Photos (up to 3, toJpeg), then a review
+  (Read With Claude, or Split Lines Without Claude which parses locally and uses no credit) or Photos ("Choose up to 3 photos", toJpeg;
+  choosing more keeps the first 3 and says so, the server refuses more than 3), then a review
   screen (name, servings, ingredient rows with amount, unit, name and note, add and remove, Steps, meal tag chips, Save and Continue, Cancel).
   Save and Continue posts /api/meals/import and opens Match Ingredients ("Saved", "Step 2 of 2"): per row the line and its state, Search
   and Scan Barcode (the ingredient finder in ingredient mode; a picked food is matched at once by autoMatch, no picker), Ask Claude,
   Edit Amount or the Check Amount editor, Skip; checkboxes, Select All
-  and Match Selected With Claude; proposals with Accept and Change; per serving macros and micronutrients; Save and Next (next unmatched
-  row) and Save and Exit. Recipes on the Recipes tab, Add and Saved show "N of M matched" for partial recipes and open matching instead of logging.
+  and Match Selected With Claude; proposals with Accept and Change; once proposals are waiting, Accept N Suggested Matches (primary, above
+  Select All) accepts them all in one bulk PATCH (estimates are saved as foods first, kept on the proposal so a retry never saves twice)
+  and disappears when none are left; Skip All (confirm) skips every unmatched row in one bulk PATCH; Serving Size (servings, total yield,
+  Use Total of Ingredients, saved as each box changes) with a "Last step" note when Next has become Done; per serving macros and
+  micronutrients; Back and Next at the bottom.
+  Saving on Match Ingredients: each row change is still written at once, but only Next counts as a save. A visit (a token kept in the
+  match history entry, so a return from the food finder is the same visit) keeps a snapshot of the rows, servings and yield from opening
+  or the last Next (recipeimport.js matchSnapshot). Next replaces the snapshot and moves to the next unmatched or Check Amount row; with
+  no other such row it reads Done, which saves and goes back (to the Recipes tab, or wherever matching was opened). Back (top and bottom)
+  leaves at once when nothing changed; otherwise it asks "Discard Changes?" and writes the snapshot back (restoreBody: one bulk PATCH for
+  the rows, PATCH servings and yield) before leaving. Leaving by the bottom nav or the browser back keeps the changes. Accepted Claude
+  estimates stay as foods. Recipes on the Recipes tab, Add and Saved show "N of M matched" for partial recipes and open matching instead of logging.
 - Saved (Settings, then Saved): Favorites, Recipes and My foods lists with meal tag chips, rename, delete, recipe item editing, Remove From My Lists, and the food form for My foods.
   Refresh Nutrients (js/refresh.js) is a button in the food edit form (shown for every edited food, with a hint when it has no barcode) and in the picker (only when the food can be looked up and has a blank nutrient); it fills the blank boxes and never overwrites. My Foods also has Refresh All Missing, at most 10 foods per tap, one after another, stopping at a rate limit, with a summary of how many were done and how many are left.
   Refresh logged foods (refreshLoggedControl in js/refresh.js): Today has a Refresh Nutrients button under Micro Nutrients (the logged foods of the viewed day, hidden when nothing needs it) and Settings has Refresh All Logged Foods (every food ever logged). Both take ids from /api/foods/missing-nutrients, say how many foods will be checked, run at most 10 per tap one after another, stop at once on a 429 with a rate limit message, skip foods without a source, remember which foods were already checked this visit so tapping again continues, and report foods checked, values filled and foods left. Today repaints after a batch.

@@ -442,3 +442,10 @@ textarea { font: inherit; color: inherit; width: 100%; min-height: 160px; paddin
 /* Recipes tab */
 .recipes-actions { margin-bottom: 12px; }
 .recipe-log { align-items: end; }
+/* Serving Size (recipe screen and the last step of Match Ingredients) */
+.serving-size { margin: 0 0 12px; }
+.serving-size .field > label { display: block; font-size: .875rem; color: var(--muted); margin-bottom: 4px; }
+.yield-row { flex-wrap: nowrap; gap: 8px; }
+.yield-row > input { flex: 1 1 6em; min-width: 0; }
+.yield-row > select { flex: 1 1 7em; min-width: 0; }
+.serving-size .row.wrap { align-items: center; gap: 8px; margin: 0 0 8px; }

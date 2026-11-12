@@ -131,7 +131,7 @@ test('proposal and notice wording', () => {
 });
 
 // ---------- Recipes tab ----------
-import { tagsText, servingsText, recipeListSub, logItems, perServingText, logAmountText } from '../../app/static/js/recipeimport.js';
+import { tagsText, servingsText, recipeListSub, perServingText, logAmountText } from '../../app/static/js/recipeimport.js';
 
 const F = { id: 9, name: 'Oats' };
 const tabMeal = (over) => ({ id: 1, name: 'Porridge', servings: 4, meals: ['dinner', 'breakfast'], complete: true, matched: 3, needed: 3, skipped: 1,
@@ -154,16 +154,6 @@ test('servingsText', () => {
 test('recipeListSub shows matching progress for partial recipes', () => {
   assert.equal(recipeListSub(tabMeal({ complete: false, matched: 3, needed: 8, skipped: 0, meals: [] }), '0'), '3 of 8 matched · Makes 4 servings · Untagged');
   assert.equal(recipeListSub(tabMeal(), '1000'), '3 items - 1000 kcal · Makes 4 servings · Breakfast, Dinner');
-});
-
-test('logItems scales matched, not skipped rows to the chosen servings', () => {
-  assert.deepEqual(logItems(tabMeal(), '1').items, [{ food_id: 9, amount: 0.5, unit: 'cup' }, { food_id: 10, amount: 25, unit: 'g' }, { food_id: 11, amount: 0.75, unit: 'tbsp' }]);
-  assert.deepEqual(logItems(tabMeal(), '2').items.map((i) => i.amount), [1, 50, 1.5]);
-  assert.deepEqual(logItems(tabMeal(), '1/2').items.map((i) => i.amount), [0.25, 12.5, 0.375]);
-  assert.deepEqual(logItems(tabMeal({ servings: null }), 1).items.map((i) => i.amount), [2, 100, 3]);
-  assert.deepEqual(logItems(tabMeal({ servings: 3 }), '1').items.map((i) => i.amount), [0.6667, 33.3333, 1]);
-  for (const bad of ['', '0', '-1', 'abc', '101']) assert.match(logItems(tabMeal(), bad).error, /Servings/);
-  assert.match(logItems(tabMeal({ items: [{ food: null, food_id: null, amount: null, unit: null }] }), '1').error, /no matched/);
 });
 
 test('perServingText and logAmountText', () => {

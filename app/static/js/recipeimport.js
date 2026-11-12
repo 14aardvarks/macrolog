@@ -214,18 +214,6 @@ export function recipeListSub(meal, kcalText) {
   return [recipeSubText(meal, kcalText), servingsText(meal), tagsText(meal.meals)].join(' · ');
 }
 
-// Items for POST /api/meals/{id}/log: every matched, not skipped ingredient for `servings` of a recipe that makes meal.servings.
-// Returns { items } or { error }.
-export function logItems(meal, servings) {
-  const n = typeof servings === 'number' ? servings : parseAmount(servings);
-  if (n == null || !(n > 0) || n > 100) return { error: 'Servings must be a number above zero.' };
-  const per = meal.servings > 0 ? meal.servings : 1;
-  const items = (meal.items || []).filter((it) => it.food && !it.skipped && it.food_id != null)
-    .map((it) => ({ food_id: it.food_id, amount: Math.round((it.amount * n / per) * 10000) / 10000, unit: it.unit }));
-  if (!items.length) return { error: 'This recipe has no matched ingredients to log.' };
-  return { items };
-}
-
 // One line of per serving numbers: "520 kcal, 60 g carbs, 20 g protein, 18 g fat".
 export function perServingText(meal, fmt) {
   const p = meal.per_serving || {};
@@ -237,4 +225,128 @@ export function perServingText(meal, fmt) {
 export function logAmountText(want, per) {
   if (per > 1) return 'Amounts are for ' + servingText(want) + ' of ' + servingText(per) + ' servings.';
   return want !== 1 ? 'Amounts are for ' + servingText(want) + ' servings.' : '';
+}
+
+// ---------- Match Ingredients: last saved state, Back and Next ----------
+
+// The part of a row that Match Ingredients can change.
+const rowState = (it) => ({ id: it.id, food_id: it.food_id == null ? null : it.food_id, amount: it.food_id == null ? null : it.amount,
+  unit: it.food_id == null ? null : it.unit, skipped: !!it.skipped, check: !!it.check });
+const sameYield = (a, b) => (!a && !b) || (!!a && !!b && a.amount === b.amount && a.unit === b.unit);
+
+// What the recipe looked like at the last save (opening the screen, or Next). Back writes this back.
+export function matchSnapshot(meal) {
+  return { items: (meal.items || []).map(rowState), servings: meal.servings, yield: meal.yield ? { ...meal.yield } : null };
+}
+
+const sameRow = (a, b) => a.food_id === b.food_id && a.amount === b.amount && a.unit === b.unit && a.skipped === b.skipped && a.check === b.check;
+
+// What Back has to write to undo every change since the snapshot: { items: [bulk rows], meal: PATCH body or null }.
+// Nothing to undo gives { items: [], meal: null }.
+export function restoreBody(base, meal) {
+  const now = {};
+  (meal.items || []).forEach((it) => { now[it.id] = rowState(it); });
+  const items = base.items.filter((b) => now[b.id] && !sameRow(b, now[b.id])).map((b) => (b.food_id == null
+    ? { id: b.id, food_id: null, skipped: b.skipped }
+    : { id: b.id, food_id: b.food_id, amount: b.amount, unit: b.unit, check: b.check, skipped: b.skipped }));
+  const patch = {};
+  if (base.servings !== meal.servings) patch.servings = base.servings;
+  if (!sameYield(base.yield, meal.yield)) patch.yield = base.yield;
+  return { items, meal: Object.keys(patch).length ? patch : null };
+}
+
+export function changedSince(base, meal) {
+  const r = restoreBody(base, meal);
+  return r.items.length > 0 || r.meal != null;
+}
+
+// Next moves to the next unmatched or Check Amount row. When no other row is left it becomes Done (save and leave).
+export function nextStep(items, current) {
+  const open = items.map((it, i) => [matchState(it), i]).filter(([s, i]) => (s === 'unmatched' || s === 'check') && i !== current);
+  if (!open.length) return { done: true, index: -1 };
+  return { done: false, index: nextUnmatched(items, current < 0 ? null : current) };
+}
+
+// Claude suggestions that Accept All would apply: a food was proposed and the row is not skipped.
+export function pendingProposals(items, props) {
+  return items.filter((it) => !it.skipped && props[it.id] && props[it.id].food).map((it) => ({ item: it, p: props[it.id] }));
+}
+
+export function acceptAllText(n) { return 'Accept ' + n + (n === 1 ? ' Suggested Match' : ' Suggested Matches'); }
+
+// Rows Skip All marks skipped: the unmatched ones (Check Amount rows already have a food).
+export function skipAllIds(items) { return items.filter((it) => matchState(it) === 'unmatched').map((it) => it.id); }
+
+// ---------- serving size and logging part of a recipe ----------
+
+// Units a total yield can use, in the server's spelling (core.YIELD_UNITS).
+export const YIELD_UNITS = [['g', 'g'], ['kg', 'kg'], ['oz', 'oz'], ['lb', 'lb'], ['ml', 'ml'], ['l', 'l'], ['floz', 'fl oz'], ['cup', 'cup'], ['tbsp', 'tbsp'], ['tsp', 'tsp']];
+const YIELD_LABEL = {};
+YIELD_UNITS.forEach(([u, l]) => { YIELD_LABEL[u] = l; });
+
+// "1200 g", "6 cup", "1 1/2 l" for a yield, or '' when none.
+export function yieldText(y) { return y ? qtyText(y.amount, y.unit) + ' ' + (YIELD_LABEL[y.unit] || y.unit) : ''; }
+
+// The serving size boxes as a PATCH body: { body: { servings, yield } } or { error }. A blank yield clears it.
+export function servingSizeBody(servingsTextIn, amountText, unit) {
+  const s = parseAmount(servingsTextIn);
+  if (s == null || s <= 0 || s > 1000) return { error: 'Servings must be a number above zero.' };
+  if (!String(amountText || '').trim()) return { body: { servings: s, yield: null } };
+  const a = parseAmount(amountText);
+  if (a == null || a <= 0 || a > 1000000) return { error: 'The total yield must be a number above zero, or blank.' };
+  if (!YIELD_LABEL[unit]) return { error: 'Pick a unit for the total yield.' };
+  return { body: { servings: s, yield: { amount: a, unit } } };
+}
+
+// The units a recipe is logged in (meal.portions from the server, or servings and percent for an older reply).
+export function portionUnits(meal) {
+  if (meal.portions && meal.portions.length) return meal.portions;
+  return [{ unit: 'serving', label: 'servings', whole: meal.servings > 0 ? meal.servings : 1 }, { unit: 'pct', label: '% of recipe', whole: 100 }];
+}
+
+// Share of the whole recipe for amount (text or number) of unit: { fraction, amount } or { error }. Same rule as core.recipe_fraction.
+export function portionFraction(meal, amount, unit) {
+  const a = typeof amount === 'number' ? amount : parseAmount(amount);
+  const p = portionUnits(meal).find((x) => x.unit === unit);
+  if (a == null || !(a > 0) || !p) return { error: 'Enter an amount above zero.' };
+  const fraction = a / p.whole;
+  if (fraction > 100) return { error: 'That is more than 100 times the whole recipe.' };
+  return { fraction, amount: a };
+}
+
+// Matched, not skipped rows scaled to a share of the whole recipe, for the log checklist.
+export function portionItems(meal, fraction) {
+  return (meal.items || []).filter((it) => it.food && !it.skipped && it.food_id != null)
+    .map((it) => ({ ...it, amount: Math.round(it.amount * fraction * 10000) / 10000 }));
+}
+
+// The note on the log checklist: "Amounts are for 1 of 4 servings.", "Amounts are for 25% of the recipe.",
+// "Amounts are for 250 g of 1200 g." '' for the whole of a one serving recipe.
+export function portionNote(meal, amount, unit) {
+  const p = portionUnits(meal).find((x) => x.unit === unit);
+  if (!p) return '';
+  if (unit === 'serving') return logAmountText(amount, p.whole);
+  if (unit === 'pct') return amount === 100 ? 'Amounts are for the whole recipe.' : 'Amounts are for ' + fmtAmount(amount) + '% of the recipe.';
+  const label = YIELD_LABEL[unit] || unit;
+  return 'Amounts are for ' + qtyText(amount, unit) + ' ' + label + ' of ' + qtyText(p.whole, unit) + ' ' + label + '.';
+}
+
+// ---------- Import Recipe photos ----------
+
+export const MAX_PHOTOS = 3;  // same as ai.MAX_IMAGES on the server
+export const PHOTOS_TEXT = 'Choose up to 3 photos or screenshots of the ingredient list. Claude reads them and you check the result.';
+
+// The photos to send: at most MAX_PHOTOS, with a clear warning when more were chosen. { files, warning }
+export function photoPick(files, max = MAX_PHOTOS) {
+  const all = files || [];
+  if (all.length <= max) return { files: all.slice(), warning: '' };
+  return { files: all.slice(0, max), warning: 'You chose ' + all.length + ' photos. Choose up to ' + max + '. Only the first ' + max + ' will be sent.' };
+}
+
+// The amount in `unit` for a share of the recipe, rounded for the box: 1 decimal for percent, grams and millilitres, else 3.
+export function portionAmount(meal, fraction, unit) {
+  const p = portionUnits(meal).find((x) => x.unit === unit);
+  if (!p) return null;
+  const f = ['pct', 'g', 'ml'].indexOf(unit) >= 0 ? 10 : 1000;
+  return Math.round(fraction * p.whole * f) / f;
 }

@@ -1,7 +1,7 @@
 import { api, setUnauthorizedHandler } from './api.js';
 import { h, clear, select, field, message, show, cameraIcon, sourceBadge } from './dom.js';
 import {
-  MEALS, MEAL_LABELS, parseDecimal, parseAmount, amountText, servingText, setAmountFormat, unitLabel, fmtNum, fmtAmount, groupByMeal, checkedItems, canSaveRecipe, rowAmountText, applyRowPick, draftFits, localDate, progressText, remainingText,
+  MEALS, MEAL_LABELS, parseDecimal, parseAmount, amountText, servingText, qtyText, setAmountFormat, unitLabel, fmtNum, fmtAmount, groupByMeal, checkedItems, canSaveRecipe, rowAmountText, applyRowPick, draftFits, localDate, progressText, remainingText,
   sentence, matchAmount, newRecipeDraft, recipeAddRow, recipeSetRow, stepsBack, barWidth, debounce, digitsOnly, guessMeal, pctTotal, latestGuard, MEAL_FILTERS, MEAL_FILTER_LABELS, filterByMeal, filterSaved, pageOf, PAGE_SIZE, emptyText,
   DEFAULT_DISPLAY, searchSource, searchAction, searchHint, DESCRIPTION_TEXT, aiFeature, aiFeatureOff, searchSources, startSource,
 } from './util.js';
@@ -21,14 +21,14 @@ import { renderSaved } from './saved.js';
 import { renderRecipe } from './recipe.js';
 import { renderRecipes, renderRecipeView } from './recipes.js';
 import { renderImport, renderReview, renderMatch } from './recipeflow.js';
-import { recipeSubText, logAmountText } from './recipeimport.js';
+import { recipeSubText, portionUnits, portionFraction, portionItems, portionNote, portionAmount } from './recipeimport.js';
 import { renderClaudeSection, renderSignIn } from './claudekey.js';
 import { refreshLoggedControl } from './refresh.js';
 
 const main = document.getElementById('main');
 const nav = document.getElementById('nav');
 const state = { user: null, settings: { start_screen: 'today', default_meal: null, use_last: true, confirm_ai: true, amount_format: 'fraction' }, display: DEFAULT_DISPLAY, cleanup: null, depth: 0, tab: 'favorites', addMeal: null, draft: null, recipe: null, source: null, aiSt: null, claude: null,
-  importInput: null, importDraft: null, importBase: 0, proposals: {}, selections: {}, matchFocus: null };  // Import Recipe and Match Ingredients  // addMeal, source (null = the Default Search Source setting), aiSt (last /api/ai/status) and claude (last Claude estimate) live for the session only
+  importInput: null, importDraft: null, importBase: 0, proposals: {}, selections: {}, matchFocus: null, matchBase: {} };  // Import Recipe and Match Ingredients  // addMeal, source (null = the Default Search Source setting), aiSt (last /api/ai/status) and claude (last Claude estimate) live for the session only
 const NAV_OF = { today: 'today', settings: 'settings', admin: 'settings', saved: 'settings', editfood: 'settings',
   recipes: 'recipes', recipeview: 'recipes', recipe: 'recipes', import: 'recipes', importreview: 'recipes', match: 'recipes' };  // every other screen belongs to Add
 const FINDER = ['add', 'picker', 'scan', 'lookup', 'manual', 'ai'];  // screens New Recipe and Match Ingredients borrow from Add
@@ -89,6 +89,19 @@ const ctx = {
     selection(id) { return state.selections[id] || []; },
     setSelection(id, ids) { state.selections[id] = ids; },
     takeFocus() { const f = state.matchFocus; state.matchFocus = null; return f; },
+    // One visit of Match Ingredients, kept in its history entry, so a return from the food finder is the same visit.
+    visit(params) {
+      if (!params.visit) {
+        params.visit = 'v' + Date.now() + '-' + Math.floor(Math.random() * 1e6);
+        const hs = history.state;
+        if (hs && hs.name === 'match') history.replaceState({ ...hs, params: { ...hs.params, visit: params.visit } }, '');
+      }
+      return params.visit;
+    },
+    // The last saved state of a visit (matchSnapshot): set on opening and by Next, written back by Back.
+    base(v) { return state.matchBase[v]; },
+    setBase(v, snap) { state.matchBase[v] = snap; return snap; },
+    endVisit(v) { delete state.matchBase[v]; },
     // Search or Scan for one ingredient. The finder runs in ingredient mode; picking a food skips the amount screen
     // (autoMatch works the amount out from the recipe line, saves the match and returns to Match Ingredients).
     find(meal, item, how) {
@@ -561,35 +574,64 @@ async function lookupScreen(root, params) {
       h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back'))));
 }
 
+// The log checklist of a recipe. How much of the recipe (params.amount and params.unit: servings, % of the recipe or a
+// yield unit; older callers send params.servings) sets the starting amounts. Changing it scales every row, keeping edits.
 async function mealScreen(root, params) {
   const found = (await api.meals()).meals.find((m) => m.id === params.mealId);
   if (!found) throw new Error('Recipe not found');
   if (!found.complete) { await go('match', { mealId: found.id }, true); return; }  // not loggable until matched
-  // Skipped ingredients are left out. A recipe that makes several servings starts at one serving, or params.servings
-  // when the Recipes tab chose how many.
-  const per = found.servings > 1 ? found.servings : 1;
-  const want = params.servings != null && parseAmount(params.servings) > 0 ? parseAmount(params.servings) : 1;
-  const meal = { ...found, items: found.items.filter((it) => it.food && !it.skipped).map((it) => ({ ...it, amount: it.amount * want / per })) };
+  const units = portionUnits(found);
+  const draft = draftFits(state.draft, found.id, state.depth, portionItems(found, 1).length) ? state.draft : null;
+  state.draft = null;
+  const start = draft && draft.portion ? draft.portion
+    : { amount: params.amount != null ? params.amount : params.servings != null ? params.servings : 1, unit: params.unit || 'serving' };
+  let unit = units.some((u) => u.unit === start.unit) ? start.unit : 'serving';
+  let pf = portionFraction(found, start.amount, unit);
+  if (pf.error) { unit = 'serving'; pf = portionFraction(found, 1, unit); }
+  let frac = pf.fraction;
+  let shareAmount = pf.amount;
+  const meal = { ...found, items: portionItems(found, frac) };  // skipped ingredients are left out
   const status = h('div', { 'aria-live': 'polite' });
   const mealSel = mealSelect(params.meal || defaultMeal());
-  const draft = draftFits(state.draft, meal.id, state.depth, meal.items.length) ? state.draft : null;
-  state.draft = null;
   if (draft && draft.meal !== undefined) mealSel.value = draft.meal;
+  const amountBox = field('Amount', { inputmode: 'decimal', autocomplete: 'off', value: qtyText(shareAmount, unit) });
+  const unitSel = select(units.map((u) => ({ value: u.unit, label: u.label })), unit, { 'aria-label': 'Amount unit' });
+  const note = h('p', { class: 'sub', 'aria-live': 'polite' }, portionNote(found, shareAmount, unit));
   const rows = meal.items.map((it, i) => {
     const d = draft ? draft.rows[i] : null;
     const row = { it, unit: d ? d.unit : it.unit };
+    row.num = d ? parseAmount(d.amount) : it.amount;
     row.box = h('input', { type: 'checkbox', checked: d ? d.checked : true, 'aria-label': 'Include ' + it.food.name });
     row.amt = h('input', { type: 'text', inputmode: 'decimal', value: d ? d.amount : rowAmountText(it.amount, it.unit), 'aria-label': 'Amount of ' + it.food.name });
+    row.amt.addEventListener('input', () => { row.num = parseAmount(row.amt.value); });
     row.unitEl = h('span', { class: 'unit' }, unitLabel(row.unit));
     const name = h('button', { class: 'item-name', type: 'button', 'aria-label': 'Adjust ' + it.food.name, onclick: () => adjust(i) },
       h('span', { class: 'item-name-text' }, it.food.name), h('span', { class: 'item-name-hint', 'aria-hidden': 'true' }, 'Adjust \u203A'));
     row.el = h('li', { class: 'item meal-item' }, row.box, name, row.amt, row.unitEl);
     return row;
   });
+  // A new amount or unit for the recipe scales every row by the same factor, so amounts changed by hand keep their ratio.
+  function rescale() {
+    const r = portionFraction(found, amountBox.input.value, unitSel.value);
+    if (r.error) { show(status, message(r.error, 'error')); return; }
+    show(status, null);
+    const k = r.fraction / frac;
+    frac = r.fraction;
+    shareAmount = r.amount;
+    unit = unitSel.value;
+    rows.forEach((x) => { if (x.num != null) { x.num = Math.round(x.num * k * 10000) / 10000; x.amt.value = rowAmountText(x.num, x.unit); } });
+    note.textContent = portionNote(found, shareAmount, unit);
+  }
+  amountBox.input.addEventListener('change', rescale);
+  unitSel.addEventListener('change', () => {
+    // Switching units keeps the same share of the recipe: 1 of 4 servings becomes 25% or 300 g of 1200 g.
+    amountBox.input.value = qtyText(portionAmount(found, frac, unitSel.value), unitSel.value);
+    rescale();
+  });
   // Open the picker for one ingredient. The screen is rebuilt on return, so every row is saved first.
   function adjust(i) {
     const r = rows[i];
-    state.draft = { mealId: meal.id, depth: state.depth, meal: mealSel.value,
+    state.draft = { mealId: meal.id, depth: state.depth, meal: mealSel.value, portion: { amount: shareAmount, unit },
       rows: rows.map((x) => ({ checked: x.box.checked, amount: x.amt.value, unit: x.unit })) };
     const a = parseAmount(r.amt.value);
     go('picker', { foodId: r.it.food_id, adjust: { index: i }, ...(a != null && a > 0 ? { amount: a, unit: r.unit } : { unit: r.unit }) });
@@ -603,7 +645,9 @@ async function mealScreen(root, params) {
   }
   root.appendChild(h('section', { class: 'screen' },
     h('div', { class: 'bar' }, h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back')),
-    h('h1', null, meal.name), logAmountText(want, per) ? h('p', { class: 'sub' }, logAmountText(want, per)) : null,
+    h('h1', null, meal.name),
+    h('div', { class: 'grid2 recipe-log' }, amountBox, h('label', { class: 'field' }, h('span', null, 'Of the recipe'), unitSel)),
+    note,
     h('ul', { class: 'list' }, rows.map((r) => r.el)),
     h('label', { class: 'field' }, h('span', null, 'Meal'), mealSel), status,
     h('button', { class: 'btn primary', type: 'button', onclick: log }, 'Log')));

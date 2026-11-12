@@ -1,5 +1,6 @@
 // Import Recipe (step 1: source, then a review draft) and Match Ingredients (step 2). The recipe is saved at the end of
-// step 1 with every ingredient unmatched, so leaving step 2 at any point keeps what was matched so far.
+// step 1 with every ingredient unmatched, so leaving step 2 never loses the recipe. On step 2 each change is written at once,
+// but only Next (or Done) makes it count as saved: Back writes the state of the last save back after asking Discard Changes?.
 import { api } from './api.js';
 import { h, clear, field, message, show, select, sourceBadge } from './dom.js';
 import { toJpeg } from './ai.js';
@@ -8,11 +9,12 @@ import { chips } from './saved.js';
 import { stepsEditor } from './steps.js';
 import { fmtNum, fmtAmount, centsText, sentence, parseAmount, rowAmountText, matchedAmountText, MICROS, microValue, aiFeature, aiFeatureOff } from './util.js';
 import {
-  parseIngredientText, reviewDraft, reviewBody, blankRow, matchState, matchCountText, nextUnmatched, toggleAll, toggleId,
-  matchBatch, proposalText, matchWhat, importWhat,
+  parseIngredientText, reviewDraft, reviewBody, blankRow, matchState, matchCountText, toggleAll, toggleId,
+  matchBatch, proposalText, matchWhat, importWhat, matchSnapshot, restoreBody, changedSince, nextStep, pendingProposals,
+  acceptAllText, skipAllIds, photoPick, PHOTOS_TEXT,
 } from './recipeimport.js';
+import { servingSizeEditor } from './servingsize.js';
 
-const MAX_PHOTOS = 3;
 const MAX_TEXT = 20000;  // same as ai.RECIPE_TEXT_MAX on the server
 const bar = (ctx) => h('div', { class: 'bar' }, h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back'));
 const costLine = (cost, what) => (cost == null ? null : h('p', { class: 'sub' }, what + ' cost about ' + centsText(cost) + '.'));
@@ -37,6 +39,7 @@ export async function renderImport(root, ctx) {
   note.input.addEventListener('input', () => { input.note = note.input.value; });
   const files = h('input', { type: 'file', accept: 'image/*', multiple: '', class: 'visually-hidden', onchange: onFiles });
   const fileList = h('p', { class: 'sub' }, 'No photos chosen.');
+  const photoNote = h('div', { 'aria-live': 'polite' });
   let chosen = [];
 
   const readText = h('button', { class: 'btn primary', type: 'button', onclick: sendText }, 'Read With Claude');
@@ -50,8 +53,8 @@ export async function renderImport(root, ctx) {
     show(status, null);
     if (input.kind === 'photos') {
       show(panel, h('div', null,
-        h('p', { class: 'sub' }, 'Photos or screenshots of the ingredient list, up to 3. Claude reads them and you check the result.'),
-        aiOn ? [h('label', { class: 'btn' }, 'Choose or Take Photos', files), fileList, note, h('div', { class: 'row wrap' }, readPhotos)] : noAi));
+        h('p', { class: 'sub' }, PHOTOS_TEXT),
+        aiOn ? [h('label', { class: 'btn' }, 'Choose or Take Photos', files), fileList, photoNote, note, h('div', { class: 'row wrap' }, readPhotos)] : noAi));
     } else {
       show(panel, h('div', null,
         h('label', { class: 'field' }, h('span', null, 'Recipe text'), area),
@@ -60,7 +63,9 @@ export async function renderImport(root, ctx) {
     }
   }
   function onFiles() {
-    chosen = Array.prototype.slice.call(files.files || [], 0, MAX_PHOTOS);
+    const pick = photoPick(Array.prototype.slice.call(files.files || []));
+    chosen = pick.files;
+    show(photoNote, pick.warning ? message(pick.warning, 'error') : null);
     fileList.textContent = chosen.length ? chosen.length + (chosen.length === 1 ? ' photo: ' : ' photos: ') + chosen.map((f) => f.name).join(', ') : 'No photos chosen.';
     readPhotos.disabled = !chosen.length;
   }
@@ -178,9 +183,13 @@ function foodLine(it) {
     ' - ' + matchedAmountText(it.amount, it.unit, it.grams) + (it.check ? '' : ' - ' + fmtNum(it.kcal, 0) + ' kcal'));
 }
 
-// params: { mealId, saved? (just saved by Import, shows Step 2 of 2) }
+// params: { mealId, saved? (just saved by Import, shows Step 2 of 2), visit? (set on the first render, so coming back from
+// the food finder keeps the same last saved state) }
 export async function renderMatch(root, params, ctx) {
+  const visit = ctx.flow.visit(params);
   let meal = await api.meal(params.mealId);
+  const base = () => ctx.flow.base(visit) || ctx.flow.setBase(visit, matchSnapshot(meal));
+  base();
   let st = null;
   try { st = await api.aiStatus(); } catch (e) { st = { enabled: false }; }
   const aiOn = aiFeature(st, 'recipe');
@@ -193,29 +202,67 @@ export async function renderMatch(root, params, ctx) {
   const totals = h('div');
   const allBox = h('input', { type: 'checkbox', id: 'match-all', onchange: () => { selected = toggleAll(meal.items, selected); keepSel(); paintRows(); } });
   const matchBtn = h('button', { class: 'btn', type: 'button', onclick: () => runMatch(selected) }, 'Match Selected With Claude');
-  const servings = field('Servings it makes', { value: fmtAmount(meal.servings), inputmode: 'decimal', autocomplete: 'off' });
-  servings.input.addEventListener('change', async () => {
-    const v = parseAmount(servings.input.value);
-    if (v == null || v <= 0 || v > 1000) { show(status, message('Servings must be a number above zero.', 'error')); return; }
-    try { meal = await api.patchMeal(meal.id, { servings: v }); paintTotals(); } catch (e) { show(status, message(e.message, 'error')); }
-  });
+  const acceptBtn = h('button', { class: 'btn primary', type: 'button', onclick: acceptAll }, '');
+  const acceptRow = h('div', { class: 'row wrap match-bulk' }, acceptBtn);
+  const skipAllBtn = h('button', { class: 'btn', type: 'button', onclick: skipAll }, 'Skip All');
+  const nextBtn = h('button', { class: 'btn primary', type: 'button', onclick: next }, 'Next');
+  const backBtn = h('button', { class: 'btn', type: 'button', onclick: leave }, 'Back');
+  const lastHint = h('p', { class: 'sub' }, 'Last step. Check the serving size, then tap Done.');
+  const size = servingSizeEditor(meal, { live: true, status, onSaved: (m) => { meal = m; paintTotals(); paintHead(); } });
   const keepSel = () => ctx.flow.setSelection(meal.id, selected);
   const fail = (e) => show(status, message(e.message, 'error'));
+  const setMeal = (m) => { meal = m; size.update(m); };
+  const drop = (ids) => {
+    ids.forEach((id) => { delete props[id]; });
+    selected = selected.filter((x) => ids.indexOf(x) < 0);
+    keepSel();
+  };
 
   async function apply(itemId, body) {
     try {
-      meal = await api.matchItem(meal.id, itemId, body);
-      delete props[itemId];
-      selected = selected.filter((x) => x !== itemId);
-      keepSel();
+      setMeal(await api.matchItem(meal.id, itemId, body));
+      drop([itemId]);
       paintAll(itemId);
     } catch (e) { fail(e); }
   }
+  // A Claude estimate becomes a food only on Accept. It is kept on the proposal, so trying again never saves it twice.
+  async function foodOf(p) {
+    if (!p.food.id) p.food = await api.createFood(p.food);
+    return p.food;
+  }
   async function accept(item, p) {
     try {
-      const food = p.food.id ? p.food : await api.createFood(p.food);  // a Claude estimate becomes a food only now
+      const food = await foodOf(p);
       await apply(item.id, { food_id: food.id, amount: p.amount, unit: p.unit, ...(p.check ? { check: true } : {}) });
     } catch (e) { fail(e); }
+  }
+  async function acceptAll() {
+    const pending = pendingProposals(meal.items, props);
+    if (!pending.length) return;
+    acceptBtn.disabled = true;
+    try {
+      const rows = [];
+      for (const { item, p } of pending) {
+        const food = await foodOf(p);
+        rows.push({ id: item.id, food_id: food.id, amount: p.amount, unit: p.unit, ...(p.check ? { check: true } : {}) });
+      }
+      setMeal(await api.matchItems(meal.id, rows));
+      drop(rows.map((r) => r.id));
+      paintAll();
+      show(status, message(rows.length + (rows.length === 1 ? ' suggestion accepted' : ' suggestions accepted') + '. Tap Next to save.'));
+    } catch (e) { fail(e); } finally { acceptBtn.disabled = false; }
+  }
+  async function skipAll() {
+    const ids = skipAllIds(meal.items);
+    if (!ids.length) return;
+    const what = ids.length === 1 ? 'the 1 unmatched ingredient' : 'all ' + ids.length + ' unmatched ingredients';
+    if (!window.confirm('Skip ' + what + '? You can unskip any of them.')) return;
+    skipAllBtn.disabled = true;
+    try {
+      setMeal(await api.matchItems(meal.id, ids.map((id) => ({ id, skipped: true }))));
+      drop(ids);
+      paintAll();
+    } catch (e) { fail(e); } finally { skipAllBtn.disabled = false; }
   }
   async function runMatch(ids) {
     const b = matchBatch(ids);
@@ -230,8 +277,35 @@ export async function renderMatch(root, params, ctx) {
       keepSel();
       paintRows();
       const left = b.rest.length ? ' ' + b.rest.length + ' more are still ticked. Tap Match Selected With Claude again for them.' : '';
-      show(status, message('Check each suggestion, then tap Accept.' + (r.cost != null ? ' This cost about ' + centsText(r.cost) + '.' : '') + left));
-    } catch (e) { fail(e); } finally { matchBtn.disabled = false; }
+      show(status, message('Check the suggestions, then accept them all or one by one.' + (r.cost != null ? ' This cost about ' + centsText(r.cost) + '.' : '') + left));
+    } catch (e) { fail(e); } finally { matchBtn.disabled = !selected.length; }
+  }
+
+  // Next saves: what the screen shows now becomes the state Back returns to. On the last open row it is Done and leaves.
+  function next() {
+    const saved = changedSince(base(), meal);
+    ctx.flow.setBase(visit, matchSnapshot(meal));
+    const step = nextStep(meal.items, current);
+    if (step.done) { ctx.flow.endVisit(visit); ctx.flow.exit(); return; }
+    current = step.index;
+    paintRows();
+    show(status, saved ? message('Saved.') : null);
+    const el = document.getElementById('ing-' + meal.items[current].id);
+    if (el) { el.scrollIntoView({ block: 'center' }); el.focus({ preventScroll: true }); }
+  }
+  // Back does not save: after Discard Changes? it writes the last saved state back, then leaves.
+  async function leave() {
+    const r = restoreBody(base(), meal);
+    if (r.items.length || r.meal) {
+      if (!window.confirm('Discard Changes? Matches, amounts, skips and serving size changes since you last tapped Next are undone.')) return;
+      backBtn.disabled = true;
+      try {
+        if (r.items.length) await api.matchItems(meal.id, r.items);
+        if (r.meal) await api.patchMeal(meal.id, r.meal);
+      } catch (e) { backBtn.disabled = false; fail(e); return; }
+    }
+    ctx.flow.endVisit(visit);
+    ctx.flow.exit();
   }
 
   function proposalBox(item, p) {
@@ -242,10 +316,10 @@ export async function renderMatch(root, params, ctx) {
         p.kind === 'candidate' ? h('span', { class: 'src-est' }, ' Database Match') : null),
       h('p', null, proposalText(p) + (p.food ? kcal : '')),
       p.food && p.note ? h('p', { class: 'sub' }, sentence(p.note)) : null,
-      est ? h('p', { class: 'sub' }, 'No database food fitted, so this is an estimate. Accept saves it as a Claude food.') : null,
+      est && !p.food.id ? h('p', { class: 'sub' }, 'No database food fitted, so this is an estimate. Accept saves it as a Claude food.') : null,
       p.warnings && p.warnings.length ? h('ul', { class: 'warnings' }, p.warnings.map((w) => h('li', null, sentence(w)))) : null,
       h('div', { class: 'row wrap' },
-        p.food ? h('button', { class: 'btn primary', type: 'button', onclick: () => accept(item, p) }, 'Accept') : null,
+        p.food ? h('button', { class: 'btn', type: 'button', onclick: () => accept(item, p) }, 'Accept') : null,
         h('button', { class: 'btn', type: 'button', onclick: () => { delete props[item.id]; ctx.flow.find(meal, item, 'search'); } }, p.food ? 'Change' : 'Search'),
         p.food ? null : h('button', { class: 'btn', type: 'button', onclick: () => apply(item.id, { skipped: true }) }, 'Skip')));
   }
@@ -305,7 +379,7 @@ export async function renderMatch(root, params, ctx) {
       h('button', { class: 'btn small', type: 'button', 'aria-pressed': item.skipped ? 'true' : 'false',
         onclick: () => apply(item.id, { skipped: !item.skipped }) }, item.skipped ? 'Unskip' : 'Skip')),
     state === 'check' || (state === 'matched' && editing[item.id]) ? amountEditor(item) : null,
-    p ? proposalBox(item, p) : null);
+    p && !item.skipped ? proposalBox(item, p) : null);
   }
   function focusIn(id, sel) {
     const el = document.querySelector('#ing-' + id + ' ' + sel);
@@ -317,6 +391,13 @@ export async function renderMatch(root, params, ctx) {
     const open = meal.items.filter((i) => matchState(i) === 'unmatched').map((i) => i.id);
     allBox.checked = open.length > 0 && open.every((id) => selected.indexOf(id) >= 0);
     matchBtn.disabled = !selected.length;
+    const pending = pendingProposals(meal.items, props).length;
+    acceptRow.hidden = !pending;
+    acceptBtn.textContent = acceptAllText(pending);
+    skipAllBtn.hidden = !skipAllIds(meal.items).length;
+    const done = nextStep(meal.items, current).done;
+    nextBtn.textContent = done ? 'Done' : 'Next';
+    lastHint.hidden = !done;
   }
   function paintRows() {
     clear(list);
@@ -330,33 +411,29 @@ export async function renderMatch(root, params, ctx) {
         : 'For 1 of ' + fmtAmount(meal.servings) + ' servings, counting matched ingredients only.'
           + (meal.checks ? ' Rows marked Check Amount count once you confirm their amount.' : '')),
       totalsTable(meal),
-      meal.complete ? message('Every ingredient is matched or skipped. Log the recipe from the Recipes tab.') : null));
+      meal.complete ? message('Every ingredient is matched or skipped. Tap Done to save, then log the recipe from the Recipes tab.') : null));
   }
   function paintAll(focusId) {
     paintRows();
     paintTotals();
     if (focusId != null) { const el = document.getElementById('ing-' + focusId); if (el) el.focus(); }
   }
-  function saveAndNext() {
-    const next = nextUnmatched(meal.items, current < 0 ? null : current);
-    if (next < 0) { show(status, message('Every ingredient is matched or skipped.')); return; }
-    current = next;
-    paintRows();
-    const el = document.getElementById('ing-' + meal.items[next].id);
-    if (el) { el.scrollIntoView({ block: 'center' }); el.focus({ preventScroll: true }); }
-  }
 
-  root.appendChild(h('section', { class: 'screen match' }, bar(ctx), h('h1', null, 'Match Ingredients'),
+  const noAi = h('p', { class: 'sub' }, (aiFeatureOff(st, 'recipe') ? 'Claude recipe import is turned off on this server' : 'Claude is not set up for you')
+    + ', so use Search or Scan Barcode for each ingredient.');
+  root.appendChild(h('section', { class: 'screen match' },
+    h('div', { class: 'bar' }, h('button', { class: 'btn ghost', type: 'button', onclick: leave }, 'Back')),
+    h('h1', null, 'Match Ingredients'),
     params.saved ? h('p', { class: 'saved-note', role: 'status' }, h('span', { class: 'saved-tag' }, 'Saved'), h('span', null, 'Step 2 of 2')) : null,
-    h('p', { class: 'sub' }, 'The recipe is saved. Match each ingredient to a food. Progress is kept as you go, so you can leave and come back from Recipes.'),
+    h('p', { class: 'sub' }, 'The recipe is saved. Match each ingredient to a food, then tap Next to save and move on. Back leaves without the changes made since the last Next.'),
     h('h2', null, meal.name), count,
-    aiOn ? h('div', { class: 'row wrap match-bulk' }, h('label', { class: 'check', for: 'match-all' }, allBox, ' Select All'), matchBtn)
-      : h('p', { class: 'sub' }, (aiFeatureOff(st, 'recipe') ? 'Claude recipe import is turned off on this server' : 'Claude is not set up for you')
-        + ', so use Search or Scan Barcode for each ingredient.'),
-    status, list, servings, totals,
-    h('div', { class: 'row wrap match-foot' },
-      h('button', { class: 'btn primary', type: 'button', onclick: saveAndNext }, 'Save and Next'),
-      h('button', { class: 'btn', type: 'button', onclick: ctx.flow.exit }, 'Save and Exit'))));
+    acceptRow,
+    aiOn ? h('div', { class: 'row wrap match-bulk' }, h('label', { class: 'check', for: 'match-all' }, allBox, ' Select All'), matchBtn, skipAllBtn)
+      : [noAi, h('div', { class: 'row wrap match-bulk' }, skipAllBtn)],
+    status, list,
+    h('h2', null, 'Serving Size'), lastHint, size.el,
+    totals,
+    h('div', { class: 'row wrap match-foot' }, backBtn, nextBtn)));
   paintRows();
   paintTotals();
   if (current >= 0) {

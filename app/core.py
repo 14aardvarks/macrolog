@@ -133,6 +133,10 @@ def init(c: sqlite3.Connection) -> None:
         c.execute("ALTER TABLE meals ADD COLUMN servings REAL")
     if "steps" not in {r[1] for r in c.execute("PRAGMA table_info(meals)")}:  # databases made before recipe steps (JSON list, null = none)
         c.execute("ALTER TABLE meals ADD COLUMN steps TEXT")
+    meal_cols = {r[1] for r in c.execute("PRAGMA table_info(meals)")}
+    for col, kind in (("yield_amount", "REAL"), ("yield_unit", "TEXT")):  # databases made before the total yield (null = not set)
+        if col not in meal_cols:
+            c.execute(f"ALTER TABLE meals ADD COLUMN {col} {kind}")
     migrate_meal_items(c)
     if "needs_check" not in {r[1] for r in c.execute("PRAGMA table_info(meal_items)")}:  # databases made before Check Amount
         c.execute("ALTER TABLE meal_items ADD COLUMN needs_check INTEGER NOT NULL DEFAULT 0")
@@ -876,6 +880,80 @@ def recipe_totals(items: list) -> dict:
     return out
 
 
+# ---------- recipe yield and portions ----------
+
+YIELD_UNITS = (*units.MASS, *units.VOLUME)  # a total yield is a weight or a volume
+YIELD_MAX = 1_000_000
+RECIPE_PCT = units.PCT  # "pct": percent of the whole recipe when logging a recipe
+MAX_WHOLE_RECIPES = 100  # one log takes at most this many whole recipes
+
+
+def row_yield(row) -> dict | None:
+    keys = row.keys()
+    if "yield_amount" not in keys or row["yield_amount"] is None or row["yield_unit"] not in YIELD_UNITS:
+        return None
+    return {"amount": row["yield_amount"], "unit": row["yield_unit"]}
+
+
+def recipe_yield(v) -> dict | None:
+    """The optional total yield of a recipe: null, or {"amount": > 0, "unit": a weight or volume unit}."""
+    if v is None:
+        return None
+    if not isinstance(v, dict) or set(v) - {"amount", "unit"}:
+        raise bad("yield must be null or an object with amount and unit")
+    amount = number(v.get("amount"), "yield amount", positive=True)
+    if amount > YIELD_MAX:
+        raise bad(f"yield amount must be {YIELD_MAX} or less")
+    try:
+        unit = units.parse_unit(v.get("unit"))
+    except ValueError:
+        unit = None
+    if unit not in YIELD_UNITS:
+        raise bad("yield unit must be a weight or volume unit: " + ", ".join(YIELD_UNITS))
+    return {"amount": amount, "unit": unit}
+
+
+def portions(servings: float, yld: dict | None) -> list[dict]:
+    """Units a recipe can be logged in, each with whole = how many of it make the whole recipe: servings, percent of the
+    recipe (always), and with a yield its unit first, then the other units of the same family (weight or volume)."""
+    out = [{"unit": units.SERVING, "label": "servings", "whole": servings},
+           {"unit": RECIPE_PCT, "label": "% of recipe", "whole": 100.0}]
+    if yld:
+        fam = units.MASS if yld["unit"] in units.MASS else units.VOLUME
+        base = yld["amount"] * fam[yld["unit"]]
+        for u in [yld["unit"], *[u for u in units.ORDER if u in fam and u != yld["unit"]]]:
+            out.append({"unit": u, "label": units.LABELS.get(u, u), "whole": round(base / fam[u], 6)})
+    return out
+
+
+def recipe_fraction(meal: dict, amount, unit) -> float:
+    """The share of the whole recipe that amount of unit is (servings, pct or a yield unit). Raises 400."""
+    a = number(amount, "amount", positive=True)
+    for p in meal["portions"]:
+        if p["unit"] == unit:
+            frac = a / p["whole"]
+            if frac > MAX_WHOLE_RECIPES:
+                raise bad(f"That is more than {MAX_WHOLE_RECIPES} times the whole recipe")
+            return frac
+    raise bad("unit must be one of " + ", ".join(p["unit"] for p in meal["portions"]))
+
+
+def exact_grams(item: dict) -> float | None:
+    """Grams of one matched row when its weight is known exactly (a weight unit, or the food's own serving_g)."""
+    if item["unit"] in units.MASS:
+        return round(item["amount"] * units.MASS[item["unit"]], 1)
+    return item["grams"]
+
+
+def ingredient_grams(items: list, complete: bool) -> float | None:
+    """Total weight of a complete recipe when every counted row has an exact gram weight, else None."""
+    counted = [i for i in items if i["matched"] and not i["skipped"]]
+    if not complete or not counted:
+        return None
+    g = [exact_grams(i) for i in counted]
+    return None if any(x is None for x in g) else r1(sum(g))
+
+
 def meal_dict(c, row) -> dict:
     items = [item_dict(c, it) for it in c.execute("SELECT * FROM meal_items WHERE meal_id=? ORDER BY position, id", (row["id"],))]
     tags = clean_tags([r["meal"] for r in c.execute("SELECT meal FROM recipe_tags WHERE meal_id=?", (row["id"],))])
@@ -884,12 +962,15 @@ def meal_dict(c, row) -> dict:
     servings = row["servings"] or 1
     needed = [i for i in items if not i["skipped"]]
     matched = sum(1 for i in needed if i["matched"])
+    complete = bool(needed) and matched == len(needed)
+    yld = row_yield(row)
     return {"id": row["id"], "name": row["name"], "meal": tags[0] if tags else None, "meals": tags, "counts": counts,
             "items": items, "kcal": r1(totals["kcal"]), "servings": servings, "totals": totals,
             "per_serving": {k: None if v is None else r2(v / servings) for k, v in totals.items()},
             "matched": matched, "needed": len(needed), "skipped": len(items) - len(needed),
             "checks": sum(1 for i in needed if i["check"]), "steps": read_steps(row["steps"]),
-            "complete": bool(needed) and matched == len(needed)}
+            "complete": complete, "yield": yld, "portions": portions(servings, yld),
+            "ingredient_grams": ingredient_grams(items, complete)}
 
 
 MAX_STEPS = 60
@@ -1006,9 +1087,10 @@ def meal_from_meal(user: CurrentUser, body: dict = Body(...)):
 
 @router.patch("/meals/{meal_id}")
 def patch_meal(meal_id: int, user: CurrentUser, body: dict = Body(...)):
-    """Rename, retag (meals), set servings or steps, or replace the items list (amounts, units, removed items)."""
-    if not {"name", "meals", "items", "servings", "steps"} & body.keys():
-        raise bad("Nothing to update: send name, meals, items, servings or steps")
+    """Rename, retag (meals), set servings, yield or steps, or replace the items list (amounts, units, removed items)."""
+    if not {"name", "meals", "items", "servings", "steps", "yield"} & body.keys():
+        raise bad("Nothing to update: send name, meals, items, servings, yield or steps")
+    yld = recipe_yield(body["yield"]) if "yield" in body else None
     steps = clean_steps(body["steps"]) if "steps" in body else None
     name = meal_name(body) if "name" in body else None
     tags = clean_tags(body["meals"]) if "meals" in body else None
@@ -1023,6 +1105,9 @@ def patch_meal(meal_id: int, user: CurrentUser, body: dict = Body(...)):
             c.execute("UPDATE meals SET name=? WHERE id=?", (name, meal_id))
         if "servings" in body:
             c.execute("UPDATE meals SET servings=? WHERE id=?", (servings, meal_id))
+        if "yield" in body:
+            c.execute("UPDATE meals SET yield_amount=?, yield_unit=? WHERE id=?",
+                      (yld and yld["amount"], yld and yld["unit"], meal_id))
         if steps is not None:  # allowed at any time, also while ingredients are still being matched
             c.execute("UPDATE meals SET steps=? WHERE id=?", (steps_json(steps), meal_id))
         if tags is not None:
@@ -1140,30 +1225,74 @@ def own_item(c, meal_id: int, item_id: int):
     return row
 
 
-@router.patch("/meals/{meal_id}/items/{item_id}")
-def patch_meal_item(meal_id: int, item_id: int, user: CurrentUser, body: dict = Body(...)):
-    """Match one ingredient ({food_id, amount, unit, check?}), unmatch it ({food_id: null}), or skip it ({skipped: bool}).
-    check true attaches the food with an amount still to confirm (Check Amount); a match without check confirms it."""
-    if not isinstance(body, dict) or not body or set(body) - {"food_id", "amount", "unit", "skipped", "check"}:
+ITEM_KEYS = {"food_id", "amount", "unit", "skipped", "check"}
+
+
+def check_item_body(body) -> None:
+    if not isinstance(body, dict) or not body or set(body) - ITEM_KEYS:
         raise bad("Send food_id with amount and unit, food_id null, or skipped")
     if "skipped" in body and not isinstance(body["skipped"], bool):
         raise bad("skipped must be true or false")
     if "check" in body and (not isinstance(body["check"], bool) or body.get("food_id") is None):
         raise bad("check must be true or false and needs food_id")
+    if "food_id" not in body and {"amount", "unit"} & body.keys():
+        raise bad("Send food_id together with amount and unit")
+
+
+def apply_item(c, item_id: int, body: dict) -> None:
+    """Match ({food_id, amount, unit, check?}), unmatch ({food_id: null}) and or skip ({skipped}) one checked row.
+    A match clears skipped unless skipped is sent too; skipped is applied last."""
+    if "food_id" in body and body["food_id"] is None:
+        c.execute("UPDATE meal_items SET food_id=NULL, amount=NULL, unit=NULL, needs_check=0 WHERE id=?", (item_id,))
+    elif "food_id" in body:
+        food = need_food(c, whole_id(body["food_id"], "food_id"))
+        amount, unit = check_amount_unit(food, body.get("amount"), body.get("unit"))
+        c.execute("UPDATE meal_items SET food_id=?, amount=?, unit=?, skipped=0, needs_check=? WHERE id=?",
+                  (food["id"], amount, unit, int(body.get("check") is True), item_id))
+    if "skipped" in body:
+        c.execute("UPDATE meal_items SET skipped=? WHERE id=?", (int(body["skipped"]), item_id))
+
+
+@router.patch("/meals/{meal_id}/items/{item_id}")
+def patch_meal_item(meal_id: int, item_id: int, user: CurrentUser, body: dict = Body(...)):
+    """Match one ingredient ({food_id, amount, unit, check?}), unmatch it ({food_id: null}), or skip it ({skipped: bool}).
+    check true attaches the food with an amount still to confirm (Check Amount); a match without check confirms it."""
+    check_item_body(body)
     with db.conn() as c:
         own_meal(c, user["id"], meal_id)
         own_item(c, meal_id, item_id)
-        if "food_id" in body and body["food_id"] is None:
-            c.execute("UPDATE meal_items SET food_id=NULL, amount=NULL, unit=NULL, needs_check=0 WHERE id=?", (item_id,))
-        elif "food_id" in body:
-            food = need_food(c, whole_id(body["food_id"], "food_id"))
-            amount, unit = check_amount_unit(food, body.get("amount"), body.get("unit"))
-            c.execute("UPDATE meal_items SET food_id=?, amount=?, unit=?, skipped=0, needs_check=? WHERE id=?",
-                      (food["id"], amount, unit, int(body.get("check") is True), item_id))
-        elif {"amount", "unit"} & body.keys():
-            raise bad("Send food_id together with amount and unit")
-        if "skipped" in body and not ("food_id" in body and body["food_id"] is not None):
-            c.execute("UPDATE meal_items SET skipped=? WHERE id=?", (int(body["skipped"]), item_id))
+        apply_item(c, item_id, body)
+        return meal_dict(c, own_meal(c, user["id"], meal_id))
+
+
+@router.patch("/meals/{meal_id}/items")
+def patch_meal_items(meal_id: int, user: CurrentUser, body: dict = Body(...)):
+    """Several rows at once, all or nothing: {"items": [{"id", ...same body as one row}]} (1..100 rows, each id once).
+    Used by Accept All, Skip All and Back on Match Ingredients (which writes the last saved state back)."""
+    raw = body.get("items") if isinstance(body, dict) else None
+    if not isinstance(raw, list) or not raw or len(raw) > MAX_IMPORT_ROWS:
+        raise bad(f"items must be a list of 1 to {MAX_IMPORT_ROWS} rows")
+    changes = []
+    for i, it in enumerate(raw, 1):
+        try:
+            if not isinstance(it, dict):
+                raise bad("must be an object with id")
+            rest = {k: v for k, v in it.items() if k != "id"}
+            check_item_body(rest)
+            changes.append((whole_id(it.get("id"), "id"), rest))
+        except HTTPException as e:
+            raise HTTPException(e.status_code, f"row {i}: {e.detail}")
+    if len({x[0] for x in changes}) != len(changes):
+        raise bad("Each row may appear only once")
+    with db.conn() as c:
+        own_meal(c, user["id"], meal_id)
+        for item_id, _ in changes:
+            own_item(c, meal_id, item_id)
+        for i, (item_id, rest) in enumerate(changes, 1):  # db.conn commits only when every row went through
+            try:
+                apply_item(c, item_id, rest)
+            except HTTPException as e:
+                raise HTTPException(e.status_code, f"row {i}: {e.detail}")
         return meal_dict(c, own_meal(c, user["id"], meal_id))
 
 
@@ -1177,7 +1306,9 @@ def log_meal(meal_id: int, user: CurrentUser, body: dict | None = Body(None)):
         if body.get("items") is not None:  # the client's checklist replaces the saved items
             items = parse_items(c, body["items"])
         else:
-            items = [(need_food(c, i["food_id"]), i["amount"], i["unit"]) for i in
+            # amount and unit: how much of the recipe (servings, pct of the recipe, or a yield unit), as a share of the whole
+            frac = recipe_fraction(meal_dict(c, row), body.get("amount"), body.get("unit")) if "amount" in body or "unit" in body else None
+            items = [(need_food(c, i["food_id"]), i["amount"] if frac is None else round(i["amount"] * frac, 4), i["unit"]) for i in
                      c.execute("SELECT * FROM meal_items WHERE meal_id=? AND skipped=0 ORDER BY position, id", (row["id"],))]
         if meal:  # logging a recipe with a meal tags the recipe and counts toward that meal
             c.execute("INSERT OR IGNORE INTO recipe_tags(meal_id, meal) VALUES(?,?)", (meal_id, meal))
