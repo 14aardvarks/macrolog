@@ -477,3 +477,26 @@ textarea { font: inherit; color: inherit; width: 100%; min-height: 160px; paddin
   background: var(--card); border-bottom: 1px solid var(--accent); font-size: .9rem; }
 .update-banner .btn { min-height: 36px; padding: 4px 14px; border-color: var(--accent); color: var(--accent); font-weight: 600; }
 .quick-row.top { margin: 4px 0 10px; }
+
+/* Cooking View: big text, big tap targets, state shown by a box and a line through as well as colour */
+.cooking { font-size: 1.25rem; }
+.cooking h1 { font-size: 1.75rem; }
+.cooking h2 { font-size: 1.5rem; }
+.cook-servings { display: flex; align-items: center; justify-content: center; gap: 16px; margin: 8px 0 4px; }
+.cook-count { min-width: 9rem; text-align: center; font-size: 1.375rem; font-weight: 600; }
+.cook-step { min-width: 56px; min-height: 56px; font-size: 1.75rem; padding: 0; }
+.cook-list { list-style: none; margin: 0 0 16px; padding: 0; max-width: 46rem; }
+.cook-steps { counter-reset: cookstep; }
+.cook-row { margin: 0 0 8px; }
+.cook-tick { display: flex; align-items: flex-start; gap: 14px; width: 100%; min-height: 56px; padding: 12px 14px; text-align: left;
+  font: inherit; line-height: 1.4; color: var(--text); background: var(--card); border: 1px solid var(--line); border-radius: 12px; cursor: pointer; touch-action: manipulation; }
+.cook-box { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; margin-top: 1px;
+  border: 2px solid var(--accent); border-radius: 8px; font-weight: 700; font-size: 1.125rem; color: var(--accent-text); }
+.cook-steps .cook-box { border-radius: 50%; }
+.cook-steps .cook-box::before { counter-increment: cookstep; content: counter(cookstep); color: var(--text); font-size: .9375rem; }
+.cook-text { flex: 1; }
+.cook-row.done .cook-tick { color: var(--muted); }
+.cook-row.done .cook-text { text-decoration: line-through; }
+.cook-row.done .cook-box { background: var(--accent); }
+.cook-steps .cook-row.done .cook-box::before { content: ''; }
+@media (min-width: 900px) { .cooking { max-width: 52rem; } .cooking { font-size: 1.375rem; } }

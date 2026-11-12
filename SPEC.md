@@ -426,6 +426,15 @@ Screens: Login, Today, Add, Recipes, Picker, Claude fallback, Settings. Bottom n
   tbsp, tsp, fl oz) and counts (slice, clove, no unit) show tidy fractions (1/8, 1/4, 1/3, 1/2, 2/3, 3/4, eighths, mixed like 1 1/2;
   anything else stays decimal); g, kg, mg, ml, l, oz, lb and percent always show decimals. Decimal mode shows decimals everywhere.
   Typing accepts both. Calories, nutrients and recipe servings inputs stay decimal; the food form keeps decimals.
+- Cooking View (js/cooking.js, pure helpers `cook*` in js/util.js): a Cooking button on the recipe screen (below Log) opens screen `cooking`
+  (params mealId, marks the Recipes tab; Back returns to the recipe). Large text for phone and desktop, light and dark. A servings stepper (minus and
+  plus, aria-labels Fewer Servings and More Servings, starts at the recipe's servings, halves under 4 servings and whole servings above, 1000 at most)
+  scales the ingredient amounts. Ingredients use the imported wording (src amount, unit, name, note; the amount scales and follows the fraction or decimal
+  setting); a line with no amount keeps its text; rows made in the app use the food name and amount. Every row shows, unmatched and skipped ones too.
+  Steps are a numbered list. Each ingredient and step is a button with aria-pressed, a box with a check and a line through the text when ticked; ticks live in
+  memory only and reset on leaving. `keepAwake` requests a screen Wake Lock when `navigator.wakeLock` exists (feature detected, errors ignored), asks again when the page
+  becomes visible, and the screen's cleanup releases it. No API change.
+- Today quick buttons: Add (plain) then Scan (primary, green) above the list; the order and layout are unchanged.
 - Recipe steps (js/steps.js): the review screen of Import Recipe and New Recipe have a Steps section (a textarea per step with Up,
   Down and Remove, Add Step). The recipe screen shows Ingredients (name, amount and grams) then Steps as a numbered list with Edit
   Steps (or Add Steps), saved by PATCH steps. Split Lines Without Claude leaves steps empty; Save As Recipe from Today starts with none.

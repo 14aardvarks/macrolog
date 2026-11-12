@@ -154,6 +154,7 @@ export async function renderRecipeView(root, params, ctx) {
     notCounted(meal) ? h('p', { class: 'sub not-counted' }, notCountedText(notCounted(meal))) : null,
     status,
     h('div', { class: 'row wrap' }, logBtn),
+    h('div', { class: 'row wrap' }, h('button', { class: 'btn', type: 'button', onclick: () => ctx.go('cooking', { mealId: meal.id }) }, 'Cooking')),
     h('h2', null, 'Ingredients'),
     ingredientList(meal),
     h('button', { class: 'btn', type: 'button', onclick: () => ctx.go('match', { mealId: meal.id, edit: true }) }, 'Edit Ingredients'),

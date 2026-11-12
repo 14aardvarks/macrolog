@@ -68,6 +68,14 @@ export const GUIDE = [
     'Delete Recipe at the bottom asks first, then returns to the Recipes tab.',
     'Add, then Recipes, still logs a recipe straight from Add.',
   ] },
+  { heading: 'Cooking View', bullets: [
+    'On a recipe, tap Cooking for large text to read while you cook.',
+    'Ingredients show the recipe\'s own wording, scaled to the servings shown.',
+    'Use the minus and plus buttons to change servings. Amounts update.',
+    'Tap an ingredient or step to check it off. Ticks are not saved.',
+    'The screen stays awake while it is open, where the browser allows.',
+    'Back returns to the recipe.',
+  ] },
   { heading: 'Importing a Recipe', bullets: [
     'On the Recipes tab, tap Import Recipe.',
     'Paste the text, or choose up to 3 photos or screenshots.',
@@ -107,6 +115,7 @@ export const GUIDE = [
     'Tap an entry to change it.',
     'Tap X to remove it.',
     'Add Food opens Add. Each meal has Add, Scan and Search buttons.',
+    'At the top of Today, Scan is the green button and Add is plain.',
   ] },
   { heading: 'Logged Recipes', bullets: [
     'A logged recipe is one row on Today with its total calories.',

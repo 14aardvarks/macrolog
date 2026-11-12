@@ -20,6 +20,7 @@ import { renderAdmin } from './admin.js';
 import { renderSaved } from './saved.js';
 import { renderRecipe } from './recipe.js';
 import { renderRecipes, renderRecipeView } from './recipes.js';
+import { renderCooking } from './cooking.js';
 import { renderImport, renderReview, renderMatch } from './recipeflow.js';
 import { recipeSubText, notCounted, notCountedText, portionUnits, portionFraction, portionItems, portionNote, portionAmount, autoMatchOn,
   isRecipeLog, recipeAmountText, saveRecipeRows, tickedIds, REMOVE_RECIPE_CONFIRM } from './recipeimport.js';
@@ -33,7 +34,7 @@ const nav = document.getElementById('nav');
 const state = { user: null, settings: { start_screen: 'today', default_meal: null, use_last: true, confirm_ai: true, amount_format: 'fraction' }, display: DEFAULT_DISPLAY, cleanup: null, depth: 0, tab: 'favorites', addMeal: null, quickMeal: null, draft: null, recipe: null, source: null, aiSt: null, claude: null,
   importInput: null, importDraft: null, importBase: 0, proposals: {}, selections: {}, matchFocus: null, matchBase: {}, matchMethod: 'search', autoMatch: null, hold: null };  // Import Recipe and Match Ingredients  // addMeal, source (null = the Default Search Source setting), aiSt (last /api/ai/status) and claude (last Claude estimate) live for the session only
 const NAV_OF = { today: 'today', recipelog: 'today', settings: 'settings', admin: 'settings', saved: 'settings', editfood: 'settings',
-  recipes: 'recipes', recipeview: 'recipes', recipe: 'recipes', import: 'recipes', importreview: 'recipes', match: 'recipes' };  // every other screen belongs to Add
+  recipes: 'recipes', recipeview: 'recipes', cooking: 'recipes', recipe: 'recipes', import: 'recipes', importreview: 'recipes', match: 'recipes' };  // every other screen belongs to Add
 const FINDER = ['add', 'picker', 'scan', 'lookup', 'manual', 'ai'];  // screens New Recipe and Match Ingredients borrow from Add
 
 // The bottom bar button to mark: params.nav when a screen is opened from another tab, the Recipes tab while a recipe
@@ -372,8 +373,8 @@ async function todayScreen(root) {
   paint(view);
   grid.append(h('div', { class: 'col-a' }, disp.show_split !== false ? h('div', { class: 'split-box' }, h('h2', null, 'Calorie Split'), splitChart(d)) : null, nutrients),
     h('div', { class: 'col-b' }, h('div', { class: 'quick-row top', role: 'group', 'aria-label': 'Add food' },
-      h('button', { class: 'btn primary', type: 'button', onclick: () => go('add', {}) }, 'Add'),
-      h('button', { class: 'btn', type: 'button', onclick: () => go('scan', { autostart: true }) }, cameraIcon(), 'Scan')),
+      h('button', { class: 'btn', type: 'button', onclick: () => go('add', {}) }, 'Add'),
+      h('button', { class: 'btn primary', type: 'button', onclick: () => go('scan', { autostart: true }) }, cameraIcon(), 'Scan')),
       d.entries.length && disp.show_table !== false ? viewToggle(view, (v) => { paint(v); ctx.saveDisplay({ today_view: v }).catch(() => {}); }) : null, body, status));
   root.appendChild(h('section', { class: 'screen wide' }, h('h1', null, 'Today'), grid));
 }
@@ -824,6 +825,7 @@ const SCREENS = {
   saved: (root) => renderSaved(root, ctx),
   recipes: (root) => renderRecipes(root, ctx),
   recipeview: (root, p) => renderRecipeView(root, p, ctx),
+  cooking: (root, p) => renderCooking(root, p, ctx),
   recipelog: (root, p) => renderRecipeLog(root, p, ctx),
   recipe: (root) => { if (!state.recipe) state.recipe = newRecipeDraft(); state.recipe.depth = state.depth; return renderRecipe(root, ctx); }, editfood: (root, p) => renderFoodForm(root, { edit: p.food }, ctx),
   picker: (root, p) => (state.recipe && state.recipe.match && p.adjust && p.entryId == null ? autoMatch(root, p) : renderPicker(root, p, ctx)),

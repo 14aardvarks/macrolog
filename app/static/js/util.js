@@ -854,3 +854,46 @@ export function holdTarget(hold, keys) {
   const same = list.indexOf(hold.key);
   return { kind: 'row', index: same >= 0 ? same : Math.min(hold.index, list.length - 1) };
 }
+
+// ---------- Cooking View (pure helpers) ----------
+
+// Servings the recipe makes; a recipe without servings makes one.
+export const cookBase = (meal) => (meal && meal.servings > 0 ? meal.servings : 1);
+
+// The serving count moves in halves for small recipes and whole servings for larger ones, never below one step or above 1000.
+export const cookStep = (base) => (base >= 4 ? 1 : 0.5);
+export function cookServingsNext(shown, base, dir) {
+  const step = cookStep(base);
+  const next = Math.round((Number(shown) + dir * step) / step) * step;
+  return Math.min(1000, Math.max(step, next));
+}
+
+// One ingredient as the recipe says it, scaled by factor: "3 cup flour, sifted". The imported wording wins over the matched
+// food. A line with no amount keeps its text (it cannot scale). Rows made in the app use the food name and matched amount.
+// Every row shows, matched or not, because it is still part of the dish. Returns { text, scaled }.
+export function cookIngredient(it, factor = 1) {
+  const src = it && it.src;
+  const join = (amount, unit, name, note) => [qtyText(amount, unit), unit, name].filter((x) => x !== '' && x != null).join(' ') + (note ? ', ' + note : '');
+  if (src && src.amount != null && Number(src.amount) > 0 && src.name) {
+    return { text: join(Number(src.amount) * factor, src.unit || '', src.name, src.note), scaled: true };
+  }
+  if (src && (src.text || src.name)) return { text: src.text || src.name, scaled: false };
+  const food = it && it.food;
+  if (food && it.amount != null) return { text: join(Number(it.amount) * factor, it.unit === SERVING ? '' : it.unit, food.name, ''), scaled: true };
+  return { text: (food && food.name) || 'Ingredient', scaled: false };
+}
+
+export function cookIngredients(meal, shown) {
+  const factor = cookBase(meal) > 0 ? Number(shown) / cookBase(meal) : 1;
+  return ((meal && meal.items) || []).map((it, i) => ({ key: 'i' + i, ...cookIngredient(it, factor) }));
+}
+
+// The steps to show, in order.
+export const cookSteps = (meal) => ((meal && meal.steps) || []).map((text, i) => ({ key: 's' + i, text }));
+
+// A new set with key ticked or unticked. The set passed in is never changed.
+export function cookToggle(checked, key) {
+  const next = new Set(checked);
+  if (next.has(key)) next.delete(key); else next.add(key);
+  return next;
+}

@@ -45,5 +45,20 @@ def test_service_worker_waits_for_the_update_banner():
     install = re.search(r"addEventListener\('install'.*?\n\}\);", sw, re.S).group(0)
     assert "skipWaiting" not in install
     assert "SKIP_WAITING" in sw and "self.skipWaiting()" in sw
-    assert "macrolog-shell-v52" in sw and "'/js/update.js'" in sw
+    assert "macrolog-shell-v53" in sw and "'/js/update.js'" in sw
     assert (STATIC / "js" / "update.js").is_file()
+
+
+def test_cooking_view_is_in_the_shell_and_wired():
+    sw = (STATIC / "sw.js").read_text()
+    assert "'/js/cooking.js'" in sw and (STATIC / "js" / "cooking.js").is_file()
+    app = (STATIC / "js" / "app.js").read_text()
+    assert "cooking: (root, p) => renderCooking" in app and "cooking: 'recipes'" in app
+    assert "'Cooking'" in (STATIC / "js" / "recipes.js").read_text()
+
+
+def test_today_scan_button_is_the_primary_one():
+    app = (STATIC / "js" / "app.js").read_text()
+    row = re.search(r"aria-label': 'Add food'.*?\n.*?\n.*?\n", app, re.S).group(0)
+    assert "btn', type: 'button', onclick: () => go('add'" in row
+    assert "btn primary', type: 'button', onclick: () => go('scan'" in row
