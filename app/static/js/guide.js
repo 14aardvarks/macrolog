@@ -54,6 +54,8 @@ export const GUIDE = [
   { heading: 'Recipes', bullets: [
     'The Recipes tab lists your recipes with tags, servings and matching progress.',
     'Search by name, filter by meal tag, or sort by name, newest or most used.',
+    'Recipes are grouped under a heading for each meal tag, also on Add.',
+    'A recipe with several tags shows under each. Untagged ones come last.',
     'Tap New Recipe to build one from foods, or Import Recipe to bring one in.',
     'On Today, Save As Recipe under a meal also makes one.',
     'Tap a recipe, pick the meal and how much, then tap Log.',
@@ -148,6 +150,7 @@ export const GUIDE = [
     'Settings, then Display, shows or hides parts of the screens.',
     'Turn off the bars, the micro section, the Calorie Split or the food bars.',
     'Pick which micro nutrients to show. Changes apply at once.',
+    'Turn off Group Recipes By Meal for one plain recipe list.',
   ] },
   { heading: 'Not Found?', bullets: [
     'Ask Claude to read a photo of the nutrition label, if it is set up.',

@@ -146,7 +146,7 @@ def test_migration_adds_micro_columns_and_display_settings(tmp_path):
 def test_display_defaults_keep_screens_as_before(a):
     d = a.get("/api/settings/display").json()
     assert d == {"show_macros": True, "show_micros": True, "show_split": True, "show_macro_bar": True, "show_table": True,
-                 "micros_open": False, "micros_shown": list(core.MICROS), "today_view": "list",
+                 "group_recipes": True, "micros_open": False, "micros_shown": list(core.MICROS), "today_view": "list",
                  "search_source": "all", "auto_match": "search", "recipe_owner": "mine"}
 
 
@@ -280,3 +280,14 @@ def test_auto_match_migrates_old_settings_table(tmp_path, monkeypatch):
     for v in core.AUTO_MATCHES:  # every allowed value reads back as stored
         c.execute("UPDATE settings SET auto_match=?", (v,))
         assert core.read_display(c, 1)["auto_match"] == v
+
+
+def test_display_group_recipes_default_validation_and_per_user(a, b):
+    assert a.get("/api/settings/display").json()["group_recipes"] is True
+    assert a.put("/api/settings/display", json={"group_recipes": False}).json()["group_recipes"] is False
+    assert a.get("/api/settings/display").json()["group_recipes"] is False
+    assert b.get("/api/settings/display").json()["group_recipes"] is True
+    for bad in ("no", 0, None):
+        assert a.put("/api/settings/display", json={"group_recipes": bad}).status_code == 400
+    assert a.get("/api/settings/display").json()["group_recipes"] is False
+    assert a.put("/api/settings/display", json={"group_recipes": True}).json()["group_recipes"] is True

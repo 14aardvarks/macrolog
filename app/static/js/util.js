@@ -724,7 +724,7 @@ export const MICROS = [
 ];
 
 // What the screens show before /api/settings/display answers. Matches the server defaults.
-export const DEFAULT_DISPLAY = { show_macros: true, show_micros: true, show_split: true, show_macro_bar: true, show_table: true,
+export const DEFAULT_DISPLAY = { show_macros: true, show_micros: true, show_split: true, show_macro_bar: true, show_table: true, group_recipes: true,
   micros_open: false, micros_shown: MICROS.map((m) => m.key), today_view: 'list', auto_match: 'search', recipe_owner: 'mine' };
 
 // The nutrients to list, in order. Empty when the section is switched off.
@@ -825,6 +825,34 @@ export function sortRecipes(items, sort) {
   const byName = (a, b) => String(a.name).localeCompare(String(b.name), undefined, { sensitivity: 'base' }) || a.id - b.id;
   const by = { newest: (a, b) => b.id - a.id || byName(a, b), used: (a, b) => recipeUses(b) - recipeUses(a) || byName(a, b) };
   return (items || []).slice().sort(by[sort] || byName);
+}
+
+// ---------- Recipes tab grouping by meal ----------
+
+// Recipes under a heading per meal tag, in the usual meal order, with Untagged last. A recipe with several tags is in each
+// of its groups. The order inside a group is the order given (sort first). meal limits the groups to that meal or to
+// untagged; all keeps every group. Empty groups are left out. Returns [{meal, label, items}] (meal null is Untagged).
+export function groupRecipesByMeal(recipes, meal = 'all') {
+  const rows = [];
+  for (const r of recipes || []) {
+    const tags = MEALS.filter((m) => (r.meals || []).includes(m));
+    if (tags.length) tags.forEach((m) => rows.push({ meal: m, rec: r })); else rows.push({ meal: null, rec: r });
+  }
+  return groupByMeal(rows, 'Untagged')
+    .filter((g) => meal === 'untagged' ? g.meal === null : !MEALS.includes(meal) || g.meal === meal)
+    .map((g) => ({ meal: g.meal, label: g.label, items: g.entries.map((e) => e.rec) }));
+}
+
+// The first `shown` recipes across the groups (a recipe in two groups counts twice). Returns {groups, more} with more the rows left.
+export function pageGroups(groups, shown) {
+  let left = shown;
+  const out = [];
+  let total = 0;
+  for (const g of groups) {
+    total += g.items.length;
+    if (left > 0) { out.push({ ...g, items: g.items.slice(0, left) }); left -= Math.min(left, g.items.length); }
+  }
+  return { groups: out, more: Math.max(0, total - shown) };
 }
 
 // ---------- Create Recipe draft ----------

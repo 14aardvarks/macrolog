@@ -4,7 +4,7 @@ import {
   MEALS, MEAL_LABELS, parseDecimal, parseAmount, amountText, servingText, qtyText, setAmountFormat, unitLabel, fmtNum, fmtAmount, groupByMeal, mealGroupsAll, quickLabel, checkedItems, canSaveRecipe, rowAmountText, applyRowPick, draftFits, localDate, progressText, remainingText,
   sentence, matchAmount, newRecipeDraft, recipeAddRow, recipeSetRow, stepsBack, barWidth, debounce, digitsOnly, guessMeal, pctTotal, latestGuard, MEAL_FILTERS, MEAL_FILTER_LABELS, filterByMeal, filterSaved, pageOf, PAGE_SIZE, emptyText,
   entryKey, todayHold, holdFresh, holdTarget, DEFAULT_DISPLAY, searchSource, searchAction, searchHint, DESCRIPTION_TEXT, aiFeature, aiFeatureOff, searchSources, startSource,
-  ownerText,
+  ownerText, groupRecipesByMeal, pageGroups,
 } from './util.js';
 import { microSection, displaySection, microTargets } from './micros.js';
 import { viewToggle, dayTable } from './daytable.js';
@@ -624,14 +624,27 @@ async function recipesList(meal) {  // my recipes and the ones shared with me; o
   const all = (await api.meals('all')).meals;
   const recipes = filterSaved(all, meal);
   if (!recipes.length) return message(emptyText('recipes', meal, all.length > 0));
-  return paged(recipes, (page) => h('ul', { class: 'list' }, page.map((m) => {
+  const rowOf = (m) => {
     const del = m.mine === false ? null : h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Delete recipe ' + m.name, onclick: async () => {
       if (!window.confirm('Delete the recipe "' + m.name + '"?')) return;
       try { await api.deleteMeal(m.id); await go('add', {}, true); } catch (e) { del.parentNode.appendChild(message(e.message, 'error')); }
     } }, '×');
     const open = () => go('meal', { mealId: m.id, meal: chosenMeal() });
     return foodRow(m.name, [recipeSubText(m, fmtNum(m.kcal, 0)), ownerText(m)].filter(Boolean).join(' · '), open, del);
-  })));
+  };
+  if (meal !== 'all' || state.display.group_recipes === false) return paged(recipes, (page) => h('ul', { class: 'list' }, page.map(rowOf)));
+  // With All and Group Recipes By Meal on, headings per meal tag; a recipe with several tags shows under each.
+  const groups = groupRecipesByMeal(recipes);
+  const box = h('div');
+  let shown = PAGE_SIZE;
+  const paint = () => {
+    const page = pageGroups(groups, shown);
+    clear(box);
+    for (const g of page.groups) box.appendChild(h('div', null, h('h2', { class: 'group' }, g.label), h('ul', { class: 'list' }, g.items.map(rowOf))));
+    if (page.more) box.appendChild(h('button', { class: 'btn', type: 'button', onclick: () => { shown += PAGE_SIZE; paint(); } }, 'Show More'));
+  };
+  paint();
+  return box;
 }
 
 // ---------- lookup result, recipe checklist ----------

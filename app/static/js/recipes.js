@@ -4,7 +4,7 @@ import { api } from './api.js';
 import { h, clear, field, message, show, select } from './dom.js';
 import { MEALS, MEAL_LABELS, fmtNum, pageOf, PAGE_SIZE, matchedAmountText, stepsCheck, qtyText, SAVED_FILTERS, SAVED_FILTER_LABELS, filterSavedItems,
   RECIPE_SORTS, RECIPE_SORT_LABELS, sortRecipes, sentence, RECIPE_OWNERS, RECIPE_OWNER_LABELS, recipeOwner, filterRecipeOwner, ownerText,
-  ownerEmptyText } from './util.js';
+  ownerEmptyText, groupRecipesByMeal, pageGroups } from './util.js';
 import { recipeListSub, notCounted, notCountedText, matchState, servingsText, perServingText, tagsText, portionUnits, portionFraction, portionAmount, yieldText } from './recipeimport.js';
 import { servingSizeEditor } from './servingsize.js';
 import { chips, renameRecipe, deleteRecipe } from './saved.js';
@@ -93,9 +93,17 @@ export async function renderRecipes(root, ctx) {
     if (!mine.length) { listBox.appendChild(message(ownerEmptyText(owner))); return; }
     const items = sortRecipes(filterSavedItems(mine, query, listView.meal, (r) => r.name), listView.sort);
     if (!items.length) { listBox.appendChild(h('p', { class: 'sub', role: 'status' }, sentence('No recipes match your search'))); return; }
-    const page = pageOf(items, shown);
-    listBox.appendChild(h('ul', { class: 'list' }, page.items.map(row)));
-    if (page.more) listBox.appendChild(h('button', { class: 'btn', type: 'button', onclick: () => { shown += PAGE_SIZE; paint(); } }, 'Show More'));
+    let more;
+    if (ctx.display && ctx.display.group_recipes === false) {
+      const page = pageOf(items, shown);
+      more = page.more;
+      listBox.appendChild(h('ul', { class: 'list' }, page.items.map(row)));
+    } else {
+      const page = pageGroups(groupRecipesByMeal(items, listView.meal), shown);
+      more = page.more > 0;
+      for (const g of page.groups) listBox.appendChild(h('div', { class: 'recipe-group' }, h('h2', { class: 'group' }, g.label), h('ul', { class: 'list' }, g.items.map(row))));
+    }
+    if (more) listBox.appendChild(h('button', { class: 'btn', type: 'button', onclick: () => { shown += PAGE_SIZE; paint(); } }, 'Show More'));
   }
   paint();
   root.appendChild(h('section', { class: 'screen recipes' }, h('h1', null, 'Recipes'),

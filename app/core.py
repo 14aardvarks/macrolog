@@ -102,7 +102,7 @@ CREATE TABLE IF NOT EXISTS micro_targets(
 """
 # Display switches in the settings table. Every default keeps the screens as they were before the switches existed;
 # the new Micro Nutrients section starts collapsed. micros_hidden is a comma list of hidden nutrients.
-DISPLAY_FLAGS = {"show_macros": 1, "show_micros": 1, "show_split": 1, "show_macro_bar": 1, "show_table": 1, "micros_open": 0}
+DISPLAY_FLAGS = {"show_macros": 1, "show_micros": 1, "show_split": 1, "show_macro_bar": 1, "show_table": 1, "micros_open": 0, "group_recipes": 1}
 TODAY_VIEWS = ("list", "table")  # the Today tab's default view, stored as settings.today_view
 START_SOURCES = ("all", "off", "fdc", "ai")  # the Add search Source to start with, stored as settings.search_source
 RECIPE_OWNERS = ("mine", "shared", "all")  # the Recipes tab owner filter: my recipes, recipes others share with me, or both; stored as settings.recipe_owner

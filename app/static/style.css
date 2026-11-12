@@ -185,6 +185,8 @@ nav button[aria-current=page] { color: var(--accent); box-shadow: inset 0 3px 0 
 .tabs button[aria-selected=true] { background: var(--card); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.25), inset 0 -3px 0 var(--accent); }
 .tab-list { max-height: 360px; max-height: min(360px, 42vh); min-height: 120px; overflow-y: auto; margin-bottom: 12px; overscroll-behavior: contain; }
 .tab-list .list, .tab-list .msg { margin-bottom: 8px; }
+.recipe-group > .group { font-size: 1rem; margin: 16px 4px 6px; }
+.recipe-group:first-child > .group { margin-top: 8px; }
 .tab-list .group { font-size: .9rem; margin: 8px 4px 4px; }
 .meal-pick { display: flex; align-items: center; gap: 12px; margin: 0 0 8px; }
 .meal-pick > span { min-width: 3.5rem; font-size: .875rem; font-weight: 600; color: var(--muted); }

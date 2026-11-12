@@ -64,7 +64,8 @@ function switchRow(id, label, checked, onChange) {
 export function displaySection(display, sources, save) {
   let shown = display.micros_shown.slice();
   const flags = [['show_macros', 'Macro Nutrients bars'], ['show_micros', 'Micro Nutrients section'],
-    ['show_split', 'Calorie Split chart'], ['show_macro_bar', 'Macro balance bar on foods'], ['show_table', 'Table View on Today']];
+    ['show_split', 'Calorie Split chart'], ['show_macro_bar', 'Macro balance bar on foods'], ['show_table', 'Table View on Today'],
+    ['group_recipes', 'Group Recipes By Meal']];
   const chips = h('div', { class: 'chips', role: 'group', 'aria-label': 'Micro nutrients to show' }, MICROS.map((m) => {
     const chip = h('button', { class: 'chip', type: 'button', 'aria-pressed': shown.includes(m.key) ? 'true' : 'false', onclick: async () => {
       const next = toggleMicro(shown, m.key);
@@ -90,6 +91,7 @@ export function displaySection(display, sources, save) {
   return h('div', { class: 'display-sec' }, h('h2', null, 'Display'),
     h('p', { class: 'sub' }, 'Choose what Today, the lists and the picker show. Changes apply at once.'),
     flags.map(([k, label]) => switchRow('disp-' + k, label, display[k] !== false, (on) => save({ [k]: on }))),
+    h('p', { class: 'sub', id: 'disp-group-help' }, sentence('Group Recipes By Meal is on by default') + ' ' + sentence('The Recipes tab and the Recipes list on Add show a heading for each meal tag')),
     h('p', { class: 'field-cap' }, 'Micro nutrients to show'), chips,
     h('label', { class: 'field', for: 'disp-source' }, h('span', null, 'Default Search Source'), srcSel),
     h('p', { class: 'sub', id: 'disp-source-help' }, 'Where the search on Add looks first. All Sources by default. Changing Source on Add lasts until the app is reloaded.'),
