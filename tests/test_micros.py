@@ -137,7 +137,7 @@ def test_migration_adds_micro_columns_and_display_settings(tmp_path):
     assert set(core.NEW_MICROS) <= {r[1] for r in c.execute("PRAGMA table_info(foods)")}
     assert core.read_display(c, 1) == {**{k: bool(v) for k, v in core.DISPLAY_FLAGS.items()}, "micros_shown": list(core.MICROS),
                                             "today_view": "list", "search_source": "all",
-                                            "auto_match": "search"}
+                                            "auto_match": "search", "recipe_owner": "mine"}
     assert c.execute("SELECT start_screen FROM settings").fetchone()[0] == "scan"
 
 
@@ -147,7 +147,7 @@ def test_display_defaults_keep_screens_as_before(a):
     d = a.get("/api/settings/display").json()
     assert d == {"show_macros": True, "show_micros": True, "show_split": True, "show_macro_bar": True, "show_table": True,
                  "micros_open": False, "micros_shown": list(core.MICROS), "today_view": "list",
-                 "search_source": "all", "auto_match": "search"}
+                 "search_source": "all", "auto_match": "search", "recipe_owner": "mine"}
 
 
 def test_display_put_partial_per_user_and_other_settings_kept(a, b):

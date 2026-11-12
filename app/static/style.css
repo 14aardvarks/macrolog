@@ -500,3 +500,7 @@ textarea { font: inherit; color: inherit; width: 100%; min-height: 160px; paddin
 .cook-row.done .cook-box { background: var(--accent); }
 .cook-steps .cook-row.done .cook-box::before { content: ''; }
 @media (min-width: 900px) { .cooking { max-width: 52rem; } .cooking { font-size: 1.375rem; } }
+
+/* Shared recipes: the owner line on cards and on the recipe screen ("Shared by Ann", or "Shared" on my own shared recipe). */
+.owner-line { display: block; color: var(--muted); font-size: .875rem; font-weight: 600; margin: 0 0 4px; }
+.recipe-view > .owner-line { font-size: 1rem; }

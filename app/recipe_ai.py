@@ -404,7 +404,7 @@ async def match(meal_id: int, user: CurrentUser, body: Any = Body(None)):
     """{"item_ids": [...]} (1..15 ingredients of my recipe) -> {"proposals": [...], usage fields}. Nothing is applied."""
     ids = _item_ids(body)
     with db.conn() as c:
-        core.own_meal(c, user["id"], meal_id)
+        core.writable_meal(c, user, meal_id)
         marks = ",".join("?" * len(ids))
         found = {r["id"]: r for r in c.execute(f"SELECT * FROM meal_items WHERE meal_id=? AND id IN ({marks})", (meal_id, *ids))}
     if set(ids) - set(found):
@@ -536,7 +536,7 @@ async def match_search(meal_id: int, user: CurrentUser, body: Any = Body(None)):
     if len(ids) > SEARCH_MAX_ROWS:
         raise HTTPException(400, f"Match at most {SEARCH_MAX_ROWS} ingredients at a time")
     with db.conn() as c:
-        core.own_meal(c, user["id"], meal_id)
+        core.writable_meal(c, user, meal_id)
         marks = ",".join("?" * len(ids))
         found = {r["id"]: r for r in c.execute(f"SELECT * FROM meal_items WHERE meal_id=? AND id IN ({marks})", (meal_id, *ids))}
     if set(ids) - set(found):

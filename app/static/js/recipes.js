@@ -3,7 +3,8 @@
 import { api } from './api.js';
 import { h, clear, field, message, show, select } from './dom.js';
 import { MEALS, MEAL_LABELS, fmtNum, pageOf, PAGE_SIZE, matchedAmountText, stepsCheck, qtyText, SAVED_FILTERS, SAVED_FILTER_LABELS, filterSavedItems,
-  RECIPE_SORTS, RECIPE_SORT_LABELS, sortRecipes, sentence } from './util.js';
+  RECIPE_SORTS, RECIPE_SORT_LABELS, sortRecipes, sentence, RECIPE_OWNERS, RECIPE_OWNER_LABELS, recipeOwner, filterRecipeOwner, ownerText,
+  ownerEmptyText } from './util.js';
 import { recipeListSub, notCounted, notCountedText, matchState, servingsText, perServingText, tagsText, portionUnits, portionFraction, portionAmount, yieldText } from './recipeimport.js';
 import { servingSizeEditor } from './servingsize.js';
 import { chips, renameRecipe, deleteRecipe } from './saved.js';
@@ -53,9 +54,11 @@ function stepsSection(meal) {
 // The chosen meal filter and sort stay for the session (this module lives as long as the page); the search text does not.
 const listView = { meal: 'all', sort: 'name' };
 
-// ctx: { go, back, newRecipe(), importRecipe(), defaultMeal() }
+// ctx: { go, back, newRecipe(), importRecipe(), defaultMeal(), display, saveDisplay(patch) }
+// The owner filter (Mine, Shared With Me, All) is the Display setting recipe_owner, saved when it changes.
 export async function renderRecipes(root, ctx) {
-  const all = (await api.meals()).meals;
+  const all = (await api.meals('all')).meals;
+  let owner = recipeOwner(ctx.display && ctx.display.recipe_owner);
   const listBox = h('div');
   let shown = PAGE_SIZE;
   let query = '';
@@ -63,7 +66,8 @@ export async function renderRecipes(root, ctx) {
   const row = (m) => h('li', { class: 'item' },
     h('button', { class: 'item-main', type: 'button', onclick: () => open(m) },
       h('span', { class: 'item-title' }, m.name),
-      h('span', { class: 'item-sub' }, recipeListSub(m, fmtNum(m.kcal, 0)))));
+      h('span', { class: 'item-sub' }, recipeListSub(m, fmtNum(m.kcal, 0))),
+      ownerText(m) ? h('span', { class: 'item-sub owner-line' }, ownerText(m)) : null));
   const q = h('input', { type: 'search', placeholder: 'Search recipes', 'aria-label': 'Search recipes', autocomplete: 'off', enterkeyhint: 'search' });
   const sortSel = select(RECIPE_SORTS.map((s) => ({ value: s, label: RECIPE_SORT_LABELS[s] })), listView.sort, { 'aria-label': 'Sort recipes' });
   const filterBox = h('div', { class: 'chips', role: 'group', 'aria-label': 'Meal filter' });
@@ -72,12 +76,22 @@ export async function renderRecipes(root, ctx) {
     filterBox.appendChild(h('button', { class: 'chip', type: 'button', 'data-meal': m, onclick: () => { listView.meal = m; shown = PAGE_SIZE; paintChips(); paint(); } }, SAVED_FILTER_LABELS[m]));
   }
   paintChips();
+  const ownerBox = h('div', { class: 'chips', role: 'group', 'aria-label': 'Owner filter' });
+  const paintOwner = () => ownerBox.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.owner === owner ? 'true' : 'false'));
+  for (const o of RECIPE_OWNERS) {
+    ownerBox.appendChild(h('button', { class: 'chip', type: 'button', 'data-owner': o, onclick: () => {
+      owner = o; shown = PAGE_SIZE; paintOwner(); paint();
+      if (ctx.saveDisplay) ctx.saveDisplay({ recipe_owner: o }).catch(() => {});
+    } }, RECIPE_OWNER_LABELS[o]));
+  }
+  paintOwner();
   q.addEventListener('input', () => { query = q.value; shown = PAGE_SIZE; paint(); });
   sortSel.addEventListener('change', () => { listView.sort = sortSel.value; shown = PAGE_SIZE; paint(); });
   function paint() {
     clear(listBox);
-    if (!all.length) { listBox.appendChild(message('No recipes yet. Tap New Recipe or Import Recipe, or tap Save As Recipe under a meal on Today.')); return; }
-    const items = sortRecipes(filterSavedItems(all, query, listView.meal, (r) => r.name), listView.sort);
+    const mine = filterRecipeOwner(all, owner);
+    if (!mine.length) { listBox.appendChild(message(ownerEmptyText(owner))); return; }
+    const items = sortRecipes(filterSavedItems(mine, query, listView.meal, (r) => r.name), listView.sort);
     if (!items.length) { listBox.appendChild(h('p', { class: 'sub', role: 'status' }, sentence('No recipes match your search'))); return; }
     const page = pageOf(items, shown);
     listBox.appendChild(h('ul', { class: 'list' }, page.items.map(row)));
@@ -89,7 +103,7 @@ export async function renderRecipes(root, ctx) {
       h('button', { class: 'btn primary', type: 'button', onclick: ctx.newRecipe }, 'New Recipe'),
       h('button', { class: 'btn', type: 'button', onclick: ctx.importRecipe }, 'Import Recipe')),
     h('p', { class: 'sub' }, 'Tap a recipe to log or edit it. Ingredients that are not matched are not counted.'),
-    h('div', { class: 'saved-filter', role: 'search' }, q, filterBox, h('label', { class: 'meal-pick' }, h('span', null, 'Sort'), sortSel)),
+    h('div', { class: 'saved-filter', role: 'search' }, q, ownerBox, filterBox, h('label', { class: 'meal-pick' }, h('span', null, 'Sort'), sortSel)),
     listBox));
 }
 
@@ -142,11 +156,22 @@ export async function renderRecipeView(root, params, ctx) {
     try { if (await deleteRecipe(meal)) await ctx.back(); } catch (e) { show(deleteStatus, message(e.message, 'error')); }
   }
   const again = () => ctx.go('recipeview', { mealId: meal.id }, true);  // rename and tags repaint from fresh data
+  const edit = meal.can_edit !== false;  // the owner, or an admin for a shared recipe; the server checks every write again
+  const dupStatus = h('div', { 'aria-live': 'polite' });
+  const dupBtn = h('button', { class: 'btn', type: 'button', onclick: async () => {
+    dupBtn.disabled = true;
+    try { const d = await api.duplicateMeal(meal.id); await ctx.go('recipeview', { mealId: d.id }, true); } catch (e) {
+      dupBtn.disabled = false;
+      show(dupStatus, message(e.message, 'error'));
+    }
+  } }, 'Duplicate');
+  const owned = ownerText(meal);
   const tagStatus = h('div', { 'aria-live': 'polite' });
   const renameBox = h('div');
   root.appendChild(h('section', { class: 'screen recipe-view' },
     h('div', { class: 'bar' }, h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back')),
     h('h1', null, meal.name),
+    owned ? h('p', { class: 'owner-line' }, owned) : null,
     sub, per,
     h('h2', null, 'Log'),
     h('label', { class: 'field' }, h('span', null, 'Meal'), mealSel),
@@ -157,7 +182,23 @@ export async function renderRecipeView(root, params, ctx) {
     h('div', { class: 'row wrap' }, h('button', { class: 'btn', type: 'button', onclick: () => ctx.go('cooking', { mealId: meal.id }) }, 'Cooking')),
     h('h2', null, 'Ingredients'),
     ingredientList(meal),
+    edit ? editTools() : viewOnly()));
+
+  // Someone else's shared recipe: steps to read and Duplicate to make my own private copy.
+  function viewOnly() {
+    return h('div', null,
+      meal.steps.length ? h('h2', null, 'Steps') : null,
+      meal.steps.length ? stepsList(meal.steps) : null,
+      h('h2', null, 'Make It Yours'),
+      h('p', { class: 'sub' }, sentence('Only the owner can change this recipe. Duplicate makes a private copy you can edit')),
+      dupStatus, h('div', { class: 'row wrap' }, dupBtn));
+  }
+
+  function editTools() {
+    return h('div', null,
     h('button', { class: 'btn', type: 'button', onclick: () => ctx.go('match', { mealId: meal.id, edit: true }) }, 'Edit Ingredients'),
+    h('h2', null, 'Sharing'),
+    shareSwitch(meal),
     h('h2', null, 'Meal Tags'),
     chips(meal.meals, async (m) => { await api.patchMeal(meal.id, { meals: m }); meal.meals = m; sub.textContent = subText(); }, tagStatus),
     tagStatus,
@@ -168,6 +209,33 @@ export async function renderRecipeView(root, params, ctx) {
     stepsSection(meal),
     h('h2', null, 'Serving Size'),
     servingSizeEditor(meal, { onSaved: sizeSaved }).el,
+    h('h2', null, 'Duplicate'),
+    h('p', { class: 'sub' }, sentence('Duplicate makes a private copy of this recipe')),
+    dupStatus, h('div', { class: 'row wrap' }, dupBtn),
     deleteStatus,
-    h('button', { class: 'btn danger', type: 'button', onclick: removeRecipe }, 'Delete Recipe')));
+    h('button', { class: 'btn danger', type: 'button', onclick: removeRecipe }, 'Delete Recipe'));
+  }
+}
+
+// The Shared switch, saved at once (PATCH shared). Off is the default for every recipe.
+function shareSwitch(meal) {
+  const id = 'share-' + meal.id;
+  const status = h('div', { 'aria-live': 'polite' });
+  const box = h('input', { type: 'checkbox', id, checked: !!meal.shared, 'aria-describedby': id + '-help' });
+  box.addEventListener('change', async () => {
+    const want = box.checked;
+    box.disabled = true;
+    try {
+      meal.shared = (await api.patchMeal(meal.id, { shared: want })).shared;
+      show(status, message(meal.shared ? 'Shared with other users.' : meal.mine === false ? 'Private. Only the owner can see it now.' : 'Private. Only you can see it.'));
+    } catch (e) { box.checked = !want; show(status, message(e.message, 'error')); }
+    box.disabled = false;
+  });
+  const others = meal.mine === false ? sentence('This recipe belongs to ' + ((meal.owner && meal.owner.name) || 'another user') + '. As an admin you can change or unshare it') : '';
+  return h('div', { class: 'switch-row' },
+    h('label', { for: id }, box, h('span', null, 'Share With Other Users')),
+    h('p', { class: 'sub', id: id + '-help' }, sentence('Off by default, so a recipe stays private') + ' '
+      + sentence('When on, everyone on this server can see, log and duplicate it, but only you and admins can change it')
+      + (others ? ' ' + others : '')),
+    status);
 }

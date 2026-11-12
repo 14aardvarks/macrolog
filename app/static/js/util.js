@@ -705,7 +705,7 @@ export const MICROS = [
 
 // What the screens show before /api/settings/display answers. Matches the server defaults.
 export const DEFAULT_DISPLAY = { show_macros: true, show_micros: true, show_split: true, show_macro_bar: true, show_table: true,
-  micros_open: false, micros_shown: MICROS.map((m) => m.key), today_view: 'list', auto_match: 'search' };
+  micros_open: false, micros_shown: MICROS.map((m) => m.key), today_view: 'list', auto_match: 'search', recipe_owner: 'mine' };
 
 // The nutrients to list, in order. Empty when the section is switched off.
 export function shownMicros(display) {
@@ -763,6 +763,32 @@ export function filterSavedItems(items, query, meal, text) {
     if (meal === 'untagged') return tags.length === 0;
     return !MEALS.includes(meal) || tags.includes(meal);
   });
+}
+
+// ---------- Recipes tab owner filter (shared recipes) ----------
+
+// Mine (the default) is my own recipes, Shared With Me is recipes other users share, All is both. Saved as the Display
+// setting recipe_owner. A recipe from the server carries mine (bool), shared (bool) and owner {id, name}.
+export const RECIPE_OWNERS = ['mine', 'shared', 'all'];
+export const RECIPE_OWNER_LABELS = { mine: 'Mine', shared: 'Shared With Me', all: 'All' };
+export const recipeOwner = (v) => (RECIPE_OWNERS.includes(v) ? v : 'mine');
+const isMine = (rec) => !rec || rec.mine !== false;
+
+export function filterRecipeOwner(items, owner) {
+  const o = recipeOwner(owner);
+  return (items || []).filter((rec) => o === 'all' || (o === 'mine') === isMine(rec));
+}
+
+// The owner line of a recipe: "Shared by Ann" for someone else's, "Shared" for my own shared one, '' for my private one.
+export function ownerText(rec) {
+  if (!isMine(rec)) return 'Shared by ' + ((rec.owner && String(rec.owner.name || '').trim()) || 'another user');
+  return rec && rec.shared ? 'Shared' : '';
+}
+
+// The empty list text for an owner filter with no recipes at all (before search and meal filters).
+export function ownerEmptyText(owner) {
+  return recipeOwner(owner) === 'shared' ? sentence('No one has shared a recipe with you yet')
+    : sentence('No recipes yet. Tap New Recipe or Import Recipe, or tap Save As Recipe under a meal on Today');
 }
 
 // ---------- Recipes tab sort ----------

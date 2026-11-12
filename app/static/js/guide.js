@@ -68,6 +68,16 @@ export const GUIDE = [
     'Delete Recipe at the bottom asks first, then returns to the Recipes tab.',
     'Add, then Recipes, still logs a recipe straight from Add.',
   ] },
+  { heading: 'Shared Recipes', bullets: [
+    'Recipes are private by default. Only you see them.',
+    'Turn on Share With Other Users on a recipe to share it.',
+    'Everyone on this server can then see, log and duplicate it.',
+    'Only the owner and admins can change, unshare or delete a shared recipe.',
+    'Shared recipes show who shared them, like Shared by Ann.',
+    'On the Recipes tab, choose Mine, Shared With Me or All. Your choice is kept.',
+    'Logging a shared recipe puts it in your own log only.',
+    'Duplicate makes your own private copy that you can edit.',
+  ] },
   { heading: 'Cooking View', bullets: [
     'On a recipe, tap Cooking for large text to read while you cook.',
     'Ingredients show the recipe\'s own wording, scaled to the servings shown.',

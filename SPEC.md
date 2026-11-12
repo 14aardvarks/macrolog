@@ -258,7 +258,7 @@ PATCH /api/meals/{id} also takes "servings" (null = 1), "yield" ({"amount","unit
 GET/PUT /api/goals   {"kcal","carb_pct","protein_pct","fat_pct"}  pcts total 100. Default 3000 and 50/30/20 (carbs/protein/fat).
         targets: carbs g = kcal*pct/4, protein same, fat g = kcal*pct/9. Goals are per user.
 GET/PUT /api/settings {"start_screen": "today"|"scan"|"search"|"ai", "default_meal": ...}   # per user, validated
-GET/PUT /api/settings/display {"show_macros","show_micros","show_split","show_macro_bar","show_table","micros_open": bool, "micros_shown": [nutrient...], "today_view": "list"|"table", "search_source": "all"|"off"|"fdc"|"ai", "auto_match": "search"|"claude"|"search_claude"|"off"}
+GET/PUT /api/settings/display {"show_macros","show_micros","show_split","show_macro_bar","show_table","micros_open": bool, "micros_shown": [nutrient...], "today_view": "list"|"table", "search_source": "all"|"off"|"fdc"|"ai", "auto_match": "search"|"claude"|"search_claude"|"off", "recipe_owner": "mine"|"shared"|"all"}
         # per user, stored in the settings table (micros_hidden comma list). PUT takes any subset, booleans only (today_view is the string list or table), 400 otherwise.
         # today_view is the Today tab's view, column settings.today_view TEXT NOT NULL DEFAULT 'list', added in place by core.init.
         # Defaults: everything shown, micros_open false (the new section starts collapsed), so existing users see no change.
@@ -377,7 +377,7 @@ and an active SSO-linked admin. Every write appends to `admin_log` (no secret va
 
 Mobile first, one-hand use, also fine on desktop. Plain ES modules, under about 1000 lines of JS total, no libraries.
 Screens: Login, Today, Add, Recipes, Picker, Claude fallback, Settings. Bottom nav: Today, Add, Recipes, Settings.
-- Recipes tab (js/recipes.js, helpers in js/recipeimport.js): New Recipe and Import Recipe buttons, then my recipes with "3 of 8 matched"
+- Recipes tab (js/recipes.js, helpers in js/recipeimport.js): New Recipe and Import Recipe buttons, then my recipes (and shared ones per the Owner filter, see Shared Recipes) with "3 of 8 matched"
   or "N items - kcal", servings and meal tags. Above the list: a search box (every word of the name must match), a Meal filter chip row (All, Breakfast, Lunch, Dinner, Snack, Dessert, Untagged; strict, same as Saved, via SAVED_FILTERS and filterSavedItems) and a Sort select (Name (A to Z), Newest, Most Used; util.js `sortRecipes`; Newest is the highest id first, Most Used is the total of the per meal `counts` from GET /api/meals). The list shows 20 with Show More. The chosen filter and sort are kept in memory for the session, the search text is not. Every recipe, partial or complete, opens the recipe screen (a partial one keeps its "3 of 8 matched" badge and shows the quiet sentence "5 ingredients are not counted."): Log
   (Meal, Amount and a unit from meal.portions: servings, % of recipe, and the yield units when a yield is set; POST /api/meals/{id}/log
   with amount and unit, so the server scales it), the Ingredients list with Edit Ingredients (opens Match Ingredients with edit true), Meal Tags, Rename, Steps, Serving Size (js/servingsize.js:
@@ -609,6 +609,28 @@ POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log i
   removed rows back in place and restores the rest. The old checklist (js/app.js mealScreen) is only for logging from Add, Recipes.
 - Add screen order, top to bottom: Enter Manually and Scan Barcode (equal width), Search, Source, Meal (not in ingredient mode), the tabs and lists.
 
+
+## Shared Recipes (v54, issues #18 and #25)
+
+- `meals.shared INTEGER NOT NULL DEFAULT 0` (added in place by core.init), so every existing recipe stays private. `recipe_logs.user_id INTEGER`
+  (added in place; null on older rows means the recipe owner) makes Most Used counts per viewer. `settings.recipe_owner TEXT NOT NULL DEFAULT 'mine'`
+  (core.RECIPE_OWNERS mine, shared, all; returned and validated by GET/PUT /api/settings/display, anything else 400, a bad stored value reads as mine).
+- Read (GET /api/meals/{id}, log, duplicate, Cooking): my recipe or a shared one (core.visible_meal); anyone else's private recipe is 404, admins included.
+  Write (PATCH /api/meals/{id} incl. shared, items routes, uncounted, DELETE, and recipe_ai match and match-search): the owner, or an admin for a recipe
+  they can read (core.writable_meal); anyone else gets 403 on a shared recipe. own_meal (owner only) remains for new rows of my own.
+- `GET /api/meals?owner=mine|shared|all` (default mine, as before; shared = other users' shared recipes). Each meal also carries `shared`, `mine`,
+  `can_edit` and `owner` {"id","name"} (display name, else username). `counts` are the viewer's own logs.
+- `PATCH /api/meals/{id} {"shared": bool}` (bool only, else 400). `POST /api/meals/{id}/duplicate {"name"?}` copies a readable recipe into a new private
+  recipe of mine (every row with its imported line, skipped and Check Amount state, tags, servings, yield, steps; not logs); name defaults to "<name> (Copy)".
+- Logging someone else's shared recipe (POST /api/meals/{id}/log, entry-groups copy) writes entries to my log only, counts in recipe_logs with my id
+  and never adds tags to their recipe. Foods are one shared table, so the owner's custom foods resolve for everyone. log_entry(revive=False) on
+  another owner's recipe clears only my deleted_foods row and never un-deletes the owner's food for everyone. GET /api/saved stays own only.
+- Client: util.js `RECIPE_OWNERS`, `RECIPE_OWNER_LABELS`, `recipeOwner`, `filterRecipeOwner`, `ownerText` ("Shared by Ann", "Shared" for my own shared
+  one), `ownerEmptyText`, `DEFAULT_DISPLAY.recipe_owner`. The Recipes tab loads GET /api/meals?owner=all and filters with an Owner filter chip row
+  (Mine, Shared With Me, All) between search and the Meal filter, saved at once as recipe_owner. Cards show the owner line. The recipe screen shows the
+  owner line; with can_edit it adds a Sharing section (switch "Share With Other Users", hint stating it is off by default) and a Duplicate section,
+  otherwise only Steps (read only) and Make It Yours with Duplicate. Add, Recipes lists mine and shared (owner in the sub line, delete only on mine).
+  Shell cache macrolog-shell-v54.
 
 ## Auto-Match After Import
 

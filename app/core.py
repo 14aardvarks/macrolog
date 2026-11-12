@@ -105,6 +105,7 @@ CREATE TABLE IF NOT EXISTS micro_targets(
 DISPLAY_FLAGS = {"show_macros": 1, "show_micros": 1, "show_split": 1, "show_macro_bar": 1, "show_table": 1, "micros_open": 0}
 TODAY_VIEWS = ("list", "table")  # the Today tab's default view, stored as settings.today_view
 START_SOURCES = ("all", "off", "fdc", "ai")  # the Add search Source to start with, stored as settings.search_source
+RECIPE_OWNERS = ("mine", "shared", "all")  # the Recipes tab owner filter: my recipes, recipes others share with me, or both; stored as settings.recipe_owner
 AUTO_MATCHES = ("search", "claude", "search_claude", "off")  # Auto-Match After Import: the free Search (default), Claude, Search then Claude for rows Search left without a proposal, or nothing; stored as settings.auto_match (plain TEXT, validated here, no schema change)
 SCHEMA = SCHEMA.replace("{MEAL_ITEMS_BODY}", MEAL_ITEMS_BODY)
 
@@ -150,6 +151,10 @@ def init(c: sqlite3.Connection) -> None:
     if "needs_check" not in {r[1] for r in c.execute("PRAGMA table_info(meal_items)")}:  # databases made before Check Amount
         c.execute("ALTER TABLE meal_items ADD COLUMN needs_check INTEGER NOT NULL DEFAULT 0")
     c.execute("CREATE INDEX IF NOT EXISTS meal_items_meal ON meal_items(meal_id, position)")
+    if "shared" not in {r[1] for r in c.execute("PRAGMA table_info(meals)")}:  # databases made before shared recipes: all stay private
+        c.execute("ALTER TABLE meals ADD COLUMN shared INTEGER NOT NULL DEFAULT 0")
+    if "user_id" not in {r[1] for r in c.execute("PRAGMA table_info(recipe_logs)")}:  # who logged it; null (older logs) means the owner
+        c.execute("ALTER TABLE recipe_logs ADD COLUMN user_id INTEGER")
     if "use_last" not in {r[1] for r in c.execute("PRAGMA table_info(settings)")}:  # databases made before use_last
         c.execute("ALTER TABLE settings ADD COLUMN use_last INTEGER NOT NULL DEFAULT 1")
     cols = {r[1] for r in c.execute("PRAGMA table_info(settings)")}
@@ -168,6 +173,8 @@ def init(c: sqlite3.Connection) -> None:
         c.execute("ALTER TABLE settings ADD COLUMN search_source TEXT NOT NULL DEFAULT 'all'")
     if "auto_match" not in cols:  # databases made before Auto-Match After Import
         c.execute("ALTER TABLE settings ADD COLUMN auto_match TEXT NOT NULL DEFAULT 'search'")
+    if "recipe_owner" not in cols:  # databases made before the Recipes owner filter
+        c.execute("ALTER TABLE settings ADD COLUMN recipe_owner TEXT NOT NULL DEFAULT 'mine'")
     for table in ("foods", "entries"):  # databases made before micronutrients: old rows stay null (unknown)
         have = {r[1] for r in c.execute(f"PRAGMA table_info({table})")}
         for key in NEW_MICROS:
@@ -477,8 +484,9 @@ def own_entry(c, uid: int, entry_id: int):
     return row
 
 
-def log_entry(c, uid: int, food: dict, amount: float, unit: str, day: str, meal, group_id: int | None = None) -> dict:
-    """Insert a snapshot entry and update last_used. Inputs must already be validated. group_id: the recipe log it belongs to."""
+def log_entry(c, uid: int, food: dict, amount: float, unit: str, day: str, meal, group_id: int | None = None, revive: bool = True) -> dict:
+    """Insert a snapshot entry and update last_used. Inputs must already be validated. group_id: the recipe log it belongs to.
+    revive false (an ingredient of someone else's shared recipe) brings the food back for me only, never for everyone."""
     m = macros(food, amount, unit)
     nutrients = (*MACROS, *MICROS)
     cur = c.execute(
@@ -489,7 +497,10 @@ def log_entry(c, uid: int, food: dict, amount: float, unit: str, day: str, meal,
               "ON CONFLICT(user_id,food_id) DO UPDATE SET amount=excluded.amount, unit=excluded.unit, "
               "used_at=excluded.used_at", (uid, food["id"], amount, unit, now()))
     c.execute("DELETE FROM hidden_foods WHERE user_id=? AND food_id=?", (uid, food["id"]))
-    undelete(c, uid, food["id"])  # logging a deleted food again brings it back
+    if revive:
+        undelete(c, uid, food["id"])  # logging a deleted food again brings it back
+    else:
+        c.execute("DELETE FROM deleted_foods WHERE user_id=? AND food_id=?", (uid, food["id"]))
     return entry_dict(c.execute("SELECT * FROM entries WHERE id=?", (cur.lastrowid,)).fetchone())
 
 
@@ -693,17 +704,18 @@ def copy_group(group_id: int, user: CurrentUser, body: dict | None = Body(None))
         amount, unit, frac = portion_body(g, body)
         k = frac / g["fraction"] if g["fraction"] else 1.0
         rows = c.execute("SELECT * FROM entries WHERE user_id=? AND group_id=? AND food_id IS NOT NULL ORDER BY id", (uid, group_id)).fetchall()
+        # an ingredient of someone else's shared recipe comes back for me only (see log_entry)
+        revive = not c.execute("SELECT 1 FROM meals WHERE id=? AND user_id<>?", (g["meal_id"], uid)).fetchone()
         gid = new_group(c, uid, day, meal, g["meal_id"], g["name"], amount, unit, frac, group_portions(g))
         for row in rows:
             try:
-                log_entry(c, uid, need_food(c, row["food_id"]), round(row["amount"] * k, 4), row["unit"], day, meal, gid)
+                log_entry(c, uid, need_food(c, row["food_id"]), round(row["amount"] * k, 4), row["unit"], day, meal, gid, revive)
             except (ValueError, HTTPException):
                 continue  # a food whose unit can no longer be reached is left out
         if not c.execute("SELECT 1 FROM entries WHERE group_id=?", (gid,)).fetchone():
             raise bad("Nothing in this recipe log can be logged again.")
-        if meal and g["meal_id"] is not None and c.execute("SELECT 1 FROM meals WHERE id=? AND user_id=?", (g["meal_id"], uid)).fetchone():
-            c.execute("INSERT OR IGNORE INTO recipe_tags(meal_id, meal) VALUES(?,?)", (g["meal_id"], meal))
-            c.execute("INSERT INTO recipe_logs(meal_id, meal) VALUES(?,?)", (g["meal_id"], meal))
+        if meal and g["meal_id"] is not None:
+            count_log(c, uid, g["meal_id"], meal)
         return group_out(c, uid, gid)
 
 
@@ -785,7 +797,7 @@ def put_settings(user: CurrentUser, body: dict = Body(...)):
 # ---------- display settings and micronutrient targets ----------
 
 def read_display(c, uid: int) -> dict:
-    row = c.execute(f"SELECT {', '.join(DISPLAY_FLAGS)}, micros_hidden, today_view, search_source, auto_match FROM settings WHERE user_id=?",
+    row = c.execute(f"SELECT {', '.join(DISPLAY_FLAGS)}, micros_hidden, today_view, search_source, auto_match, recipe_owner FROM settings WHERE user_id=?",
                     (uid,)).fetchone()
     out = {k: bool(row[k]) if row else bool(v) for k, v in DISPLAY_FLAGS.items()}
     hidden = set((row["micros_hidden"] if row else "").split(","))
@@ -793,6 +805,7 @@ def read_display(c, uid: int) -> dict:
     out["today_view"] = row["today_view"] if row and row["today_view"] in TODAY_VIEWS else "list"
     out["search_source"] = row["search_source"] if row and row["search_source"] in START_SOURCES else "all"
     out["auto_match"] = row["auto_match"] if row and row["auto_match"] in AUTO_MATCHES else "search"
+    out["recipe_owner"] = row["recipe_owner"] if row and row["recipe_owner"] in RECIPE_OWNERS else "mine"
     return out
 
 
@@ -805,8 +818,8 @@ def get_display(user: CurrentUser):
 @router.put("/settings/display")
 def put_display(user: CurrentUser, body: dict = Body(...)):
     """Per user show/hide switches. Send any subset; micros_shown is the list of nutrients to show."""
-    if not (set(DISPLAY_FLAGS) | {"micros_shown", "today_view", "search_source", "auto_match"}) & body.keys():
-        raise bad("Nothing to update: send " + ", ".join(DISPLAY_FLAGS) + ", micros_shown, today_view, search_source or auto_match")
+    if not (set(DISPLAY_FLAGS) | {"micros_shown", "today_view", "search_source", "auto_match", "recipe_owner"}) & body.keys():
+        raise bad("Nothing to update: send " + ", ".join(DISPLAY_FLAGS) + ", micros_shown, today_view, search_source, auto_match or recipe_owner")
     with db.conn() as c:
         d = read_display(c, user["id"])
         for key in DISPLAY_FLAGS:
@@ -831,9 +844,13 @@ def put_display(user: CurrentUser, body: dict = Body(...)):
             if body["auto_match"] not in AUTO_MATCHES:
                 raise bad("auto_match must be one of " + ", ".join(AUTO_MATCHES[:-1]) + " or " + AUTO_MATCHES[-1])
             d["auto_match"] = body["auto_match"]
-        cols = [*DISPLAY_FLAGS, "micros_hidden", "today_view", "search_source", "auto_match"]
+        if "recipe_owner" in body:
+            if body["recipe_owner"] not in RECIPE_OWNERS:
+                raise bad("recipe_owner must be one of " + ", ".join(RECIPE_OWNERS[:-1]) + " or " + RECIPE_OWNERS[-1])
+            d["recipe_owner"] = body["recipe_owner"]
+        cols = [*DISPLAY_FLAGS, "micros_hidden", "today_view", "search_source", "auto_match", "recipe_owner"]
         vals = [int(d[k]) for k in DISPLAY_FLAGS] + [",".join(k for k in MICROS if k not in d["micros_shown"]), d["today_view"],
-                                                     d["search_source"], d["auto_match"]]
+                                                     d["search_source"], d["auto_match"], d["recipe_owner"]]
         c.execute("INSERT OR IGNORE INTO settings(user_id) VALUES(?)", (user["id"],))
         c.execute(f"UPDATE settings SET {', '.join(k + '=?' for k in cols)} WHERE user_id=?", [*vals, user["id"]])
         return read_display(c, user["id"])
@@ -1197,10 +1214,20 @@ def ingredient_grams(items: list, complete: bool) -> float | None:
     return None if any(x is None for x in g) else r1(sum(g))
 
 
-def meal_dict(c, row) -> dict:
+def owner_name(c, uid: int) -> str:
+    r = c.execute("SELECT COALESCE(NULLIF(TRIM(display_name), ''), username) AS n FROM users WHERE id=?", (uid,)).fetchone()
+    return r["n"] if r and r["n"] else "Another user"
+
+
+def meal_dict(c, row, user: dict | None = None) -> dict:
+    """One recipe as user sees it (None: as its owner). counts are the viewer's own logs only; an older log with no user_id is
+    the owner's. mine and can_edit tell the client which tools to show; the server checks them again on every write."""
+    viewer = user["id"] if user else row["user_id"]
+    mine = viewer == row["user_id"]
     items = [item_dict(c, it) for it in c.execute("SELECT * FROM meal_items WHERE meal_id=? ORDER BY position, id", (row["id"],))]
     tags = clean_tags([r["meal"] for r in c.execute("SELECT meal FROM recipe_tags WHERE meal_id=?", (row["id"],))])
-    counts = {r["meal"]: r["n"] for r in c.execute("SELECT meal, COUNT(*) n FROM recipe_logs WHERE meal_id=? GROUP BY meal", (row["id"],))}
+    counts = {r["meal"]: r["n"] for r in c.execute("SELECT meal, COUNT(*) n FROM recipe_logs WHERE meal_id=? AND COALESCE(user_id, ?)=? "
+                                                   "GROUP BY meal", (row["id"], row["user_id"], viewer))}
     totals = recipe_totals(items)
     servings = row["servings"] or 1
     needed = [i for i in items if not i["skipped"]]
@@ -1213,7 +1240,9 @@ def meal_dict(c, row) -> dict:
             "matched": matched, "needed": len(needed), "skipped": len(items) - len(needed),
             "checks": sum(1 for i in needed if i["check"]), "steps": read_steps(row["steps"]),
             "complete": complete, "yield": yld, "portions": portions(servings, yld),
-            "ingredient_grams": ingredient_grams(items, complete)}
+            "ingredient_grams": ingredient_grams(items, complete),
+            "shared": bool(row["shared"]), "mine": mine, "can_edit": mine or bool(user and user.get("is_admin")),
+            "owner": {"id": row["user_id"], "name": owner_name(c, row["user_id"])}}
 
 
 MAX_STEPS = 60
@@ -1278,11 +1307,45 @@ def own_meal(c, uid: int, meal_id: int):
     return row
 
 
+# Shared recipes. A recipe is private (meals.shared 0, the default and every older recipe) or shared with every user on this
+# server. Reading and logging: my own recipes and shared ones; anyone else's private recipe is 404, so its existence never
+# shows. Writing (rename, tags, items, servings, steps, sharing, delete): the owner, or an admin for a shared recipe; anyone
+# else gets 403 on a shared recipe. Duplicate copies a recipe I can read into a new private recipe of mine.
+
+def visible_meal(c, uid: int, meal_id: int):
+    row = c.execute("SELECT * FROM meals WHERE id=? AND (user_id=? OR shared=1)", (meal_id, uid)).fetchone()
+    if not row:
+        raise HTTPException(404, "Recipe not found")
+    return row
+
+
+def writable_meal(c, user: dict, meal_id: int):
+    row = visible_meal(c, user["id"], meal_id)
+    if row["user_id"] != user["id"] and not user.get("is_admin"):
+        raise HTTPException(403, "Only the owner or an admin can change this recipe. Duplicate it to make your own copy.")
+    return row
+
+
+def count_log(c, uid: int, meal_id: int, meal: str) -> None:
+    """A log of a recipe with a meal: it counts toward my Most Used, and tags the recipe with that meal when the recipe is mine
+    (someone else's shared recipe is never changed by my logging)."""
+    row = c.execute("SELECT user_id FROM meals WHERE id=?", (meal_id,)).fetchone()
+    if not row:
+        return
+    if row["user_id"] == uid:
+        c.execute("INSERT OR IGNORE INTO recipe_tags(meal_id, meal) VALUES(?,?)", (meal_id, meal))
+    c.execute("INSERT INTO recipe_logs(meal_id, meal, user_id) VALUES(?,?,?)", (meal_id, meal, uid))
+
+
 @router.get("/meals")
-def list_meals(user: CurrentUser):
+def list_meals(user: CurrentUser, owner: str = "mine"):
+    """owner mine (default, as before): my recipes; shared: recipes other users share; all: both."""
+    owner = pick(owner, RECIPE_OWNERS, "owner")
+    uid = user["id"]
+    where = {"mine": "user_id=?", "shared": "user_id<>? AND shared=1", "all": "(user_id=? OR shared=1)"}[owner]
     with db.conn() as c:
-        rows = c.execute("SELECT * FROM meals WHERE user_id=? ORDER BY name COLLATE NOCASE, id", (user["id"],)).fetchall()
-        return {"meals": [meal_dict(c, r) for r in rows]}
+        rows = c.execute(f"SELECT * FROM meals WHERE {where} ORDER BY name COLLATE NOCASE, id", (uid,)).fetchall()
+        return {"meals": [meal_dict(c, r, user) for r in rows]}
 
 
 @router.post("/meals")
@@ -1330,17 +1393,21 @@ def meal_from_meal(user: CurrentUser, body: dict = Body(...)):
 
 @router.patch("/meals/{meal_id}")
 def patch_meal(meal_id: int, user: CurrentUser, body: dict = Body(...)):
-    """Rename, retag (meals), set servings, yield or steps, or replace the items list (amounts, units, removed items)."""
-    if not {"name", "meals", "items", "servings", "steps", "yield"} & body.keys():
-        raise bad("Nothing to update: send name, meals, items, servings, yield or steps")
+    """Rename, retag (meals), set servings, yield, steps or shared, or replace the items list (amounts, units, removed items)."""
+    if not {"name", "meals", "items", "servings", "steps", "yield", "shared"} & body.keys():
+        raise bad("Nothing to update: send name, meals, items, servings, yield, steps or shared")
+    if "shared" in body and not isinstance(body["shared"], bool):
+        raise bad("shared must be true or false")
     yld = recipe_yield(body["yield"]) if "yield" in body else None
     steps = clean_steps(body["steps"]) if "steps" in body else None
     name = meal_name(body) if "name" in body else None
     tags = clean_tags(body["meals"]) if "meals" in body else None
     servings = recipe_servings(body["servings"]) if "servings" in body else None
     with db.conn() as c:
-        own_meal(c, user["id"], meal_id)
+        writable_meal(c, user, meal_id)
         items = parse_items(c, body["items"]) if "items" in body else None
+        if "shared" in body:
+            c.execute("UPDATE meals SET shared=? WHERE id=?", (int(body["shared"]), meal_id))
         if name:
             c.execute("UPDATE meals SET name=? WHERE id=?", (name, meal_id))
         if "servings" in body:
@@ -1359,17 +1426,37 @@ def patch_meal(meal_id: int, user: CurrentUser, body: dict = Body(...)):
             c.execute("UPDATE meal_items SET position=position+? WHERE meal_id=?", (len(items), meal_id))
             c.executemany("INSERT INTO meal_items(meal_id,food_id,amount,unit,position) VALUES(?,?,?,?,?)",
                           [(meal_id, f["id"], a, u, i) for i, (f, a, u) in enumerate(items)])
-        return meal_dict(c, own_meal(c, user["id"], meal_id))
+        # read back by id: an admin who just made someone else's recipe private still gets the answer to this request
+        return meal_dict(c, c.execute("SELECT * FROM meals WHERE id=?", (meal_id,)).fetchone(), user)
 
 
 @router.delete("/meals/{meal_id}")
 def delete_meal(meal_id: int, user: CurrentUser):
     with db.conn() as c:
-        own_meal(c, user["id"], meal_id)
+        writable_meal(c, user, meal_id)
         for table in ("meal_items", "recipe_tags", "recipe_logs"):
             c.execute(f"DELETE FROM {table} WHERE meal_id=?", (meal_id,))
-        c.execute("DELETE FROM meals WHERE id=? AND user_id=?", (meal_id, user["id"]))
+        c.execute("DELETE FROM meals WHERE id=?", (meal_id,))
     return {"deleted": meal_id}
+
+
+@router.post("/meals/{meal_id}/duplicate")
+def duplicate_meal(meal_id: int, user: CurrentUser, body: dict | None = Body(None)):
+    """Copy a recipe I can read (mine or shared) into a new private recipe of mine: every row (matched, unmatched, skipped,
+    Check Amount and its imported line), tags, servings, yield and steps. Logs and counts are not copied. name defaults to
+    the recipe's name plus " (Copy)"."""
+    body = body or {}
+    with db.conn() as c:
+        row = visible_meal(c, user["id"], meal_id)
+        name = meal_name(body) if "name" in body else (row["name"] + " (Copy)")[:200]
+        cur = c.execute("INSERT INTO meals(user_id, name, meal, servings, steps, yield_amount, yield_unit, shared) VALUES(?,?,?,?,?,?,?,0)",
+                        (user["id"], name, row["meal"], row["servings"], row["steps"], row["yield_amount"], row["yield_unit"]))
+        new = cur.lastrowid
+        c.execute("INSERT INTO recipe_tags(meal_id, meal) SELECT ?, meal FROM recipe_tags WHERE meal_id=?", (new, meal_id))
+        c.execute("INSERT INTO meal_items(meal_id, food_id, amount, unit, position, src_text, src_amount, src_unit, src_name, src_note, "
+                  "skipped, needs_check) SELECT ?, food_id, amount, unit, position, src_text, src_amount, src_unit, src_name, src_note, "
+                  "skipped, needs_check FROM meal_items WHERE meal_id=? ORDER BY position, id", (new, meal_id))
+        return meal_dict(c, own_meal(c, user["id"], new), user)
 
 
 def need_matched(c, row) -> None:
@@ -1452,7 +1539,7 @@ def import_meal(user: CurrentUser, body: dict = Body(...)):
 @router.get("/meals/{meal_id}")
 def get_meal(meal_id: int, user: CurrentUser):
     with db.conn() as c:
-        return meal_dict(c, own_meal(c, user["id"], meal_id))
+        return meal_dict(c, visible_meal(c, user["id"], meal_id), user)
 
 
 def own_item(c, meal_id: int, item_id: int):
@@ -1505,10 +1592,10 @@ def patch_meal_item(meal_id: int, item_id: int, user: CurrentUser, body: dict = 
     check true attaches the food with an amount still to confirm (Check Amount); a match without check confirms it."""
     check_item_body(body)
     with db.conn() as c:
-        own_meal(c, user["id"], meal_id)
+        writable_meal(c, user, meal_id)
         own_item(c, meal_id, item_id)
         apply_item(c, item_id, body, user["id"])
-        return meal_dict(c, own_meal(c, user["id"], meal_id))
+        return meal_dict(c, writable_meal(c, user, meal_id), user)
 
 
 @router.patch("/meals/{meal_id}/items")
@@ -1531,7 +1618,7 @@ def patch_meal_items(meal_id: int, user: CurrentUser, body: dict = Body(...)):
     if len({x[0] for x in changes}) != len(changes):
         raise bad("Each row may appear only once")
     with db.conn() as c:
-        own_meal(c, user["id"], meal_id)
+        writable_meal(c, user, meal_id)
         for item_id, _ in changes:
             own_item(c, meal_id, item_id)
         for i, (item_id, rest) in enumerate(changes, 1):  # db.conn commits only when every row went through
@@ -1539,7 +1626,7 @@ def patch_meal_items(meal_id: int, user: CurrentUser, body: dict = Body(...)):
                 apply_item(c, item_id, rest, user["id"])
             except HTTPException as e:
                 raise HTTPException(e.status_code, f"row {i}: {e.detail}")
-        return meal_dict(c, own_meal(c, user["id"], meal_id))
+        return meal_dict(c, writable_meal(c, user, meal_id), user)
 
 
 ADD_KEYS = {"src", "food_id", "amount", "unit", "check", "skipped", "position"}
@@ -1564,7 +1651,7 @@ def add_meal_item(meal_id: int, user: CurrentUser, body: dict = Body(...)):
     if pos is not None and (isinstance(pos, bool) or not isinstance(pos, int) or pos < 0):
         raise bad("position must be a whole number of 0 or more")
     with db.conn() as c:
-        row = own_meal(c, user["id"], meal_id)
+        row = writable_meal(c, user, meal_id)
         ids = [r["id"] for r in c.execute("SELECT id FROM meal_items WHERE meal_id=? ORDER BY position, id", (meal_id,))]
         if len(ids) >= MAX_IMPORT_ROWS:
             raise HTTPException(409, f"A recipe can have at most {MAX_IMPORT_ROWS} ingredients")
@@ -1579,19 +1666,19 @@ def add_meal_item(meal_id: int, user: CurrentUser, body: dict = Body(...)):
                         (meal_id, food_id, amount, unit, len(ids), *src, int(body.get("skipped") is True), int(body.get("check") is True)))
         ids.insert(len(ids) if pos is None else min(pos, len(ids)), cur.lastrowid)
         c.executemany("UPDATE meal_items SET position=? WHERE id=?", [(i, x) for i, x in enumerate(ids)])
-        return {**meal_dict(c, row), "added": cur.lastrowid}
+        return {**meal_dict(c, row, user), "added": cur.lastrowid}
 
 
 @router.delete("/meals/{meal_id}/items/{item_id}")
 def delete_meal_item(meal_id: int, item_id: int, user: CurrentUser):
     """Remove one ingredient row from my recipe. The last row cannot be removed (delete the recipe instead)."""
     with db.conn() as c:
-        row = own_meal(c, user["id"], meal_id)
+        row = writable_meal(c, user, meal_id)
         own_item(c, meal_id, item_id)
         if c.execute("SELECT COUNT(*) FROM meal_items WHERE meal_id=?", (meal_id,)).fetchone()[0] <= 1:
             raise HTTPException(409, "A recipe needs at least one ingredient. Delete the recipe instead.")
         c.execute("DELETE FROM meal_items WHERE id=?", (item_id,))
-        return meal_dict(c, row)
+        return meal_dict(c, row, user)
 
 
 @router.delete("/meals/{meal_id}/uncounted")
@@ -1599,11 +1686,11 @@ def delete_uncounted_items(meal_id: int, user: CurrentUser):
     """Save Without Them on Match Ingredients: remove every row that counts for nothing (unmatched, skipped, Check Amount).
     Nothing is kept for them, no text line either. At least one matched row must be left."""
     with db.conn() as c:
-        row = own_meal(c, user["id"], meal_id)
+        row = writable_meal(c, user, meal_id)
         if not c.execute("SELECT 1 FROM meal_items WHERE meal_id=? AND food_id IS NOT NULL AND skipped=0 AND needs_check=0", (meal_id,)).fetchone():
             raise bad("A recipe needs at least one ingredient. Match one, or keep the others to finish later.")
         c.execute("DELETE FROM meal_items WHERE meal_id=? AND NOT (food_id IS NOT NULL AND skipped=0 AND needs_check=0)", (meal_id,))
-        return meal_dict(c, row)
+        return meal_dict(c, row, user)
 
 
 @router.post("/meals/{meal_id}/log")
@@ -1611,9 +1698,10 @@ def log_meal(meal_id: int, user: CurrentUser, body: dict | None = Body(None)):
     body = body or {}
     day, meal = day_str(body.get("day")), pick(body.get("meal"), MEALS, "meal", nullable=True)
     with db.conn() as c:
-        row = own_meal(c, user["id"], meal_id)
+        row = visible_meal(c, user["id"], meal_id)  # my recipe, or one shared with me: the entries are mine, the recipe is not changed
+        mine = row["user_id"] == user["id"]
         need_matched(c, row)
-        md = meal_dict(c, row)
+        md = meal_dict(c, row, user)
         # amount and unit: how much of the recipe (servings, pct of the recipe, or a yield unit), as a share of the whole.
         # With items (the checklist) they only name the portion of the recipe log; without either it is the whole recipe.
         given = "amount" in body or "unit" in body
@@ -1624,12 +1712,11 @@ def log_meal(meal_id: int, user: CurrentUser, body: dict | None = Body(None)):
             items = [(need_food(c, i["food_id"]), i["amount"] if frac is None else round(i["amount"] * frac, 4), i["unit"]) for i in
                      c.execute("SELECT * FROM meal_items WHERE meal_id=? AND food_id IS NOT NULL AND skipped=0 AND needs_check=0 "
                                  "ORDER BY position, id", (row["id"],))]
-        if meal:  # logging a recipe with a meal tags the recipe and counts toward that meal
-            c.execute("INSERT OR IGNORE INTO recipe_tags(meal_id, meal) VALUES(?,?)", (meal_id, meal))
-            c.execute("INSERT INTO recipe_logs(meal_id, meal) VALUES(?,?)", (meal_id, meal))
+        if meal:  # logging a recipe with a meal counts toward that meal, and tags it when it is mine
+            count_log(c, user["id"], meal_id, meal)
         amount, unit = (float(body["amount"]), body["unit"]) if given else (md["servings"], units.SERVING)
         gid = new_group(c, user["id"], day, meal, meal_id, row["name"], amount, unit, 1.0 if frac is None else frac, md["portions"])
-        entries = [log_entry(c, user["id"], f, a, u, day, meal, gid) for f, a, u in items]
+        entries = [log_entry(c, user["id"], f, a, u, day, meal, gid, revive=mine) for f, a, u in items]
         return {"entries": entries, "group": group_out(c, user["id"], gid)}
 
 

@@ -4,6 +4,7 @@ import {
   MEALS, MEAL_LABELS, parseDecimal, parseAmount, amountText, servingText, qtyText, setAmountFormat, unitLabel, fmtNum, fmtAmount, groupByMeal, mealGroupsAll, quickLabel, checkedItems, canSaveRecipe, rowAmountText, applyRowPick, draftFits, localDate, progressText, remainingText,
   sentence, matchAmount, newRecipeDraft, recipeAddRow, recipeSetRow, stepsBack, barWidth, debounce, digitsOnly, guessMeal, pctTotal, latestGuard, MEAL_FILTERS, MEAL_FILTER_LABELS, filterByMeal, filterSaved, pageOf, PAGE_SIZE, emptyText,
   entryKey, todayHold, holdFresh, holdTarget, DEFAULT_DISPLAY, searchSource, searchAction, searchHint, DESCRIPTION_TEXT, aiFeature, aiFeatureOff, searchSources, startSource,
+  ownerText,
 } from './util.js';
 import { microSection, displaySection, microTargets } from './micros.js';
 import { viewToggle, dayTable } from './daytable.js';
@@ -619,17 +620,17 @@ async function yesterdayList(meal) {
     h('ul', { class: 'list' }, g.entries.map(row))))));
 }
 
-async function recipesList(meal) {
-  const all = (await api.meals()).meals;
+async function recipesList(meal) {  // my recipes and the ones shared with me; only my own get the delete button
+  const all = (await api.meals('all')).meals;
   const recipes = filterSaved(all, meal);
   if (!recipes.length) return message(emptyText('recipes', meal, all.length > 0));
   return paged(recipes, (page) => h('ul', { class: 'list' }, page.map((m) => {
-    const del = h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Delete recipe ' + m.name, onclick: async () => {
+    const del = m.mine === false ? null : h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Delete recipe ' + m.name, onclick: async () => {
       if (!window.confirm('Delete the recipe "' + m.name + '"?')) return;
       try { await api.deleteMeal(m.id); await go('add', {}, true); } catch (e) { del.parentNode.appendChild(message(e.message, 'error')); }
     } }, '×');
     const open = () => go('meal', { mealId: m.id, meal: chosenMeal() });
-    return foodRow(m.name, recipeSubText(m, fmtNum(m.kcal, 0)), open, del);
+    return foodRow(m.name, [recipeSubText(m, fmtNum(m.kcal, 0)), ownerText(m)].filter(Boolean).join(' · '), open, del);
   })));
 }
 
@@ -651,7 +652,7 @@ async function lookupScreen(root, params) {
 // The log checklist of a recipe. How much of the recipe (params.amount and params.unit: servings, % of the recipe or a
 // yield unit; older callers send params.servings) sets the starting amounts. Changing it scales every row, keeping edits.
 async function mealScreen(root, params) {
-  const found = (await api.meals()).meals.find((m) => m.id === params.mealId);
+  const found = (await api.meals('all')).meals.find((m) => m.id === params.mealId);
   if (!found) throw new Error('Recipe not found');
   const units = portionUnits(found);
   const draft = draftFits(state.draft, found.id, state.depth, portionItems(found, 1).length) ? state.draft : null;
