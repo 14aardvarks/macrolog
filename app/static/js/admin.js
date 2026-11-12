@@ -271,7 +271,7 @@ function activitySection() {
 
 export async function renderAdmin(root, ctx) {
   const me = await api.me();
-  if (!me.is_admin) { ctx.go('settings', {}, true); return; }
+  if (!me.is_admin) { ctx.go('today', {}, true); return; }  // not mine: Today, as for any route I may not open
   const cfg0 = await api.adminConfig();
   const cfgBox = h('div');
   // Rebuilds the config sections from fresh data. `where` says which one gets the note.

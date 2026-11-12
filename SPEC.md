@@ -480,7 +480,7 @@ Screens: Login, Today, Add, Recipes, Picker, Claude fallback, Settings. Bottom n
   claude-haiku-5-5 of 0.10 and 0.50 also shown as the placeholder, that cost is not shown unless both prices are set, and a new-tab link
   "Anthropic Pricing Page" to https://platform.claude.com/docs/en/about-claude/pricing; the admin price fields match),
   Connect SSO (plain link to /auth/oidc/link, shown when /api/auth/config oidc is true and me.sso_linked is false) and
-  Disconnect SSO (POST /api/auth/sso/unlink, shown when linked and has_password). The app opens Settings for `/#settings`.
+  Disconnect SSO (POST /api/auth/sso/unlink, shown when linked and has_password). The app opens Settings for `/#settings` (js/routes.js reads it as `#/settings`).
 - First run: when /api/auth/config needs_setup is true, show a setup form (username, display name, password) posting to
   /api/auth/setup instead of the login screen.
 - Admin page (only when me.is_admin; every Claude field and the three Allow Claude switches carry a hint with their default): Users, Sign-in (OIDC fields, redirect URI with copy button, checklist, Test connection,
@@ -661,3 +661,22 @@ POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log i
   still waiting skip USDA (checked inside the concurrency gate, so up to SEARCH_CONCURRENCY lookups already in flight may also be refused), they still use
   my foods and Open Food Facts, carry "skipped": true (and "Not searched." when nothing was found) and the response has "rate_limited": true. The page shows the
   quiet note "USDA lookup limit reached. Rows below were not searched." above the rows (`rateLimitNote`), for manual Search runs too, cleared by the next search.
+
+## Screen URLs (v58, issue #22)
+
+- Hash routes, so the server, sw.js and the auth redirects are unchanged. One table in js/routes.js (no DOM, tested in tests/ui/routes.test.mjs):
+  `#/today`, `#/today/log/{groupId}` (recipe log), `#/add`, `#/add/food/{foodId}[?meal=]` (picker), `#/add/recipe/{mealId}[?meal=]` (log checklist),
+  `#/recipes`, `#/recipes/{id}`, `#/recipes/{id}/cooking`, `#/settings` (also the legacy `#settings`), `#/saved`, `#/admin`. Ids are positive whole numbers.
+- Pure helpers: `parseRoute(hash)` (route or null), `formatRoute(name, params)` (hash or null), `routeUrl(name, params, current, inFlow)`,
+  `startRoute(hash)` (null for no hash, Today for an unknown route) and `tabOf(name)` (the bottom bar button; it replaces app.js NAV_OF, and
+  `params.nav` and the recipe finder rule still win in app.js `navKey`).
+- Screens without a URL keep the one they were opened from, so a reload opens that parent: import, review, Match Ingredients, Create Recipe, scan,
+  lookup, manual, Claude, edit food, the picker for a logged entry or a recipe row, a recipe log copied from Yesterday, and the food finder and picker while
+  they serve a recipe (app.js `inRecipeFlow`). In progress flows never resume mid flow.
+- app.js `go` pushes or replaces the history entry with its URL; popstate renders the entry's state as before, and a hash typed by hand (an entry
+  without state) opens its route. A reload or sign-in opens the URL (or the Start Screen without one); the entry's own params are kept when they
+  format to the same URL (a picker amount), and its depth is kept so Back still walks the entries from before the reload.
+- A screen opened from a URL that answers 403 or 404 (another user's or a deleted recipe) opens Today in its place; Admin for a non admin opens Today.
+- The URL waiting for sign-in is kept in sessionStorage (`macrolog-route`) so single sign-on, which leaves the page, comes back to it. Sign Out
+  clears the URL and that key, so the next sign-in opens the Start Screen.
+- Today keeps its place (v51) and the Update Available reload are unchanged; a reload after an update reopens the same screen.

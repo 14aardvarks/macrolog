@@ -29,23 +29,22 @@ import { renderRecipeLog } from './recipelog.js';
 import { renderClaudeSection, renderSignIn } from './claudekey.js';
 import { refreshLoggedControl } from './refresh.js';
 import { startUpdates } from './update.js';
+import { tabOf, routeUrl, formatRoute, startRoute } from './routes.js';
 
 const main = document.getElementById('main');
 const nav = document.getElementById('nav');
 const state = { user: null, settings: { start_screen: 'today', default_meal: null, use_last: true, confirm_ai: true, amount_format: 'fraction' }, display: DEFAULT_DISPLAY, cleanup: null, depth: 0, tab: 'favorites', addMeal: null, quickMeal: null, draft: null, recipe: null, source: null, aiSt: null, claude: null,
   importInput: null, importDraft: null, importBase: 0, proposals: {}, selections: {}, matchFocus: null, matchBase: {}, matchMethod: 'search', autoMatch: null, hold: null };  // Import Recipe and Match Ingredients  // addMeal, source (null = the Default Search Source setting), aiSt (last /api/ai/status) and claude (last Claude estimate) live for the session only
-const NAV_OF = { today: 'today', recipelog: 'today', settings: 'settings', admin: 'settings', saved: 'settings', editfood: 'settings',
-  recipes: 'recipes', recipeview: 'recipes', cooking: 'recipes', recipe: 'recipes', import: 'recipes', importreview: 'recipes', match: 'recipes' };  // every other screen belongs to Add
 const FINDER = ['add', 'picker', 'scan', 'lookup', 'manual', 'ai'];  // screens New Recipe and Match Ingredients borrow from Add
 
 // The bottom bar button to mark: params.nav when a screen is opened from another tab, the Recipes tab while a recipe
-// borrows the food finder, else the screen's own tab.
+// borrows the food finder, else the screen's own tab (js/routes.js tabOf).
 function navKey(entry) {
   const p = entry.params || {};
   if (p.nav) return p.nav;
   const r = state.recipe;
   if (r && FINDER.includes(entry.name) && (r.adding || r.picking != null)) return 'recipes';
-  return NAV_OF[entry.name] || 'add';
+  return tabOf(entry.name);
 }
 
 const ctx = {
@@ -152,12 +151,24 @@ const ctx = {
 
 // ---------- routing ----------
 
-function go(name, params, replace) {
+// Every screen gets a hash URL (js/routes.js), or keeps its parent's while it has none, so a reload reopens the screen or its parent.
+// fromUrl: the screen was opened from a typed, shared or reloaded URL, so a missing or forbidden item falls back to Today.
+function go(name, params, replace, fromUrl) {
   const d = replace ? state.depth : state.depth + 1;
   const entry = { name, params: params || {}, d };
-  if (replace) history.replaceState(entry, ''); else history.pushState(entry, '');
+  if (fromUrl) entry.u = true;
+  const url = routeUrl(name, entry.params, location.hash, inRecipeFlow(name, entry.params)) || undefined;  // undefined keeps the URL
+  if (replace) history.replaceState(entry, '', url); else history.pushState(entry, '', url);
   state.depth = d;
   return render(entry);
+}
+
+// The food finder and picker while they serve Create Recipe or Match Ingredients: no URL of their own, a reload goes to the recipe.
+function inRecipeFlow(name, params) {
+  const r = state.recipe;
+  if (!r) return false;
+  if (name === 'picker') return !!(r.adding || r.picking != null);
+  return name === 'add' ? !!params.ingredient : false;
 }
 
 // Go back n history steps, then run fn once the screen there has started to render.
@@ -169,9 +180,16 @@ function backThen(n, fn) {
 }
 
 window.addEventListener('popstate', (e) => {
-  const entry = e.state && e.state.name ? e.state : { name: 'today', params: {}, d: 0 };
-  state.depth = entry.d || 0;
-  render(entry);
+  if (e.state && e.state.name) {
+    state.depth = e.state.d || 0;
+    render(e.state);
+    return;
+  }
+  // A hash typed or changed by hand: a new history entry without state. Before sign-in the login screen stays and keeps the URL.
+  if (!state.user) return;
+  const r = startRoute(location.hash) || { name: 'today', params: {} };
+  state.depth += 1;
+  go(r.name, r.params, true, true);
 });
 
 const guard = latestGuard();
@@ -216,6 +234,7 @@ async function render(entry) {
     if (typeof out === 'function') cleanup = out;
   } catch (e) {
     if (!guard.isLatest(ticket) || e.status === 401) return;
+    if (entry.u && (e.status === 403 || e.status === 404)) { go('today', {}, true); return; }  // a URL to something gone or not mine
     box.appendChild(h('section', { class: 'screen' }, message(e.message || 'Something went wrong', 'error'),
       h('button', { class: 'btn', type: 'button', onclick: () => render(entry) }, 'Try Again')));
   }
@@ -262,10 +281,22 @@ nav.addEventListener('click', (e) => {
   if (b) { state.hold = null; state.quickMeal = null; go(b.dataset.go, {}, false); }
 });
 
-function showLogin() {
+// The screen URL waiting for sign-in, kept for the tab so single sign-on (which leaves the page) comes back to it too.
+const ROUTE_KEY = 'macrolog-route';
+const store = () => { try { return window.sessionStorage; } catch (e) { return null; } };
+
+// signOut: Sign Out drops the screen URL, so the next sign-in opens the Start Screen.
+function showLogin(signOut) {
   state.user = null;
   state.depth = 0;
-  history.replaceState({ name: 'login', params: {}, d: 0 }, '');
+  const ss = store();
+  if (signOut === true) {
+    if (ss) ss.removeItem(ROUTE_KEY);
+    history.replaceState({ name: 'login', params: {}, d: 0 }, '', location.pathname + location.search);
+  } else {
+    if (ss && startRoute(location.hash)) ss.setItem(ROUTE_KEY, location.hash);
+    history.replaceState({ name: 'login', params: {}, d: 0 }, '');
+  }
   render({ name: 'login', params: {}, d: 0 });
 }
 setUnauthorizedHandler(showLogin);
@@ -282,11 +313,23 @@ async function afterLogin() {
   try { state.settings = await api.settings(); } catch (e) { /* keep defaults */ }
   try { state.display = await api.display(); } catch (e) { /* keep defaults */ }
   setAmountFormat(state.settings.amount_format);
-  if (location.hash === '#settings') {  // the SSO link flow returns here
-    history.replaceState(history.state, '', location.pathname + location.search);
-    return go('settings', {}, true);
-  }
-  return startScreen();
+  return openUrl();
+}
+
+// After sign-in or a reload: the screen in the URL (or the one saved before sign-in), else the Start Screen. An unknown route opens
+// Today. A reload keeps the history entry's own params (an amount on the picker) when they still describe the same URL.
+function openUrl() {
+  const ss = store();
+  const saved = ss ? ss.getItem(ROUTE_KEY) : null;
+  if (ss) ss.removeItem(ROUTE_KEY);
+  const hash = startRoute(location.hash) ? location.hash : saved || location.hash;
+  const r = startRoute(hash);
+  if (!r) return startScreen();
+  if (hash !== location.hash) history.replaceState(history.state, '', hash);
+  const hs = history.state;
+  const same = hs && hs.name === r.name && hs.params && formatRoute(hs.name, hs.params) === formatRoute(r.name, r.params);
+  state.depth = hs && hs.name !== 'login' && hs.d > 0 ? hs.d : 0;  // Back still steps through the entries before the reload
+  return go(r.name, same ? { ...hs.params } : r.params, true, true);
 }
 
 // ---------- shared bits ----------
@@ -666,7 +709,7 @@ async function lookupScreen(root, params) {
 // yield unit; older callers send params.servings) sets the starting amounts. Changing it scales every row, keeping edits.
 async function mealScreen(root, params) {
   const found = (await api.meals('all')).meals.find((m) => m.id === params.mealId);
-  if (!found) throw new Error('Recipe not found');
+  if (!found) throw Object.assign(new Error('Recipe not found'), { status: 404 });
   const units = portionUnits(found);
   const draft = draftFits(state.draft, found.id, state.depth, portionItems(found, 1).length) ? state.draft : null;
   state.draft = null;
@@ -836,7 +879,7 @@ async function settingsScreen(root) {
     me.is_admin ? h('div', null, h('h2', null, 'Admin'), h('p', { class: 'sub' }, 'Users, sign-in, Claude and server settings.'),
       h('button', { class: 'btn', type: 'button', onclick: () => go('admin') }, 'Open Admin')) : null,
     renderGuide(),
-    h('button', { class: 'btn', type: 'button', onclick: async () => { try { await api.logout(); } catch (e) { /* ignore */ } showLogin(); } }, 'Sign Out')))));
+    h('button', { class: 'btn', type: 'button', onclick: async () => { try { await api.logout(); } catch (e) { /* ignore */ } showLogin(true); } }, 'Sign Out')))));
 }
 
 const SCREENS = {
