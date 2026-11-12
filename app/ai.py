@@ -64,6 +64,15 @@ CREATE INDEX IF NOT EXISTS ai_usage_at ON ai_usage(at);
 CREATE TABLE IF NOT EXISTS user_ai(
   user_id INTEGER PRIMARY KEY REFERENCES users(id), monthly_cap INTEGER NOT NULL DEFAULT 100);
 """
+# Personal model and prices, used only while the user is on their own key. Empty model or null price = not set.
+USER_AI_COLUMNS = {"model": "TEXT NOT NULL DEFAULT ''", "price_in": "REAL", "price_out": "REAL"}
+
+# Claude features an administrator can switch off: setting key and the refusal text.
+FEATURES = {
+    "label": ("ai_allow_label", "Claude photo label reading is turned off on this server. Enter the food manually."),
+    "lookup": ("ai_allow_lookup", "Claude typed search is turned off on this server. Search a food database instead."),
+    "recipe": ("ai_allow_recipe", "Claude recipe import is turned off on this server. Split the lines without Claude and match each ingredient by search."),
+}
 
 MICRO_FIELDS = {"sugars": "Total sugars in grams", "saturated_fat": "Saturated fat in grams", "sodium": "Sodium in mg",
                 "cholesterol": "Cholesterol in mg", "potassium": "Potassium in mg", "calcium": "Calcium in mg",
@@ -155,7 +164,49 @@ def enabled(user_id: Optional[int] = None) -> bool:
 
 
 def model() -> str:
+    """The server's model: setting ai_model (AI_MODEL), else DEFAULT_MODEL."""
     return str(config.get("ai_model")).strip() or DEFAULT_MODEL
+
+
+def feature_on(name: str) -> bool:
+    """Whether the administrator allows this Claude feature (label, lookup or recipe). On by default."""
+    return config.flag(FEATURES[name][0])
+
+
+def features() -> dict:
+    return {name: feature_on(name) for name in FEATURES}
+
+
+def require_feature(name: str) -> None:
+    if not feature_on(name):
+        raise HTTPException(403, FEATURES[name][1])
+
+
+def personal_settings(c: sqlite3.Connection, user_id: int) -> dict:
+    """{"model": str ('' = server model), "price_in", "price_out": float or None} for the user's own key."""
+    row = c.execute("SELECT model, price_in, price_out FROM user_ai WHERE user_id=?", (user_id,)).fetchone()
+    if not row:
+        return {"model": "", "price_in": None, "price_out": None}
+    return {"model": row["model"] or "", "price_in": row["price_in"], "price_out": row["price_out"]}
+
+
+def model_for(source: Optional[str], user_id: Optional[int]) -> str:
+    """The model a request uses: the personal model on the user's own key when set, else the server's."""
+    if source == "user" and user_id is not None:
+        with db.conn() as c:
+            mine = personal_settings(c, user_id)["model"]
+        if mine:
+            return mine
+    return model()
+
+
+def prices_for(source: Optional[str], user_id: Optional[int]) -> Optional[tuple[float, float]]:
+    """Prices for a key source: personal prices on the user's own key (no fallback to the server's), else the server's."""
+    if source == "user" and user_id is not None:
+        with db.conn() as c:
+            p = personal_settings(c, user_id)
+        return (p["price_in"], p["price_out"]) if p["price_in"] is not None and p["price_out"] is not None else None
+    return prices()
 
 
 def cap() -> int:
@@ -176,8 +227,12 @@ def prices() -> Optional[tuple[float, float]]:
     return (p_in, p_out) if p_in is not None and p_out is not None else None
 
 
-def cost_usd(input_tokens: int, output_tokens: int) -> Optional[float]:
-    p = prices()
+_SERVER = object()
+
+
+def cost_usd(input_tokens: int, output_tokens: int, p=_SERVER) -> Optional[float]:
+    """Cost in USD with prices p (input, output per million tokens); the server's prices when p is not given."""
+    p = prices() if p is _SERVER else p
     return None if p is None else (input_tokens * p[0] + output_tokens * p[1]) / 1_000_000
 
 
@@ -219,6 +274,10 @@ def init(c: sqlite3.Connection) -> None:
     cols = {r[1] for r in c.execute("PRAGMA table_info(ai_usage)")}
     if "key_source" not in cols:
         c.execute("ALTER TABLE ai_usage ADD COLUMN key_source TEXT NOT NULL DEFAULT 'global'")
+    have = {r[1] for r in c.execute("PRAGMA table_info(user_ai)")}
+    for col, decl in USER_AI_COLUMNS.items():  # databases made before personal model and prices
+        if col not in have:
+            c.execute(f"ALTER TABLE user_ai ADD COLUMN {col} {decl}")
     c.execute("CREATE INDEX IF NOT EXISTS ai_usage_source ON ai_usage(key_source, user_id, at)")
 
 
@@ -336,10 +395,10 @@ async def read_images(files: list[UploadFile], what: str = "the nutrition label"
 
 # ---------- Claude call ----------
 
-def tool_choice(name: str = TOOL_NAME) -> dict:
+def tool_choice(name: str = TOOL_NAME, model_name: Optional[str] = None) -> dict:
     """Force the tool only on Haiku. Other models (extended thinking, newer families) can reject a
     forced tool, so they get "auto" and rely on strict tool schemas plus the instruction text."""
-    if "haiku" in model().lower():
+    if "haiku" in (model_name or model()).lower():
         return {"type": "tool", "name": name}
     return {"type": "auto"}
 
@@ -522,6 +581,13 @@ def _key_state(c: sqlite3.Connection, user_id: int) -> dict:
     return {"state": state, "use_global": use_global, "source": source}
 
 
+def with_model(payload: dict, model_name: str) -> dict:
+    """The request with its model (and the tool choice that model needs) set. Every request has exactly one tool."""
+    tools = payload.get("tools") or []
+    name = tools[0]["name"] if tools else TOOL_NAME
+    return {**payload, "model": model_name, "tool_choice": tool_choice(name, model_name)}
+
+
 def _status(user_id: int, images: int = 1, chars: Optional[int] = None, est: Optional[tuple[int, int]] = None) -> dict:
     """chars set: the cost estimate is for a text lookup of that many characters, else for a label read of `images` photos.
     est: explicit (input, output) tokens for the estimate (recipe import and matching)."""
@@ -532,11 +598,16 @@ def _status(user_id: int, images: int = 1, chars: Optional[int] = None, est: Opt
         limit = p_cap if active == "user" else cap()
         used = p_used if active == "user" else used_this_month(c)
         tin, tout = tokens_this_month(c, active, user_id)
+        mine = personal_settings(c, user_id)
     est_in, est_out = est or (estimate_text_tokens(chars) if chars is not None else estimate_label_tokens(images))
+    p = prices_for(active, user_id)
     return {"enabled": ks["source"] is not None, "key_source": SOURCE_NAMES.get(ks["source"]),
             "used_this_month": used, "cap": limit, "remaining": max(0, limit - used),
-            "model": model(), "price_known": prices() is not None,
-            "est_cost_label": cost_usd(est_in, est_out), "cost_this_month": cost_usd(tin, tout),
+            "model": model_for(active, user_id), "price_known": p is not None,
+            "est_cost_label": cost_usd(est_in, est_out, p), "cost_this_month": cost_usd(tin, tout, p),
+            "server_model": model(), "personal_model": mine["model"],
+            "personal_price_in": mine["price_in"], "personal_price_out": mine["price_out"],
+            "personal_cap_default": DEFAULT_PERSONAL_CAP, "features": features(),
             "personal_key_set": ks["state"] == "set", "personal_key_unreadable": ks["state"] == "unreadable",
             "can_use_global": ks["use_global"] and bool(api_key()),
             "personal_cap": p_cap, "personal_used_this_month": p_used}
@@ -591,23 +662,56 @@ def _clean_cap(value) -> int:
     return value
 
 
+def _clean_model(value) -> str:
+    """Personal model, validated like the admin ai_model field. "" or null means use the server's model."""
+    if value is None:
+        return ""
+    try:
+        return config._text("model", value, config.MANAGED["ai_model"])
+    except config.ConfigError as exc:
+        raise HTTPException(400, str(exc)) from None
+
+
+def _clean_price(name: str, value) -> Optional[float]:
+    """Personal price, validated like the admin price fields (0 to 10000). "" or null means not set."""
+    if value is None:
+        return None
+    try:
+        text = config._number(name, value, config.MANAGED["ai_price_in_per_mtok"], integral=False)
+    except config.ConfigError as exc:
+        raise HTTPException(400, str(exc)) from None
+    return float(text) if text != "" else None
+
+
+KEY_FIELDS = ("key", "cap", "model", "price_in", "price_out")
+
+
 @router.put("/key")
 def put_key(user: CurrentUser, body: Any = Body(None)):
-    """Store (or replace) the user's personal Claude key and/or monthly cap. The key is never
-    returned and never sent anywhere except to the Claude API when reading a label."""
-    if not isinstance(body, dict) or not body or set(body) - {"key", "cap"}:
-        raise HTTPException(400, "Send {\"key\": \"...\", \"cap\": number} (cap optional)")
+    """Store (or replace) the user's personal Claude key, monthly cap, model and prices. The key is never
+    returned and never sent anywhere except to the Claude API. model, price_in and price_out: "" or null clears."""
+    if not isinstance(body, dict) or not body or set(body) - set(KEY_FIELDS):
+        raise HTTPException(400, "Send any of key, cap, model, price_in and price_out")
     key = _clean_key(body["key"]) if body.get("key") is not None else None
     limit = _clean_cap(body["cap"]) if body.get("cap") is not None else None
-    if key is None and limit is None:
-        raise HTTPException(400, "Nothing to update: send a key, a cap, or both")
+    extra = {}
+    if "model" in body:
+        extra["model"] = _clean_model(body["model"])
+    for name in ("price_in", "price_out"):
+        if name in body:
+            extra[name] = _clean_price(name, body[name])
+    if key is None and limit is None and not extra:
+        raise HTTPException(400, "Nothing to update: send a key, a cap, a model or prices")
     try:
         with db.conn() as c:
             if key is not None:
                 config.set_user_secret(c, user["id"], PERSONAL_KEY, key)
+            if limit is not None or extra:
+                c.execute("INSERT OR IGNORE INTO user_ai(user_id, monthly_cap) VALUES (?, ?)", (user["id"], DEFAULT_PERSONAL_CAP))
             if limit is not None:
-                c.execute("INSERT INTO user_ai(user_id, monthly_cap) VALUES (?, ?) "
-                          "ON CONFLICT(user_id) DO UPDATE SET monthly_cap=excluded.monthly_cap", (user["id"], limit))
+                c.execute("UPDATE user_ai SET monthly_cap=? WHERE user_id=?", (limit, user["id"]))
+            for col, value in extra.items():  # col is one of USER_AI_COLUMNS, never user text
+                c.execute(f"UPDATE user_ai SET {col}=? WHERE user_id=?", (value, user["id"]))
     except config.ConfigError:
         raise HTTPException(503, "The server cannot store secrets because SECRET_KEY is not set") from None
     if key is not None:
@@ -629,6 +733,7 @@ async def label(user: CurrentUser,
                 images: list[UploadFile] = File(default=[]),
                 barcode: Optional[str] = Form(None),
                 hint: Optional[str] = Form(None)):
+    require_feature("label")
     source, key = resolve_key(user["id"])
     if source is None:
         raise HTTPException(503, _disabled_message())
@@ -649,6 +754,8 @@ async def _ask(user_id: int, source: str, key: str, payload: dict, what: str, un
     Claude answered; a call that returned keeps its row."""
     with db.conn() as c:
         limit = personal_cap(c, user_id) if source == "user" else cap()
+    payload = with_model(payload, model_for(source, user_id))  # the personal model on the user's own key
+    p = prices_for(source, user_id)
     row = reserve(user_id, limit, source)
     if row is None:
         raise HTTPException(429, _cap_message(source, limit))
@@ -668,7 +775,7 @@ async def _ask(user_id: int, source: str, key: str, payload: dict, what: str, un
     if data is None:
         raise HTTPException(502, unreadable)
     return {"data": data, "used_this_month": get_used(source, user_id), "cap": limit,
-            "input_tokens": tin, "output_tokens": tout, "cost": cost_usd(tin, tout),
+            "input_tokens": tin, "output_tokens": tout, "cost": cost_usd(tin, tout, p),
             "key_source": SOURCE_NAMES[source]}
 
 
@@ -693,6 +800,7 @@ async def text_lookup(user: CurrentUser, body: Any = Body(None)):
         raise HTTPException(400, "Send {\"text\": \"...\", \"note\": \"...\"} (note optional)")
     text = _clean_text(body.get("text"), "description", MAX_TEXT, True)
     note = _clean_text(body.get("note"), "note", MAX_HINT, False)
+    require_feature("lookup")
     source, key = resolve_key(user["id"])
     if source is None:
         raise HTTPException(503, _disabled_message())

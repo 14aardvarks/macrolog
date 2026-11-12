@@ -1,6 +1,6 @@
 import { api } from './api.js';
 import { h, field, message, show, loadImage, sourceBadge } from './dom.js';
-import { fitSize, photosText, centsText, sourceNote } from './util.js';
+import { fitSize, photosText, centsText, sourceNote, aiFeature, aiFeatureOff } from './util.js';
 import { confirmClaude } from './notice.js';
 import { renderFoodForm } from './foodform.js';
 
@@ -35,9 +35,10 @@ export async function renderAi(root, params, ctx) {
   let st = null;
   try { st = await api.aiStatus(); } catch (e) { st = { enabled: false }; }
   const manualBtn = h('button', { class: 'btn', type: 'button', onclick: () => ctx.go('manual', { barcode: params.barcode }) }, 'Enter Manually');
-  if (!st.enabled) {
+  if (!aiFeature(st, 'label')) {
     root.appendChild(h('section', { class: 'screen' }, h('h1', null, 'Ask Claude ', sourceBadge('ai')),
-      message('Claude is not set up on this server. You can still enter the food by hand.'), manualBtn));
+      message((aiFeatureOff(st, 'label') ? 'Claude photo label reading is turned off on this server.' : 'Claude is not set up on this server.')
+        + ' You can still enter the food by hand.'), manualBtn));
     return;
   }
   const files = h('input', { type: 'file', accept: 'image/*', multiple: '', class: 'visually-hidden', onchange: onFiles });

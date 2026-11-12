@@ -79,7 +79,10 @@ def test_status(env, monkeypatch):
     assert r.json() == {"enabled": True, "used_this_month": 0, "cap": 100, "remaining": 100, "model": "claude-haiku-5-5",
                         "price_known": False, "est_cost_label": None, "cost_this_month": None,
                         "key_source": "global", "personal_key_set": False, "personal_key_unreadable": False,
-                        "can_use_global": True, "personal_cap": 100, "personal_used_this_month": 0}
+                        "can_use_global": True, "personal_cap": 100, "personal_used_this_month": 0,
+                        "server_model": "claude-haiku-5-5", "personal_model": "", "personal_price_in": None,
+                        "personal_price_out": None, "personal_cap_default": 100,
+                        "features": {"label": True, "lookup": True, "recipe": True}}
     assert SECRET not in r.text
 
 

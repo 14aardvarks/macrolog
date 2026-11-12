@@ -415,3 +415,11 @@ textarea { font: inherit; color: inherit; width: 100%; min-height: 160px; paddin
 .match-totals td { text-align: right; font-variant-numeric: tabular-nums; }
 .match-foot { margin-top: 12px; }
 .match-foot > .btn { flex: 1 1 0; }
+/* A field with a hint under it (Settings, Claude): the hint sits close to its box. */
+.hinted { margin: 0 0 12px; }
+.hinted > .field { margin-bottom: 4px; }
+.hinted > .field-hint { margin-top: 0; }
+.display-sec > .field { margin-top: 16px; }
+/* Recipes tab */
+.recipes-actions { margin-bottom: 12px; }
+.recipe-log { align-items: end; }

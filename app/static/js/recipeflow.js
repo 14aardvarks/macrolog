@@ -5,7 +5,7 @@ import { h, clear, field, message, show, sourceBadge } from './dom.js';
 import { toJpeg } from './ai.js';
 import { confirmClaude } from './notice.js';
 import { chips } from './saved.js';
-import { fmtNum, fmtAmount, amountText, centsText, sentence, parseAmount, MICROS, microValue } from './util.js';
+import { fmtNum, fmtAmount, amountText, centsText, sentence, parseAmount, MICROS, microValue, aiFeature, aiFeatureOff } from './util.js';
 import {
   parseIngredientText, reviewDraft, reviewBody, blankRow, matchState, matchCountText, nextUnmatched, toggleAll, toggleId,
   matchBatch, proposalText, matchWhat, importWhat,
@@ -23,7 +23,7 @@ export async function renderImport(root, ctx) {
   const input = ctx.flow.input;
   let st = null;
   try { st = await api.aiStatus(); } catch (e) { st = { enabled: false }; }
-  const aiOn = !!st.enabled;
+  const aiOn = aiFeature(st, 'recipe');
   const status = h('div', { 'aria-live': 'polite' });
   const panel = h('div');
   const tabs = h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Recipe source' }, [['text', 'Paste Text'], ['photos', 'Photos']].map(([k, label]) =>
@@ -41,7 +41,8 @@ export async function renderImport(root, ctx) {
   const readText = h('button', { class: 'btn primary', type: 'button', onclick: sendText }, 'Read With Claude');
   const splitText = h('button', { class: 'btn', type: 'button', onclick: splitLocal }, 'Split Lines Without Claude');
   const readPhotos = h('button', { class: 'btn primary', type: 'button', disabled: true, onclick: sendPhotos }, 'Read With Claude');
-  const noAi = aiOn ? null : message('Claude is not set up for you, so paste the ingredient list and split the lines without Claude.');
+  const noAi = aiOn ? null : message((aiFeatureOff(st, 'recipe') ? 'Claude recipe import is turned off on this server' : 'Claude is not set up for you')
+    + ', so paste the ingredient list and split the lines without Claude.');
 
   function paint() {
     tabs.querySelectorAll('button').forEach((b) => b.setAttribute('aria-selected', b.dataset.kind === input.kind ? 'true' : 'false'));
@@ -177,7 +178,7 @@ export async function renderMatch(root, params, ctx) {
   let meal = await api.meal(params.mealId);
   let st = null;
   try { st = await api.aiStatus(); } catch (e) { st = { enabled: false }; }
-  const aiOn = !!st.enabled;
+  const aiOn = aiFeature(st, 'recipe');
   const props = ctx.flow.proposals(meal.id);  // Claude proposals waiting for Accept, kept while the user searches
   let selected = ctx.flow.selection(meal.id).filter((id) => meal.items.some((i) => i.id === id && !i.skipped));
   let current = meal.items.findIndex((i) => i.id === ctx.flow.takeFocus());
@@ -281,7 +282,7 @@ export async function renderMatch(root, params, ctx) {
       h('p', { class: 'sub' }, meal.complete ? 'For 1 of ' + fmtAmount(meal.servings) + ' servings.'
         : 'For 1 of ' + fmtAmount(meal.servings) + ' servings, counting matched ingredients only.'),
       totalsTable(meal),
-      meal.complete ? message('Every ingredient is matched or skipped. Log the recipe from Add, then Recipes.') : null));
+      meal.complete ? message('Every ingredient is matched or skipped. Log the recipe from the Recipes tab.') : null));
   }
   function paintAll(focusId) {
     paintRows();
@@ -302,7 +303,8 @@ export async function renderMatch(root, params, ctx) {
     h('p', { class: 'sub' }, 'The recipe is saved. Match each ingredient to a food. Progress is kept as you go, so you can leave and come back from Recipes.'),
     h('h2', null, meal.name), count,
     aiOn ? h('div', { class: 'row wrap match-bulk' }, h('label', { class: 'check', for: 'match-all' }, allBox, ' Select All'), matchBtn)
-      : h('p', { class: 'sub' }, 'Claude is not set up for you, so use Search or Scan Barcode for each ingredient.'),
+      : h('p', { class: 'sub' }, (aiFeatureOff(st, 'recipe') ? 'Claude recipe import is turned off on this server' : 'Claude is not set up for you')
+        + ', so use Search or Scan Barcode for each ingredient.'),
     status, list, servings, totals,
     h('div', { class: 'row wrap match-foot' },
       h('button', { class: 'btn primary', type: 'button', onclick: saveAndNext }, 'Save and Next'),

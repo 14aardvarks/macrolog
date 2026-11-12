@@ -171,6 +171,7 @@ def clean_recipe(data: dict) -> tuple[dict, list[str]]:
 # ---------- import routes ----------
 
 def _key(user_id: int) -> tuple[str, str]:
+    ai.require_feature("recipe")  # import and ingredient matching both belong to Claude recipe import
     source, key = ai.resolve_key(user_id)
     if source is None:
         raise HTTPException(503, ai._disabled_message())

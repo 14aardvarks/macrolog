@@ -2,6 +2,9 @@
 
 export const MIN_PASSWORD = 8;
 export const PERSONAL_CAP_MAX = 10000;
+export const PERSONAL_CAP_DEFAULT = 100;  // same as ai.DEFAULT_PERSONAL_CAP
+export const DEFAULT_MODEL = 'claude-haiku-5-5';  // same as ai.DEFAULT_MODEL
+export const PRICE_MAX = 10000;  // same limit as the admin price fields
 
 const SOURCE_LABELS = { database: 'Saved here', environment: 'From environment', default: 'Default' };
 export function sourceLabel(source) { return SOURCE_LABELS[source] || ''; }
@@ -57,6 +60,45 @@ export function keyBody(keyText, capValue, originalCap) {
   if (key) body.key = key;
   if (capValue !== originalCap) body.cap = capValue;
   return Object.keys(body).length ? body : null;
+}
+
+// A price box: '' (not set) or a number from 0 to PRICE_MAX. Returns {ok, value} with value '' or a number, or {ok:false, error}.
+export function parsePrice(text, label) {
+  const t = String(text == null ? '' : text).trim().replace(',', '.');
+  if (!t) return { ok: true, value: '' };
+  const n = Number(t);
+  if (!/^(\d+\.?\d*|\.\d+)$/.test(t) || n > PRICE_MAX) return { ok: false, error: label + ' must be a number from 0 to ' + PRICE_MAX + '.' };
+  return { ok: true, value: n };
+}
+
+// Body for PUT /api/ai/key from the personal Claude form, or {error}. body is null when nothing changed.
+// f: {key, cap, model, priceIn, priceOut} as typed; ai: /api/ai/status. Cleared fields send '' (the server stores not set).
+export function personalBody(f, ai) {
+  const c = parseCap(f.cap);
+  if (!c.ok) return { error: c.error };
+  const pin = parsePrice(f.priceIn, 'Input price');
+  if (!pin.ok) return { error: pin.error };
+  const pout = parsePrice(f.priceOut, 'Output price');
+  if (!pout.ok) return { error: pout.error };
+  const body = keyBody(f.key, c.value, ai.personal_cap) || {};
+  const model = String(f.model || '').trim();
+  if (model !== (ai.personal_model || '')) body.model = model;
+  const was = (v) => (v == null ? '' : v);
+  if (pin.value !== was(ai.personal_price_in)) body.price_in = pin.value;
+  if (pout.value !== was(ai.personal_price_out)) body.price_out = pout.value;
+  return { body: Object.keys(body).length ? body : null };
+}
+
+// Hints under the personal Claude fields, with the defaults. ai: /api/ai/status.
+export function personalHints(ai) {
+  const server = (ai && (ai.server_model || ai.model)) || DEFAULT_MODEL;
+  const cap = (ai && ai.personal_cap_default) || PERSONAL_CAP_DEFAULT;
+  return {
+    cap: 'The most requests your own key can make per calendar month, from 1 to ' + PERSONAL_CAP_MAX + '. ' + cap + ' by default.',
+    model: 'The Claude model your own key uses. Empty by default, which uses the server\'s model, ' + server + '.',
+    priceIn: 'What Anthropic charges for input tokens on your model, in USD. Empty by default, so no cost is shown.',
+    priceOut: 'What Anthropic charges for output tokens on your model, in USD. Empty by default, so no cost is shown.',
+  };
 }
 
 // What the Sign-in block of Settings should show.
@@ -126,11 +168,22 @@ export const SIGNIN_SPECS = [
   { key: 'oidc_groups_claim', kind: 'text', label: 'Groups claim' },
 ];
 export const CLAUDE_SPECS = [
-  { key: 'ai_global_key', kind: 'secret', label: 'Shared Claude key' },
-  { key: 'ai_model', kind: 'text', label: 'Model' },
-  { key: 'ai_monthly_cap', kind: 'int', label: 'Monthly request limit' },
-  { key: 'ai_price_in_per_mtok', kind: 'price', label: 'Input price per million tokens' },
-  { key: 'ai_price_out_per_mtok', kind: 'price', label: 'Output price per million tokens' },
+  { key: 'ai_global_key', kind: 'secret', label: 'Shared Claude key',
+    hint: 'Your Anthropic API key, shared by everyone on this server who has not set their own. Create one at console.anthropic.com. Empty by default, so Claude is off until a key is set. Stored encrypted and never shown again.' },
+  { key: 'ai_model', kind: 'text', label: 'Model',
+    hint: 'The Claude model used for label reading, typed lookups and recipe parsing. Empty by default, which uses ' + DEFAULT_MODEL + ', the cheapest option and fine for these jobs.' },
+  { key: 'ai_monthly_cap', kind: 'int', label: 'Monthly request limit',
+    hint: 'The most Claude requests everyone on the shared key can make per calendar month. 100 by default. Set 0 to turn shared use off.' },
+  { key: 'ai_price_in_per_mtok', kind: 'price', label: 'Input price per million tokens',
+    hint: 'What Anthropic charges for input tokens on your model, in USD. Empty by default, so no cost is shown. Fill in from Anthropic\'s pricing page to see the cost of each request.' },
+  { key: 'ai_price_out_per_mtok', kind: 'price', label: 'Output price per million tokens',
+    hint: 'What Anthropic charges for output tokens on your model, in USD. Empty by default, so no cost is shown. Fill in from Anthropic\'s pricing page to see the cost of each request.' },
+  { key: 'ai_allow_label', kind: 'bool', label: 'Allow Claude Photo Label Reading',
+    hint: 'On by default. Turn off to hide Ask Claude for nutrition label photos and refuse those requests for everyone.' },
+  { key: 'ai_allow_lookup', kind: 'bool', label: 'Allow Claude Typed Search',
+    hint: 'On by default. Turn off to remove Claude from the Source choice on Add and refuse typed lookups for everyone.' },
+  { key: 'ai_allow_recipe', kind: 'bool', label: 'Allow Claude Recipe Import',
+    hint: 'On by default. Turn off to stop Claude reading recipes and matching ingredients for everyone. Split Lines Without Claude and Search still work.' },
 ];
 export const FOOD_SPECS = [
   { key: 'fdc_api_key', kind: 'secret', label: 'USDA API key',

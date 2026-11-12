@@ -68,6 +68,10 @@ MANAGED: dict[str, Setting] = {
     "ai_monthly_cap": Setting("AI_MONTHLY_REQUEST_CAP", "int", "100", lo=0, hi=100000),
     "ai_price_in_per_mtok": Setting("AI_PRICE_IN_PER_MTOK", "price", "", hi=10000),
     "ai_price_out_per_mtok": Setting("AI_PRICE_OUT_PER_MTOK", "price", "", hi=10000),
+    # Server side switches for each Claude feature. On by default, so existing servers see no change.
+    "ai_allow_label": Setting("AI_ALLOW_LABEL", "bool", "1"),
+    "ai_allow_lookup": Setting("AI_ALLOW_LOOKUP", "bool", "1"),
+    "ai_allow_recipe": Setting("AI_ALLOW_RECIPE", "bool", "1"),
     "fdc_api_key": Setting("FDC_API_KEY", "secret", "DEMO_KEY", max_len=256),
 }
 

@@ -318,7 +318,7 @@ export function emptyText(kind, meal, hasAny) {
   if (kind === 'recent') return 'No past foods yet. Foods you log show up here.';
   const one = kind === 'recipes' ? 'recipe' : 'favorite';
   if (w && hasAny) return 'No ' + kind + ' tagged ' + w + '. Choose All to see every ' + one + '.';
-  if (kind === 'recipes') return 'No saved recipes. On Today, tap "Save As Recipe" under a meal.';
+  if (kind === 'recipes') return 'No saved recipes. Make one on the Recipes tab, or tap "Save As Recipe" under a meal on Today.';
   return 'No favorites yet. Tap the star on a food to add one.';
 }
 
@@ -572,6 +572,23 @@ export function searchHint(source, kind) {
 }
 
 export const DESCRIPTION_TEXT = 'your food description';
+
+// Whether a Claude feature can be used: a key is in use and the administrator allows it. st: /api/ai/status, name: label, lookup or recipe.
+export function aiFeature(st, name) {
+  return !!(st && st.enabled && !(st.features && st.features[name] === false));
+}
+// Whether the administrator turned a Claude feature off (as opposed to Claude not being set up).
+export function aiFeatureOff(st, name) { return !!(st && st.features && st.features[name] === false); }
+
+// The Source choices on Add. Claude is left out when the administrator turned typed search off.
+export function searchSources(st) { return aiFeatureOff(st, 'lookup') ? SEARCH_SOURCES.filter((s) => s.value !== 'ai') : SEARCH_SOURCES; }
+
+// The Source Add starts with: the choice made this visit, else the Default Search Source setting, else All Sources.
+// Claude falls back to All Sources when typed search is turned off.
+export function startSource(session, preferred, st) {
+  const v = searchSource(session != null ? session : preferred);
+  return v === 'ai' && aiFeatureOff(st, 'lookup') ? 'all' : v;
+}
 
 // ---------- micronutrients and display settings ----------
 

@@ -61,7 +61,10 @@ function configField(spec, item, extra) {
   hint.id = id + '-src';
   paintHint();
   el.appendChild(h('div', { class: 'src-row' }, hint, useDefault, undo));
-  if (spec.hint) el.appendChild(h('p', { class: 'sub' }, spec.hint));
+  if (spec.hint) {  // the defaults and what the setting does, read out with the control
+    el.appendChild(h('p', { class: 'sub', id: id + '-hint' }, spec.hint));
+    control.setAttribute('aria-describedby', id + '-src ' + id + '-hint');
+  }
   if (extra) el.appendChild(extra);
   return { el, state: st, control };
 }

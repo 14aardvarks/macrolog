@@ -43,7 +43,7 @@ test('emptyText names the meal', () => {
   assert.equal(emptyText('recipes', 'snack', true), 'No recipes tagged snack. Choose All to see every recipe.');
   assert.equal(emptyText('favorites', 'all', false), 'No favorites yet. Tap the star on a food to add one.');
   assert.equal(emptyText('favorites', 'lunch', false), 'No favorites yet. Tap the star on a food to add one.');
-  assert.equal(emptyText('recipes', 'all', false), 'No saved recipes. On Today, tap "Save As Recipe" under a meal.');
+  assert.equal(emptyText('recipes', 'all', false), 'No saved recipes. Make one on the Recipes tab, or tap "Save As Recipe" under a meal on Today.');
 });
 
 test('yesterday items group under headings for All', () => {

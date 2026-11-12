@@ -131,9 +131,10 @@ def test_preview_passes_estimated_through_and_rounds(a):
 
 # ---------- barcode ----------
 
-def fake_ai(monkeypatch, enabled):
+def fake_ai(monkeypatch, enabled, label=True):
     mod = types.ModuleType("app.ai")
     mod.enabled = lambda user_id=None: enabled
+    mod.feature_on = lambda name: label
     monkeypatch.setitem(sys.modules, "app.ai", mod)
     monkeypatch.setattr(app_pkg, "ai", mod, raising=False)
 
@@ -182,6 +183,8 @@ def test_barcode_not_found_and_can_ask_ai(env, a, monkeypatch):
     assert r["food"] is None and r["note"] == "Not found" and r["can_ask_ai"] is False
     fake_ai(monkeypatch, True)
     assert a.get("/api/foods/barcode/4006381333931").json()["can_ask_ai"] is True
+    fake_ai(monkeypatch, True, label=False)  # the administrator turned label reading off
+    assert a.get("/api/foods/barcode/4006381333931").json()["can_ask_ai"] is False
     fake_ai(monkeypatch, False)
     assert a.get("/api/foods/barcode/4006381333931").json()["can_ask_ai"] is False
 

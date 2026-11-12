@@ -37,7 +37,9 @@ function favoriteRow(fav, again) {
     chips(fav.meals, async (m) => { await api.favoriteTags(fav.food.id, m); fav.meals = m; }, status), h('div', { class: 'row wrap' }, remove), status);
 }
 
-function recipeRow(rec, again, ctx) {
+// One recipe with its tags, Rename, Edit Items (or Match Ingredients) and Delete. Also used by the recipe screen on the
+// Recipes tab. opts.onDeleted runs after a delete instead of again().
+export function recipeRow(rec, again, ctx, opts) {
   const status = h('div', { 'aria-live': 'polite' });
   const body = h('div');
   const fail = (e) => show(status, message(e.message, 'error'));
@@ -78,7 +80,7 @@ function recipeRow(rec, again, ctx) {
   };
   const del = async () => {
     if (!window.confirm('Delete the recipe "' + rec.name + '"?')) return;
-    try { await api.deleteMeal(rec.id); await again(); } catch (e) { fail(e); }
+    try { await api.deleteMeal(rec.id); await (opts && opts.onDeleted ? opts.onDeleted() : again()); } catch (e) { fail(e); }
   };
   return h('li', { class: 'saved-item' }, h('span', { class: 'item-title' }, rec.name),
     h('span', { class: 'item-sub' }, recipeSubText(rec, fmtNum(rec.kcal, 0))),

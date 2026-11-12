@@ -187,7 +187,10 @@ def test_cost_per_active_source(env, monkeypatch):
     post(env)  # personal, twice
     st = env["client"].get("/api/ai/status").json()
     assert st["key_source"] == "personal"
-    assert st["cost_this_month"] == pytest.approx(2 * (1500 + 120 * 5) / 1e6)
+    assert st["cost_this_month"] is None and st["price_known"] is False  # no personal prices: no cost shown
+    env["client"].put("/api/ai/key", json={"price_in": 2, "price_out": "10"})
+    st = env["client"].get("/api/ai/status").json()
+    assert st["cost_this_month"] == pytest.approx(2 * (1500 * 2 + 120 * 10) / 1e6)
     with db.conn() as c:
         config.delete_user_secret(c, 1, ai.PERSONAL_KEY)
     st = env["client"].get("/api/ai/status").json()

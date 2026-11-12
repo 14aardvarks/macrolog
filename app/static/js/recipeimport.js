@@ -185,3 +185,49 @@ export function matchWhat(n) { return n + (n === 1 ? ' ingredient' : ' ingredien
 export function importWhat(kind, n) {
   return kind === 'photos' ? n + (n === 1 ? ' photo' : ' photos') + ' of a recipe' : 'your recipe text (' + n + ' characters)';
 }
+
+// ---------- Recipes tab ----------
+
+// Meal tags as a short label: "Breakfast, Dinner", or "Untagged".
+export function tagsText(meals) {
+  const order = ['breakfast', 'lunch', 'dinner', 'snack'];
+  const names = { breakfast: 'Breakfast', lunch: 'Lunch', dinner: 'Dinner', snack: 'Snack' };
+  const list = order.filter((m) => (meals || []).indexOf(m) >= 0).map((m) => names[m]);
+  return list.length ? list.join(', ') : 'Untagged';
+}
+
+// "Makes 4 servings" or "Makes 1 serving". A recipe without servings makes one.
+export function servingsText(meal) {
+  const n = meal && meal.servings > 0 ? meal.servings : 1;
+  return 'Makes ' + fmtAmount(n) + (n === 1 ? ' serving' : ' servings');
+}
+
+// The second line of a recipe on the Recipes tab: "3 of 8 matched" or "4 items - 520 kcal", then servings and tags.
+export function recipeListSub(meal, kcalText) {
+  return [recipeSubText(meal, kcalText), servingsText(meal), tagsText(meal.meals)].join(' · ');
+}
+
+// Items for POST /api/meals/{id}/log: every matched, not skipped ingredient for `servings` of a recipe that makes meal.servings.
+// Returns { items } or { error }.
+export function logItems(meal, servings) {
+  const n = typeof servings === 'number' ? servings : parseAmount(servings);
+  if (n == null || !(n > 0) || n > 100) return { error: 'Servings must be a number above zero.' };
+  const per = meal.servings > 0 ? meal.servings : 1;
+  const items = (meal.items || []).filter((it) => it.food && !it.skipped && it.food_id != null)
+    .map((it) => ({ food_id: it.food_id, amount: Math.round((it.amount * n / per) * 10000) / 10000, unit: it.unit }));
+  if (!items.length) return { error: 'This recipe has no matched ingredients to log.' };
+  return { items };
+}
+
+// One line of per serving numbers: "520 kcal, 60 g carbs, 20 g protein, 18 g fat".
+export function perServingText(meal, fmt) {
+  const p = meal.per_serving || {};
+  const v = (k) => fmt(p[k] == null ? 0 : p[k]);
+  return v('kcal') + ' kcal, ' + v('carbs') + ' g carbs, ' + v('protein') + ' g protein, ' + v('fat') + ' g fat';
+}
+
+// The note on the log checklist: amounts for `want` servings of a recipe that makes `per`. '' for one serving of a one serving recipe.
+export function logAmountText(want, per) {
+  if (per > 1) return 'Amounts are for ' + fmtAmount(want) + ' of ' + fmtAmount(per) + ' servings.';
+  return want !== 1 ? 'Amounts are for ' + fmtAmount(want) + ' servings.' : '';
+}

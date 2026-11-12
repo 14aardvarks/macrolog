@@ -1,5 +1,5 @@
-import { h, field } from './dom.js';
-import { MICROS, shownMicros, microValue, microText, microNote, microOver, barWidth, toggleMicro, parseDecimal, fmtAmount } from './util.js';
+import { h, field, select } from './dom.js';
+import { SEARCH_SOURCES, searchSource, MICROS, shownMicros, microValue, microText, microNote, microOver, barWidth, toggleMicro, parseDecimal, fmtAmount } from './util.js';
 
 let seq = 0;
 
@@ -60,7 +60,8 @@ function switchRow(id, label, checked, onChange) {
 }
 
 // Settings, Display: every change is saved at once through save(patch), which returns the new display settings.
-export function displaySection(display, save) {
+// sources: the Source choices this server offers (util.js searchSources).
+export function displaySection(display, sources, save) {
   let shown = display.micros_shown.slice();
   const flags = [['show_macros', 'Macro Nutrients bars'], ['show_micros', 'Micro Nutrients section'],
     ['show_split', 'Calorie Split chart'], ['show_macro_bar', 'Macro balance bar on foods'], ['show_table', 'Table View on Today']];
@@ -72,10 +73,20 @@ export function displaySection(display, save) {
     } }, m.label);
     return chip;
   }));
+  const list = sources || SEARCH_SOURCES;
+  let source = searchSource(display.search_source);
+  if (!list.some((s) => s.value === source)) source = 'all';  // Claude typed search turned off by the administrator
+  const srcSel = select(list, source, { id: 'disp-source', 'aria-describedby': 'disp-source-help' });
+  srcSel.addEventListener('change', async () => {
+    const want = srcSel.value;
+    try { source = (await save({ search_source: want })).search_source; } catch (e) { srcSel.value = source; }
+  });
   return h('div', { class: 'display-sec' }, h('h2', null, 'Display'),
     h('p', { class: 'sub' }, 'Choose what Today, the lists and the picker show. Changes apply at once.'),
     flags.map(([k, label]) => switchRow('disp-' + k, label, display[k] !== false, (on) => save({ [k]: on }))),
-    h('p', { class: 'field-cap' }, 'Micro nutrients to show'), chips);
+    h('p', { class: 'field-cap' }, 'Micro nutrients to show'), chips,
+    h('label', { class: 'field', for: 'disp-source' }, h('span', null, 'Default Search Source'), srcSel),
+    h('p', { class: 'sub', id: 'disp-source-help' }, 'Where the search on Add looks first. All Sources by default. Changing Source on Add lasts until the app is reloaded.'));
 }
 
 // Settings, Goals: one field per nutrient. read() returns { targets } or { error }.

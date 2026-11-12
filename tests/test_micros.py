@@ -136,7 +136,7 @@ def test_migration_adds_micro_columns_and_display_settings(tmp_path):
     assert row["fiber"] == 2 and all(row[k] is None for k in core.NEW_MICROS)
     assert set(core.NEW_MICROS) <= {r[1] for r in c.execute("PRAGMA table_info(foods)")}
     assert core.read_display(c, 1) == {**{k: bool(v) for k, v in core.DISPLAY_FLAGS.items()}, "micros_shown": list(core.MICROS),
-                                            "today_view": "list"}
+                                            "today_view": "list", "search_source": "all"}
     assert c.execute("SELECT start_screen FROM settings").fetchone()[0] == "scan"
 
 
@@ -145,7 +145,8 @@ def test_migration_adds_micro_columns_and_display_settings(tmp_path):
 def test_display_defaults_keep_screens_as_before(a):
     d = a.get("/api/settings/display").json()
     assert d == {"show_macros": True, "show_micros": True, "show_split": True, "show_macro_bar": True, "show_table": True,
-                 "micros_open": False, "micros_shown": list(core.MICROS), "today_view": "list"}
+                 "micros_open": False, "micros_shown": list(core.MICROS), "today_view": "list",
+                 "search_source": "all"}
 
 
 def test_display_put_partial_per_user_and_other_settings_kept(a, b):
@@ -218,3 +219,20 @@ def test_micro_targets_defaults_put_and_isolation(a, b):
                                   {"targets": [1]}])
 def test_micro_targets_validation(a, body):
     assert a.put("/api/goals/micros", json=body).status_code == 400
+
+
+# ---------- default search source ----------
+
+def test_search_source_default_save_and_isolation(a, b):
+    assert a.get("/api/settings/display").json()["search_source"] == "all"
+    for v in ("off", "fdc", "ai", "all", "fdc"):
+        assert a.put("/api/settings/display", json={"search_source": v}).json()["search_source"] == v
+    a.put("/api/settings/display", json={"show_split": False})  # other display saves keep it
+    assert a.get("/api/settings/display").json()["search_source"] == "fdc"
+    assert b.get("/api/settings/display").json()["search_source"] == "all"
+
+
+@pytest.mark.parametrize("value", ["usda", "", None, 1, ["all"], {"a": 1}, "ALL"])
+def test_search_source_validation(a, value):
+    assert a.put("/api/settings/display", json={"search_source": value}).status_code == 400
+    assert a.get("/api/settings/display").json()["search_source"] == "all"

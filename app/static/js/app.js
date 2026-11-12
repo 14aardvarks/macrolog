@@ -3,7 +3,7 @@ import { h, clear, select, field, message, show, cameraIcon, sourceBadge } from 
 import {
   MEALS, MEAL_LABELS, parseDecimal, parseAmount, amountText, servingText, setAmountFormat, unitLabel, fmtNum, fmtAmount, groupByMeal, checkedItems, canSaveRecipe, rowAmountText, applyRowPick, draftFits, localDate, progressText, remainingText,
   sentence, newRecipeDraft, recipeAddRow, recipeSetRow, stepsBack, barWidth, debounce, digitsOnly, guessMeal, pctTotal, latestGuard, MEAL_FILTERS, MEAL_FILTER_LABELS, filterByMeal, filterSaved, pageOf, PAGE_SIZE, emptyText,
-  DEFAULT_DISPLAY, SEARCH_SOURCES, searchSource, searchAction, searchHint, DESCRIPTION_TEXT,
+  DEFAULT_DISPLAY, searchSource, searchAction, searchHint, DESCRIPTION_TEXT, aiFeature, aiFeatureOff, searchSources, startSource,
 } from './util.js';
 import { microSection, displaySection, microTargets } from './micros.js';
 import { viewToggle, dayTable } from './daytable.js';
@@ -19,16 +19,29 @@ import { renderSetup } from './setup.js';
 import { renderAdmin } from './admin.js';
 import { renderSaved } from './saved.js';
 import { renderRecipe } from './recipe.js';
+import { renderRecipes, renderRecipeView } from './recipes.js';
 import { renderImport, renderReview, renderMatch } from './recipeflow.js';
-import { recipeSubText } from './recipeimport.js';
+import { recipeSubText, logAmountText } from './recipeimport.js';
 import { renderClaudeSection, renderSignIn } from './claudekey.js';
 import { refreshLoggedControl } from './refresh.js';
 
 const main = document.getElementById('main');
 const nav = document.getElementById('nav');
-const state = { user: null, settings: { start_screen: 'today', default_meal: null, use_last: true, confirm_ai: true, amount_format: 'fraction' }, display: DEFAULT_DISPLAY, cleanup: null, depth: 0, tab: 'favorites', addMeal: null, draft: null, recipe: null, source: 'all', claude: null,
-  importInput: null, importDraft: null, importBase: 0, proposals: {}, selections: {}, matchFocus: null };  // Import Recipe and Match Ingredients  // addMeal, source and claude (last Claude estimate) live for the session only
-const NAV_OF = { today: 'today', settings: 'settings', admin: 'settings', saved: 'settings', editfood: 'settings' };  // every other screen belongs to Add
+const state = { user: null, settings: { start_screen: 'today', default_meal: null, use_last: true, confirm_ai: true, amount_format: 'fraction' }, display: DEFAULT_DISPLAY, cleanup: null, depth: 0, tab: 'favorites', addMeal: null, draft: null, recipe: null, source: null, aiSt: null, claude: null,
+  importInput: null, importDraft: null, importBase: 0, proposals: {}, selections: {}, matchFocus: null };  // Import Recipe and Match Ingredients  // addMeal, source (null = the Default Search Source setting), aiSt (last /api/ai/status) and claude (last Claude estimate) live for the session only
+const NAV_OF = { today: 'today', settings: 'settings', admin: 'settings', saved: 'settings', editfood: 'settings',
+  recipes: 'recipes', recipeview: 'recipes', recipe: 'recipes', import: 'recipes', importreview: 'recipes', match: 'recipes' };  // every other screen belongs to Add
+const FINDER = ['add', 'picker', 'scan', 'lookup', 'manual', 'ai'];  // screens New Recipe and Match Ingredients borrow from Add
+
+// The bottom bar button to mark: params.nav when a screen is opened from another tab, the Recipes tab while a recipe
+// borrows the food finder, else the screen's own tab.
+function navKey(entry) {
+  const p = entry.params || {};
+  if (p.nav) return p.nav;
+  const r = state.recipe;
+  if (r && FINDER.includes(entry.name) && (r.adding || r.picking != null)) return 'recipes';
+  return NAV_OF[entry.name] || 'add';
+}
 
 const ctx = {
   go,
@@ -40,9 +53,14 @@ const ctx = {
     const before = state.display;
     state.display = { ...before, ...patch };
     try { state.display = await api.saveDisplay(patch); } catch (e) { state.display = before; throw e; }
+    if ('search_source' in patch) state.source = null;  // a new default applies to Add at once
     return state.display;
   },
   lookup: (code) => go('lookup', { code }),
+  // Recipes tab buttons. Import remembers where it started so Save and Continue and Cancel come back to the Recipes tab.
+  newRecipe: () => { state.recipe = newRecipeDraft(); return go('recipe', {}); },
+  importRecipe: () => { state.importBase = state.depth; return go('import', {}); },
+  defaultMeal: () => defaultMeal(),
   // Create Recipe screen hooks. The draft is state.recipe.
   get recipe() { return state.recipe; },
   refresh: () => go('recipe', {}, true),
@@ -53,7 +71,7 @@ const ctx = {
     state.recipe.picking = i;
     return go('picker', { foodId: r.food_id, adjust: { index: i }, amount: r.amount, unit: r.unit });
   },
-  saved() { state.recipe = null; state.tab = 'recipes'; return ctx.back(); },
+  saved() { state.recipe = null; return ctx.back(); },  // back to the Recipes tab, which lists the new recipe
   // Import Recipe (step 1) and Match Ingredients (step 2). See js/recipeflow.js.
   flow: {
     get input() { return state.importInput || (state.importInput = { kind: 'text', text: '', note: '' }); },
@@ -63,11 +81,10 @@ const ctx = {
     saved(meal) {
       state.importDraft = null;
       state.importInput = null;
-      state.tab = 'recipes';
       backThen(state.depth - state.importBase, () => go('match', { mealId: meal.id, saved: true }));
     },
     cancel() { state.importDraft = null; state.importInput = null; backThen(state.depth - state.importBase, () => {}); },
-    exit() { state.tab = 'recipes'; return ctx.back(); },
+    exit() { return ctx.back(); },  // to wherever matching was opened from: Recipes, Add or Saved
     proposals(id) { return state.proposals[id] || (state.proposals[id] = {}); },
     selection(id) { return state.selections[id] || []; },
     setSelection(id, ids) { state.selections[id] = ids; },
@@ -154,7 +171,7 @@ async function render(entry) {
   if (state.cleanup) { state.cleanup(); state.cleanup = null; }
   trackRecipeFlow(entry);
   const screen = SCREENS[entry.name] || SCREENS.today;
-  const key = NAV_OF[entry.name] || 'add';
+  const key = navKey(entry);
   nav.hidden = entry.name === 'login';
   nav.querySelectorAll('button').forEach((b) => {
     if (b.dataset.go === key) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
@@ -360,12 +377,21 @@ function addScreen(root, params) {
   mealSel.addEventListener('change', () => { state.addMeal = mealSel.value; if (!q.value.trim()) paintTabs(); });
   const mealPick = h('label', { class: 'meal-pick' }, h('span', null, 'Meal'), mealSel);
   let searchSeq = 0;
-  // Where the search box looks. Remembered for the session. Claude is only asked on Search or Enter, never while typing.
-  const srcSel = select(SEARCH_SOURCES, searchSource(state.source));
+  // Where the search box looks: the Default Search Source setting, then whatever is picked here for the session.
+  // Claude is only asked on Search or Enter, never while typing.
+  state.source = startSource(state.source, state.display.search_source, state.aiSt);
+  const srcSel = select(searchSources(state.aiSt), state.source);
   const srcPick = h('label', { class: 'meal-pick source-pick' }, h('span', null, 'Source'), srcSel);  // the wrapping label names the select
   const srcNote = h('div', { 'aria-live': 'polite' });
   let aiOn = null;  // null until /api/ai/status answers
-  const loadAi = () => api.aiStatus().then((st) => { aiOn = !!st.enabled; }, () => { aiOn = false; });
+  // Fresh status on every visit, so a feature the administrator turned off disappears from the Source choice.
+  const loadAi = () => api.aiStatus().then((st) => { state.aiSt = st; aiOn = aiFeature(st, 'lookup'); applyFeatures(st); }, () => { aiOn = false; });
+  function applyFeatures(st) {
+    if (!aiFeatureOff(st, 'lookup')) return;
+    const opt = srcSel.querySelector('option[value="ai"]');
+    if (opt) opt.remove();
+    if (state.source === 'ai') { state.source = 'all'; srcSel.value = 'all'; }
+  }
   const paintSource = () => {
     const ai = state.source === 'ai';
     q.placeholder = ai ? 'Describe a food for Claude' : 'Search foods';
@@ -459,12 +485,10 @@ function addScreen(root, params) {
     h('div', { class: 'row add-scan' },
       h('button', { class: 'btn', type: 'button', onclick: () => go('manual', {}) }, 'Enter Manually'),
       h('button', { class: 'btn primary scan-btn', type: 'button', onclick: () => go('scan', { autostart: true }) }, cameraIcon(), 'Scan Barcode')),
-    ing ? null : h('div', { class: 'row add-create' }, h('button', { class: 'btn', type: 'button', onclick: () => { state.recipe = newRecipeDraft(); go('recipe', {}); } }, 'Create Recipe'),
-      h('button', { class: 'btn', type: 'button', onclick: () => { state.importBase = state.depth; go('import', {}); } }, 'Import Recipe')),
     ing ? null : mealPick, tabBar, h('div', { class: 'tab-list' }, listBox)));
   if (state.source === 'ai' && state.claude) q.value = state.claude.text;  // back from the draft: the estimate is still here, no second request
-  if (matching && params.q && state.source !== 'ai') { q.value = params.q; search(true); }  // the ingredient's name, searched at once
-  else if (state.source === 'ai') loadAi().then(paintSearch); else paintTabs();
+  if (matching && params.q && state.source !== 'ai') { q.value = params.q; search(true); loadAi(); }  // the ingredient's name, searched at once
+  else if (state.source === 'ai') loadAi().then(paintSearch); else { paintTabs(); loadAi(); }
   if (params.focus) root.addEventListener('mounted', () => q.focus());
 }
 
@@ -538,9 +562,11 @@ async function mealScreen(root, params) {
   const found = (await api.meals()).meals.find((m) => m.id === params.mealId);
   if (!found) throw new Error('Recipe not found');
   if (!found.complete) { await go('match', { mealId: found.id }, true); return; }  // not loggable until matched
-  // Skipped ingredients are left out. A recipe that makes several servings starts at one serving.
+  // Skipped ingredients are left out. A recipe that makes several servings starts at one serving, or params.servings
+  // when the Recipes tab chose how many.
   const per = found.servings > 1 ? found.servings : 1;
-  const meal = { ...found, items: found.items.filter((it) => it.food && !it.skipped).map((it) => ({ ...it, amount: it.amount / per })) };
+  const want = params.servings != null && parseAmount(params.servings) > 0 ? parseAmount(params.servings) : 1;
+  const meal = { ...found, items: found.items.filter((it) => it.food && !it.skipped).map((it) => ({ ...it, amount: it.amount * want / per })) };
   const status = h('div', { 'aria-live': 'polite' });
   const mealSel = mealSelect(params.meal || defaultMeal());
   const draft = draftFits(state.draft, meal.id, state.depth, meal.items.length) ? state.draft : null;
@@ -574,7 +600,7 @@ async function mealScreen(root, params) {
   }
   root.appendChild(h('section', { class: 'screen' },
     h('div', { class: 'bar' }, h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back')),
-    h('h1', null, meal.name), per > 1 ? h('p', { class: 'sub' }, 'Amounts are for 1 of ' + fmtAmount(per) + ' servings.') : null,
+    h('h1', null, meal.name), logAmountText(want, per) ? h('p', { class: 'sub' }, logAmountText(want, per)) : null,
     h('ul', { class: 'list' }, rows.map((r) => r.el)),
     h('label', { class: 'field' }, h('span', null, 'Meal'), mealSel), status,
     h('button', { class: 'btn primary', type: 'button', onclick: log }, 'Log')));
@@ -587,8 +613,9 @@ async function settingsScreen(root) {
     api.authConfig().catch(() => null), api.microGoals(), api.display()]);
   state.display = disp;
   const micro = microTargets(mg.micros);
-  const startSel = select([['today', 'Today'], ['scan', 'Scan'], ['search', 'Search'], ['ai', 'Ask Claude']].map((x) => ({ value: x[0], label: x[1] })),
-    s.start_screen, { 'aria-label': 'Start screen' });
+  const starts = [['today', 'Today'], ['scan', 'Scan'], ['search', 'Search'], ['ai', 'Ask Claude']]
+    .filter((x) => x[0] !== 'ai' || s.start_screen === 'ai' || !aiFeatureOff(ai, 'label'));  // label reading turned off by the administrator
+  const startSel = select(starts.map((x) => ({ value: x[0], label: x[1] })), s.start_screen, { 'aria-label': 'Start screen' });
   const mealSel = select([{ value: 'none', label: 'Guess from the time' }, ...MEALS.map((m) => ({ value: m, label: MEAL_LABELS[m] }))],
     s.default_meal || 'none', { 'aria-label': 'Default meal' });
   const useLast = h('input', { type: 'checkbox', id: 'use-last', checked: s.use_last !== false, 'aria-describedby': 'use-last-help' });
@@ -636,7 +663,7 @@ async function settingsScreen(root) {
       h('h2', null, 'Daily Goals'), kcal, h('div', { class: 'grid3' }, pcts.map((p) => p[1])), total, micro.node, status,
       h('button', { class: 'btn primary', type: 'submit' }, 'Save')),
     h('div', { class: 'col-b' },
-    displaySection(disp, async (patch) => {
+    displaySection(disp, searchSources(ai), async (patch) => {
       try { const d = await ctx.saveDisplay(patch); clear(dispStatus); return d; } catch (err) { show(dispStatus, message(err.message, 'error')); throw err; }
     }), dispStatus,
     h('h2', null, 'Claude'), ai ? renderClaudeSection(ai, me.use_global_ai) : h('p', { class: 'sub' }, 'Claude status is not available.'),
@@ -654,6 +681,8 @@ async function settingsScreen(root) {
 const SCREENS = {
   login: loginScreen, admin: (root) => renderAdmin(root, ctx), today: todayScreen, add: addScreen, lookup: lookupScreen, meal: mealScreen, settings: settingsScreen,
   saved: (root) => renderSaved(root, ctx),
+  recipes: (root) => renderRecipes(root, ctx),
+  recipeview: (root, p) => renderRecipeView(root, p, ctx),
   recipe: (root) => { if (!state.recipe) state.recipe = newRecipeDraft(); state.recipe.depth = state.depth; return renderRecipe(root, ctx); }, editfood: (root, p) => renderFoodForm(root, { edit: p.food }, ctx),
   picker: (root, p) => renderPicker(root, p, ctx),
   scan: (root, p) => { const auto = !!p.autostart; p.autostart = false; return renderScan(root, ctx, { autostart: auto }); },

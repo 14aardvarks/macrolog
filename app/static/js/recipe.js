@@ -30,7 +30,7 @@ export function renderRecipe(root, ctx) {
 
   root.appendChild(h('section', { class: 'screen recipe' },
     h('div', { class: 'bar' }, h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back')),
-    h('h1', null, 'Create Recipe'),
+    h('h1', null, 'New Recipe'),
     name,
     h('h2', null, 'Ingredients'),
     rows.length ? h('ul', { class: 'list' }, rows) : h('p', { class: 'sub' }, 'No ingredients yet.'),

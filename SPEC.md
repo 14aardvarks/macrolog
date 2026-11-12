@@ -202,10 +202,11 @@ PATCH /api/meals/{id} also takes "servings" (null = 1); "items" answers 409 whil
 GET/PUT /api/goals   {"kcal","carb_pct","protein_pct","fat_pct"}  pcts total 100. Default 3000 and 50/30/20 (carbs/protein/fat).
         targets: carbs g = kcal*pct/4, protein same, fat g = kcal*pct/9. Goals are per user.
 GET/PUT /api/settings {"start_screen": "today"|"scan"|"search"|"ai", "default_meal": ...}   # per user, validated
-GET/PUT /api/settings/display {"show_macros","show_micros","show_split","show_macro_bar","show_table","micros_open": bool, "micros_shown": [nutrient...], "today_view": "list"|"table"}
+GET/PUT /api/settings/display {"show_macros","show_micros","show_split","show_macro_bar","show_table","micros_open": bool, "micros_shown": [nutrient...], "today_view": "list"|"table", "search_source": "all"|"off"|"fdc"|"ai"}
         # per user, stored in the settings table (micros_hidden comma list). PUT takes any subset, booleans only (today_view is the string list or table), 400 otherwise.
         # today_view is the Today tab's view, column settings.today_view TEXT NOT NULL DEFAULT 'list', added in place by core.init.
         # Defaults: everything shown, micros_open false (the new section starts collapsed), so existing users see no change.
+        # search_source is the Default Search Source (column settings.search_source TEXT NOT NULL DEFAULT 'all', added in place).
 GET/PUT /api/goals/micros  GET -> {"micros": [{"key","label","unit","kind": "goal"|"limit","default","target"}]}
         PUT {"targets": {nutrient: number > 0 and <= 100000}} (any subset). Table micro_targets(user_id, nutrient, target).
         Defaults and kinds (fixed): fiber 28 g, potassium 4700 mg, calcium 1300 mg, iron 18 mg, vitamin D 20 mcg are goals;
@@ -224,8 +225,18 @@ def enabled(user_id=None) -> bool          # no arg: whether a global key is con
 def resolve_key(user_id) -> (source, key)  # source "user" | "global" | None
 GET  /api/ai/status -> {"enabled","key_source": "personal"|"global"|null,"used_this_month","cap","remaining","model","price_known",
                         "est_cost_label","cost_this_month","personal_key_set","personal_key_unreadable","can_use_global",
-                        "personal_cap","personal_used_this_month"}    # cap/used/remaining/cost refer to the active source (global if none)
-PUT  /api/ai/key {"key"?: str, "cap"?: int 1..10000} -> status    # at least one; key 20..512 printable chars, never sent to the API
+                        "personal_cap","personal_used_this_month","server_model","personal_model","personal_price_in",
+                        "personal_price_out","personal_cap_default","features": {"label","lookup","recipe": bool}}
+                        # cap/used/remaining/cost/model/price_known refer to the active source (global if none)
+PUT  /api/ai/key {"key"?: str, "cap"?: int 1..10000, "model"?: str ..100, "price_in"?, "price_out"?: number 0..10000}
+     -> status    # at least one; key 20..512 printable chars, never sent to the API; model, price_in, price_out: "" or null clears
+     # (validated like the admin ai_model and price settings). Stored in user_ai(model TEXT NOT NULL DEFAULT '', price_in REAL,
+     # price_out REAL), columns added in place by ai.init. On the user's own key, requests use the personal model (empty = the
+     # server's model, tool choice follows that model) and personal prices for cost and status (empty = no cost, no fallback).
+     # Shared key users always get the admin model and prices.
+# Feature switches (config, bool, default on): ai_allow_label (AI_ALLOW_LABEL) for /label, ai_allow_lookup (AI_ALLOW_LOOKUP)
+# for /lookup (checked after body validation), ai_allow_recipe (AI_ALLOW_RECIPE) for recipe import and Match With Claude.
+# Off answers 403 with a clear message before the key, the cap or any request; can_ask_ai is false while label reading is off.
 DELETE /api/ai/key -> status
 POST /api/ai/label  multipart: images (1 to 3 files, jpeg/png/webp, each <= 5 MB), optional barcode (text), optional hint (text)
      -> {"draft": Food (no id, source "ai", barcode if given), "warnings": [str], "used_this_month","cap"}   # NOT saved; client confirms via POST /api/foods
@@ -267,7 +278,8 @@ A URL source is not built (no server side fetching). It would be one more import
 Table `app_config(key PK, value, secret, updated_at)`. `get(key, default)` resolves DB value, else env var, else default, at call time.
 Managed keys (env fallback): local_login (LOCAL_LOGIN), oidc_issuer, oidc_client_id, oidc_client_secret*, oidc_name, oidc_allow_signup,
 ai_global_key* (ANTHROPIC_API_KEY), ai_model, ai_monthly_cap (AI_MONTHLY_REQUEST_CAP, 0..100000), ai_price_in_per_mtok,
-ai_price_out_per_mtok (0..10000), fdc_api_key*. Starred keys are secrets: Fernet encrypted with a key derived from SECRET_KEY by
+ai_price_out_per_mtok (0..10000), ai_allow_label (AI_ALLOW_LABEL), ai_allow_lookup (AI_ALLOW_LOOKUP), ai_allow_recipe
+(AI_ALLOW_RECIPE) (bools, default on), fdc_api_key*. Starred keys are secrets: Fernet encrypted with a key derived from SECRET_KEY by
 HKDF-SHA256 (info `macrolog/secret-store/v1`); never returned, logged or put in exceptions; APIs report `{"set": bool}`. An undecryptable
 secret counts as unset (env fallback) and is flagged `unreadable`. Empty string stored = explicitly empty; deleting the row = use env.
 Environment only, never stored: SECRET_KEY, DB_PATH, PUBLIC_URL, TRUST_PROXY, COOKIE_SECURE. Also `user_secrets(user_id, name,
@@ -302,7 +314,12 @@ and an active SSO-linked admin. Every write appends to `admin_log` (no secret va
 ## Frontend (app/static)
 
 Mobile first, one-hand use, also fine on desktop. Plain ES modules, under about 1000 lines of JS total, no libraries.
-Screens: Login, Today, Add, Picker, Claude fallback, Settings. Bottom nav: Today, Add, Settings.
+Screens: Login, Today, Add, Recipes, Picker, Claude fallback, Settings. Bottom nav: Today, Add, Recipes, Settings.
+- Recipes tab (js/recipes.js, helpers in js/recipeimport.js): New Recipe and Import Recipe buttons, then my recipes with "3 of 8 matched"
+  or "N items - kcal", servings and meal tags. A partial recipe opens Match Ingredients; a complete one opens the recipe screen: Log
+  (Meal and Servings, POST /api/meals/{id}/log with every matched, not skipped item scaled to the servings), Adjust Items (the log
+  checklist, starting at the chosen servings) and the Saved tools (tags, Rename, Edit Items, Delete; saved.js recipeRow). New Recipe,
+  Import, Match Ingredients and the recipe screen mark the Recipes tab; Save, Save and Continue, Cancel and Save and Exit come back to it.
 - Start screen is a per-user setting (`today`, `scan`, `search`, `ai`) fetched from /api/settings after login. Today = running macros.
 - Today: Calorie Split chart, then the Macro Nutrients heading with bars for calories, carbs, protein, fat showing `value / target (percent)`,
   then a Micro Nutrients section (heading with a small arrow button, aria-expanded, open state saved as micros_open) with one thin bar row per
@@ -326,7 +343,8 @@ Screens: Login, Today, Add, Picker, Claude fallback, Settings. Bottom nav: Today
 - Lookup failure: show "Not Found" with two buttons, "Ask Claude" (only if can_ask_ai) and "Enter Manually". Ask Claude suggests photographing the NUTRITION
   LABEL (optionally with the barcode in the same photo), resizes images client side (max 1280 px, JPEG 0.8), uploads, shows the draft in an editable form
   with any warnings, and only saves via POST /api/foods after the user confirms.
-- Add: a Source select (labelled Source, above the search box: All Sources, Open Food Facts, USDA, Claude; util.js `SEARCH_SOURCES`,
+- Add: a Source select (labelled Source, above the search box: All Sources, Open Food Facts, USDA, Claude; util.js `SEARCH_SOURCES`, `searchSources`, `startSource`; Claude is left out while ai_allow_lookup is off;
+  it starts at the per user Display setting Default Search Source (All Sources by default), and a change here lasts for the session,
   `searchAction`, `searchHint`) picks where the search box looks and is remembered for the session (state.source). All Sources is the
   Open Food Facts and USDA search and never calls Claude; Open Food Facts or USDA search only that source (local matches included).
   Claude never runs while typing: Search or Enter sends the text (max 200 characters) to POST /api/ai/lookup after confirmClaude
@@ -335,25 +353,26 @@ Screens: Login, Today, Add, Picker, Claude fallback, Settings. Bottom nav: Today
   The last estimate is kept for the session so Back does not ask again. Without Claude for the user, a short hint says so.
   Typed barcode digits and Scan behave the same for every source.
 - Add: Search, Scan and the Meal selector sit above the Favorites/Yesterday/Recipes tabs and list. Lists show 20 items with a Show More button.
-- Import Recipe (Add tab button next to Create Recipe, js/recipeflow.js with pure helpers in js/recipeimport.js): step 1 is Paste Text
+- Import Recipe (Recipes tab button next to New Recipe; Read With Claude and Match With Claude hidden while ai_allow_recipe is off, js/recipeflow.js with pure helpers in js/recipeimport.js): step 1 is Paste Text
   (Read With Claude, or Split Lines Without Claude which parses locally and uses no credit) or Photos (up to 3, toJpeg), then a review
   screen (name, servings, ingredient rows with amount, unit, name and note, add and remove, meal tag chips, Save and Continue, Cancel).
   Save and Continue posts /api/meals/import and opens Match Ingredients ("Saved", "Step 2 of 2"): per row the line and its state, Search
   and Scan Barcode (the ingredient finder and picker in ingredient mode, Done saves the match), Ask Claude, Skip; checkboxes, Select All
   and Match Selected With Claude; proposals with Accept and Change; per serving macros and micronutrients; Save and Next (next unmatched
-  row) and Save and Exit. Recipes on Add and Saved show "N of M matched" for partial recipes and open matching instead of logging.
+  row) and Save and Exit. Recipes on the Recipes tab, Add and Saved show "N of M matched" for partial recipes and open matching instead of logging.
 - Saved (Settings, then Saved): Favorites, Recipes and My foods lists with meal tag chips, rename, delete, recipe item editing, Remove From My Lists, and the food form for My foods.
   Refresh Nutrients (js/refresh.js) is a button in the food edit form (shown for every edited food, with a hint when it has no barcode) and in the picker (only when the food can be looked up and has a blank nutrient); it fills the blank boxes and never overwrites. My Foods also has Refresh All Missing, at most 10 foods per tap, one after another, stopping at a rate limit, with a summary of how many were done and how many are left.
   Refresh logged foods (refreshLoggedControl in js/refresh.js): Today has a Refresh Nutrients button under Micro Nutrients (the logged foods of the viewed day, hidden when nothing needs it) and Settings has Refresh All Logged Foods (every food ever logged). Both take ids from /api/foods/missing-nutrients, say how many foods will be checked, run at most 10 per tap one after another, stop at once on a 429 with a rate limit message, skip foods without a source, remember which foods were already checked this visit so tapping again continues, and report foods checked, values filled and foods left. Today repaints after a batch.
   A search box filters all three sections by name (every word must match, case ignored). The Meal filter (All, Breakfast, Lunch, Dinner, Snack, Untagged) uses the tags and applies to Favorites and Recipes only, strictly (an untagged item is not shown under a meal here). Each section shows 20 items with a Show More button. Remove and delete reload in place, so the search and filter stay.
 - Source labels (util.js `sourceLabel`, dom.js `sourceBadge` and `sourceLine`): foods carry `source` (off, fdc, custom, ai), shown as a tiny text badge (Open Food Facts, USDA, Custom, Claude) in the sub line of Add lists and search results, on the Saved rows, under the name in the picker and on the food edit form. Claude foods get a filled badge plus an Estimate word in rows and the note "Values are estimates from Claude." in the picker, the draft form and the Ask Claude screen, which also says it is not a database search. Regular sources get no note. Today shows it too: `/api/day` entries carry `source` (a LEFT JOIN on foods, null when the food row is missing), as a badge in the list row's sub line and under the food name in the pinned Food column of the table.
-- Create Recipe (Add tab button, js/recipe.js): name, ingredients, meal tags, Save (POST /api/meals). Add Ingredient opens the Add screen in ingredient mode (search, Scan Barcode, Enter Manually, Favorites and Past Foods tabs, no meal choice); a food opens the picker with a Done button, which returns the amount and unit to the draft (the picker's Serving unit works as usual). Tapping a draft ingredient adjusts it the same way, and the x removes it. The draft lives in app state until Save, and Save returns to Add on the Recipes tab.
-- Settings: start screen, goals (kcal and split), sign out, Claude status (used/cap), personal Claude key and cap,
+- New Recipe (Recipes tab button, js/recipe.js, the Create Recipe flow): name, ingredients, meal tags, Save (POST /api/meals). Add Ingredient opens the Add screen in ingredient mode (search, Scan Barcode, Enter Manually, Favorites and Past Foods tabs, no meal choice); a food opens the picker with a Done button, which returns the amount and unit to the draft (the picker's Serving unit works as usual). Tapping a draft ingredient adjusts it the same way, and the x removes it. The draft lives in app state until Save, and Save returns to the Recipes tab. Add has no recipe buttons; its Recipes sub-tab logs recipes.
+- Settings: start screen, goals (kcal and split), sign out, Claude status (used/cap), personal Claude key, cap, model and
+  input and output prices per million tokens (each with a hint giving its default),
   Connect SSO (plain link to /auth/oidc/link, shown when /api/auth/config oidc is true and me.sso_linked is false) and
   Disconnect SSO (POST /api/auth/sso/unlink, shown when linked and has_password). The app opens Settings for `/#settings`.
 - First run: when /api/auth/config needs_setup is true, show a setup form (username, display name, password) posting to
   /api/auth/setup instead of the login screen.
-- Admin page (only when me.is_admin): Users, Sign-in (OIDC fields, redirect URI with copy button, checklist, Test connection,
+- Admin page (only when me.is_admin; every Claude field and the three Allow Claude switches carry a hint with their default): Users, Sign-in (OIDC fields, redirect URI with copy button, checklist, Test connection,
   local login toggle), Claude and USDA settings, Log.
 - Macro balance bar (util.js `macroBarParts`, chart.js `macroBar`): thin stacked bar of calorie share from carbs, protein and fat (4/4/9 kcal per g)
   using --c-carbs, --c-protein, --c-fat; `role="img"` with aria-label "Carbs 50%, Protein 30%, Fat 20%"; percents sum to 100; no bar when all macros are zero.

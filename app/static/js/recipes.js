@@ -1,0 +1,71 @@
+// Recipes tab: New Recipe, Import Recipe and the list of my recipes, plus one recipe's screen with Log and the edit tools
+// from Saved. A partial recipe (unmatched ingredients) opens Match Ingredients instead.
+import { api } from './api.js';
+import { h, clear, field, message, show, select } from './dom.js';
+import { MEALS, MEAL_LABELS, fmtNum, pageOf, PAGE_SIZE } from './util.js';
+import { recipeListSub, logItems, servingsText, perServingText, tagsText } from './recipeimport.js';
+import { recipeRow } from './saved.js';
+
+// ctx: { go, back, newRecipe(), importRecipe(), defaultMeal() }
+export async function renderRecipes(root, ctx) {
+  const all = (await api.meals()).meals;
+  const listBox = h('div');
+  let shown = PAGE_SIZE;
+  const open = (m) => (m.complete ? ctx.go('recipeview', { mealId: m.id }) : ctx.go('match', { mealId: m.id }));
+  const row = (m) => h('li', { class: 'item' },
+    h('button', { class: 'item-main', type: 'button', onclick: () => open(m) },
+      h('span', { class: 'item-title' }, m.name),
+      h('span', { class: 'item-sub' }, recipeListSub(m, fmtNum(m.kcal, 0)))));
+  function paint() {
+    const page = pageOf(all, shown);
+    clear(listBox);
+    if (!all.length) { listBox.appendChild(message('No recipes yet. Tap New Recipe or Import Recipe, or tap Save As Recipe under a meal on Today.')); return; }
+    listBox.appendChild(h('ul', { class: 'list' }, page.items.map(row)));
+    if (page.more) listBox.appendChild(h('button', { class: 'btn', type: 'button', onclick: () => { shown += PAGE_SIZE; paint(); } }, 'Show More'));
+  }
+  paint();
+  root.appendChild(h('section', { class: 'screen recipes' }, h('h1', null, 'Recipes'),
+    h('div', { class: 'row wrap recipes-actions' },
+      h('button', { class: 'btn primary', type: 'button', onclick: ctx.newRecipe }, 'New Recipe'),
+      h('button', { class: 'btn', type: 'button', onclick: ctx.importRecipe }, 'Import Recipe')),
+    h('p', { class: 'sub' }, 'Tap a recipe to log or edit it. A recipe with unmatched ingredients opens Match Ingredients.'),
+    listBox));
+}
+
+// params: { mealId }. Log (meal and servings) with the saved amounts, or Adjust Items for the checklist; then the Saved tools.
+export async function renderRecipeView(root, params, ctx) {
+  const meal = await api.meal(params.mealId);
+  if (!meal.complete) { await ctx.go('match', { mealId: meal.id }, true); return; }
+  const status = h('div', { 'aria-live': 'polite' });
+  const mealSel = select([{ value: 'none', label: MEAL_LABELS.none }, ...MEALS.map((m) => ({ value: m, label: MEAL_LABELS[m] }))],
+    ctx.defaultMeal(), { 'aria-label': 'Meal' });
+  const servings = field('Servings', { inputmode: 'decimal', autocomplete: 'off', value: '1' });
+  const chosenMeal = () => (mealSel.value === 'none' ? null : mealSel.value);
+  const logBtn = h('button', { class: 'btn primary', type: 'button', onclick: async () => {
+    const r = logItems(meal, servings.input.value);
+    if (r.error) { show(status, message(r.error, 'error')); return; }
+    logBtn.disabled = true;
+    try { await api.logMeal(meal.id, { items: r.items, meal: chosenMeal() }); await ctx.go('today', {}, true); } catch (e) {
+      logBtn.disabled = false;
+      show(status, message(e.message, 'error'));
+    }
+  } }, 'Log');
+  const adjust = h('button', { class: 'btn', type: 'button', onclick: () => {
+    const r = logItems(meal, servings.input.value);
+    if (r.error) { show(status, message(r.error, 'error')); return; }
+    ctx.go('meal', { mealId: meal.id, meal: mealSel.value, servings: servings.input.value, nav: 'recipes' });
+  } }, 'Adjust Items');
+  const again = () => ctx.go('recipeview', { mealId: meal.id }, true);  // rename, tags and items repaint from fresh data
+  root.appendChild(h('section', { class: 'screen recipe-view' },
+    h('div', { class: 'bar' }, h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back')),
+    h('h1', null, meal.name),
+    h('p', { class: 'sub' }, servingsText(meal) + ' · ' + tagsText(meal.meals)),
+    h('p', { class: 'sub' }, 'Per serving: ' + perServingText(meal, (v) => fmtNum(v, 0)) + '.'),
+    h('h2', null, 'Log'),
+    h('div', { class: 'grid2 recipe-log' }, h('label', { class: 'field' }, h('span', null, 'Meal'), mealSel), servings),
+    status,
+    h('div', { class: 'row wrap' }, logBtn, adjust),
+    h('p', { class: 'sub' }, 'Adjust Items lets you untick ingredients or change amounts for this log only.'),
+    h('h2', null, 'Edit'),
+    h('ul', { class: 'list' }, recipeRow(meal, again, ctx, { onDeleted: () => ctx.back() }))));
+}
