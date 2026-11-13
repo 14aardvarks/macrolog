@@ -95,6 +95,64 @@ def unit_or_blank(text):
     return p if p in KNOWN else t
 
 
+TASTE = re.compile(r"\b(to taste|as needed)\b", re.I)
+
+
+def taste_line(text, note, unit, name):
+    """For a line that says to taste or as needed (salt to taste, pepper as needed): (name, note) with the phrase moved into the note and
+    the name without it, else None. Such a line has no amount and no unit and is never a count."""
+    found = next((m for m in (TASTE.search(str(x or "")) for x in (note, unit, name, text)) if m), None)
+    if not found:
+        return None
+    phrase = found.group(1).lower()
+    clean = re.sub(r"\s+", " ", TASTE.sub("", str(name or ""))).strip(" ,;-") or str(name or "").strip()
+    note = str(note or "").strip()
+    return clean, note if TASTE.search(note) else (f"{phrase}, {note}" if note else phrase)
+
+
+def known_unit(text):
+    """The canonical known unit for text ("Cups" -> cup, "tablespoons" -> tbsp, "Count" -> count), else None for blank, none and
+    any word the table does not know (clove, pinch, can)."""
+    try:
+        u = unit_or_blank(text)
+    except ValueError:
+        return None
+    return u if u in KNOWN else None
+
+
+def _word_for(word, amount):
+    """A unit word as part of a name: plural for an amount other than 1 (clove -> cloves, pinch -> pinches), else singular."""
+    w = word.strip().lower()
+    if amount == 1:
+        return _singular(w) if w.endswith("s") else w
+    if w.endswith("s"):
+        return w
+    return w + ("es" if re.search(r"(s|sh|ch|x|z)$", w) else "s")
+
+
+def line_unit(amount, unit, name=""):
+    """(unit, name) for a recipe line that comes from Claude, a web page or Search, never a custom unit.
+    No amount: no unit (None), the line stays plain text ("salt to taste"). An amount with a known unit or alias: the canonical unit.
+    An amount with no unit: count (3 carrots). An amount with a word the table does not know (clove, can, slice): count, and the word
+    moves into the name ("garlic" -> "garlic cloves") so nothing is lost. Only the user typing a unit by hand keeps a custom one."""
+    name = str(name or "").strip()
+    if _pos(amount) is None:
+        return None, name
+    known = known_unit(unit)
+    if known:
+        return known, name
+    try:
+        word = clean_unit_text(unit)
+    except ValueError:
+        word = " ".join(str(unit).split())[:MAX_UNIT]
+    if word.lower() in ("", "-", "none"):
+        return COUNT, name
+    stem = _singular(word.lower())
+    if not re.search(r"\b" + re.escape(stem), name.lower()):
+        name = f"{name} {_word_for(word, float(amount))}".strip()
+    return COUNT, name
+
+
 def same_word(unit, label_unit):
     """A typed count word against the label's own (lowercase singular): "Slices" is the label's slice."""
     return bool(unit) and parse_unit(unit) == label_unit
@@ -323,7 +381,7 @@ def grams(food, amount, unit):
 PLAIN_COUNTS = (COUNT, "piece", "each", "whole", "unit", "item", "large", "medium", "small")
 
 
-def match_amount(food, amount, unit):
+def match_amount(food, amount, unit, custom=True):
     """Amount and unit for a recipe line ("1 cup", "2 tbsp", "2" eggs) matched to food, without asking the user.
 
     Returns {"amount", "unit", "check"} (plus "estimated": True when only the 1 g per ml guess reaches the unit) or None when
@@ -334,6 +392,7 @@ def match_amount(food, amount, unit):
     - A plain count (no unit, count, piece, each) uses the label's count word when it has one, else label servings.
     - A typed unit the server does not know (can, clove, pinch) keeps its word, counts like Count (no conversion) and never
       asks for a check, unless it is the label's own count word.
+    - custom=False (Claude and Search proposals) never returns a custom unit: a typed word that is not the label's own becomes a plain count.
     - A known measure that cannot be reached (a cup of a food with no volume, no weight) is unreachable:
       one label serving with check True, so the user confirms the amount."""
     a = _pos(amount)
@@ -343,6 +402,8 @@ def match_amount(food, amount, unit):
     try:
         u = unit_or_blank(unit) or None
     except ValueError:
+        u = None
+    if u is not None and not custom and is_custom(u) and not same_word(u, label_unit):
         u = None
     if u is not None and is_custom(u) and parse_unit(u) not in PLAIN_COUNTS:
         if same_word(u, label_unit):

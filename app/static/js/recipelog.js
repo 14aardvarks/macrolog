@@ -3,7 +3,7 @@
 // (the server rescales every row), move it to another meal, or remove it. Yesterday (params.copy): Log puts a copy on today.
 import { api } from './api.js';
 import { h, field, message, show, select, sourceBadge, kcalCue } from './dom.js';
-import { MEALS, MEAL_LABELS, fmtNum, qtyText, amountText, amountMemo } from './util.js';
+import { MEALS, MEAL_LABELS, fmtNum, qtyText, amountText, amountMemo, ingredientText } from './util.js';
 import { portionUnits, portionFraction, portionAmount, recipeAmountText, scaledLog, partsText, REMOVE_RECIPE_CONFIRM } from './recipeimport.js';
 import { fillMacroBar } from './chart.js';
 import { microGrid } from './micros.js';
@@ -85,9 +85,11 @@ export async function renderRecipeLog(root, params, ctx) {
 
   const parts = h('ul', { class: 'list recipe-ings' }, (log.parts || []).map((p) => {
     const badge = sourceBadge(p.source, true);
+    const name = p.brand ? p.name + ' (' + p.brand + ')' : p.name;
+    const bare = !p.unit || p.unit === 'count';  // a count reads "3 carrots", the amount joins the name
     return h('li', { class: 'item' }, h('div', { class: 'item-main' },
-      h('span', { class: 'item-title' }, p.brand ? p.name + ' (' + p.brand + ')' : p.name),
-      h('span', { class: 'item-sub' }, amountText(p.amount, p.unit) + ' - ' + fmtNum(p.kcal, 0) + ' kcal', badge ? ' ' : null, badge, kcalCue(p))));
+      h('span', { class: 'item-title' }, bare ? ingredientText(p.amount, p.unit, name) : name),
+      h('span', { class: 'item-sub' }, (bare ? '' : amountText(p.amount, p.unit) + ' - ') + fmtNum(p.kcal, 0) + ' kcal', badge ? ' ' : null, badge, kcalCue(p))));
   }));
   root.appendChild(h('section', { class: 'screen recipe-log-view' },
     h('div', { class: 'bar' }, h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back')),

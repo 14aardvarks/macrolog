@@ -174,6 +174,14 @@ export function servingText(n, format = amountFormat) { return qtyText(n, SERVIN
 // Short unit name for lists: "pct" shows as "% of serving".
 export function unitLabel(unit) { return unit === PCT ? '% of serving' : unit === 'count' ? 'count' : unit == null ? '' : unit; }
 
+// An ingredient with its amount for lists where the name comes next or alone: count shows no unit word ("3 carrots", never
+// "3 count carrots"), every other unit as amountText does ("1 cup flour"). A blank unit counts the same.
+export function ingredientText(amount, unit, name) {
+  const n = String(name == null ? '' : name).trim();
+  const bare = !unit || unit === 'count';
+  return bare ? [qtyText(amount, 'count'), n].filter(Boolean).join(' ') : [amountText(amount, unit), n].filter(Boolean).join(' ');
+}
+
 // "1/2 serving", "1 serving", "1 1/2 servings", "25% of a serving", "30 g", "1 1/2 cup", "2 slice".
 export function amountText(amount, unit, format) {
   const n = Number(amount);
@@ -1036,7 +1044,7 @@ export function cookServingsNext(shown, base, dir) {
 // Every row shows, matched or not, because it is still part of the dish. Returns { text, scaled }.
 export function cookIngredient(it, factor = 1) {
   const src = it && it.src;
-  const join = (amount, unit, name, note) => [qtyText(amount, unit), unit, name].filter((x) => x !== '' && x != null).join(' ') + (note ? ', ' + note : '');
+  const join = (amount, unit, name, note) => [qtyText(amount, unit), unit === 'count' ? '' : unit, name].filter((x) => x !== '' && x != null).join(' ') + (note ? ', ' + note : '');
   if (src && src.amount != null && Number(src.amount) > 0 && src.name) {
     return { text: join(Number(src.amount) * factor, src.unit || '', src.name, src.note), scaled: true };
   }

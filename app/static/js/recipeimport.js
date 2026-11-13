@@ -15,6 +15,9 @@ const UNIT_WORDS = {
   piece: 'piece', pieces: 'piece', package: 'package', packages: 'package', pkg: 'package', bunch: 'bunch',
   sprig: 'sprig', sprigs: 'sprig', handful: 'handful', jar: 'jar', jars: 'jar', bottle: 'bottle',
 };
+const KNOWN_LINE_UNITS = ['cup', 'tbsp', 'tsp', 'g', 'kg', 'oz', 'lb', 'ml', 'l', 'count'];
+const TASTE = /\b(?:to taste|as needed)\b/i;
+const TASTE_G = /\b(?:to taste|as needed)\b/gi;
 const FLOZ = /^(?:fl\.?\s*oz\.?|fluid\s+ounces?)\b/i;
 const AMOUNT = '(?:\\d+\\s+\\d+\\s*\\/\\s*\\d+|\\d+\\s*\\/\\s*\\d+|\\d*\\s*[\\u00bc-\\u00be\\u2150-\\u215e]|\\d+(?:[.,]\\d+)?)';
 const LEAD = new RegExp('^(' + AMOUNT + ')(?:\\s*(?:-|\\u2013|to)\\s*(' + AMOUNT + '))?\\s*');
@@ -47,12 +50,14 @@ export function parseIngredientLine(line) {
     }
   }
   let unit = null;
+  let word = '';  // a unit word the server does not know (clove, can): the line is a count and the word joins the name
   if (amount != null) {
     const fl = FLOZ.exec(rest);
     const w = /^([A-Za-z]+)\.?(?=\s|$)/.exec(rest);
     if (fl) { unit = 'floz'; rest = rest.slice(fl[0].length).trim(); }
     else if (w && UNIT_WORDS[UNIT_WORDS[w[1]] ? w[1] : w[1].toLowerCase()]) {  // "T" is a tablespoon, "t" a teaspoon
       unit = UNIT_WORDS[UNIT_WORDS[w[1]] ? w[1] : w[1].toLowerCase()];
+      if (KNOWN_LINE_UNITS.indexOf(unit) < 0) { word = w[1].toLowerCase(); unit = null; }
       rest = rest.slice(w[0].length).trim();
       if (/^of\s/i.test(rest)) rest = rest.slice(3);
     }
@@ -63,7 +68,19 @@ export function parseIngredientLine(line) {
   if (comma >= 0) { notes.push(rest.slice(comma + 1).trim()); rest = rest.slice(0, comma); }
   const taste = /\s+(to taste|as needed|for serving|optional)$/i.exec(rest.trim());
   if (taste) { notes.unshift(taste[1].toLowerCase()); rest = rest.trim().slice(0, -taste[0].length); }
-  const name = rest.replace(/\s+/g, ' ').trim() || text;
+  let name = rest.replace(/\s+/g, ' ').trim() || text;
+  const hasTaste = notes.some((n) => TASTE.test(n));
+  if (hasTaste || TASTE.test(name)) {  // salt to taste: no amount, no unit, never a count; "to taste" stays in the note
+    const clean = name.replace(TASTE_G, '').replace(/\s+/g, ' ').replace(/^[\s,;-]+|[\s,;-]+$/g, '') || name;
+    const kept = notes.filter(Boolean);
+    const note = kept.some((n) => TASTE.test(n)) ? kept.join(', ') : 'to taste, ' + kept.join(', ');
+    const nt = note.replace(/,\s*$/, '');
+    return { text: clean + ', ' + nt, amount: null, unit: null, name: clean, note: nt };
+  }
+  if (amount != null && !unit) {  // an amount with no known unit is a count (3 carrots); a word like clove stays in the name
+    unit = 'count';
+    if (word && !new RegExp('\\b' + word.replace(/s$/, ''), 'i').test(name)) name = name + ' ' + word;
+  }
   const note = notes.filter(Boolean).join(', ') || null;
   return { text, amount, unit, name, note };
 }
@@ -159,7 +176,7 @@ function rowAmount(row) { return amountBoxValue(row.amount, row.shown, row.exact
 export function rowText(row) {
   const a = rowAmount(row);
   const unit = cleanUnitText(row.unit);
-  const head = [a == null ? '' : qtyText(a, row.unit), unit === 'floz' ? 'fl oz' : unit, String(row.name || '').trim()].filter(Boolean).join(' ');
+  const head = [a == null ? '' : qtyText(a, row.unit), unit === 'floz' ? 'fl oz' : unit === 'count' ? '' : unit, String(row.name || '').trim()].filter(Boolean).join(' ');
   return head + (String(row.note || '').trim() ? ', ' + row.note.trim() : '');
 }
 
@@ -182,7 +199,7 @@ export function reviewBody(draft) {
     const raw = String(r.amount || '').trim();
     const amount = raw ? rowAmount(r) : null;
     if (raw && amount == null) return { error: 'Check the amount of ' + nm + '.' };
-    const unit = cleanUnitText(r.unit) || null;
+    const unit = cleanUnitText(r.unit) || (amount != null ? 'count' : null);  // an amount with no unit is a count
     const note = String(r.note || '').trim() || null;
     ingredients.push({ text: rowText(r).slice(0, 300), amount, unit, name: nm, note });
   }

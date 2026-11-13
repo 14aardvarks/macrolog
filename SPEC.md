@@ -867,10 +867,30 @@ POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log i
   use the label's count word, else servings, the same as before for piece or each. Nothing is guessed.
 - Recipe lines (meal_items src_*): amount and unit are optional everywhere. POST /api/meals/import and the review screen save a line with
   neither as plain text ("salt, to taste"); the review unit box is a unit control (count, weights and volumes, and Custom for any word the recipe
-  used or the user types). Claude's import leaves a missing unit null (`recipe_ai.clean_unit`, the tool text says never to guess). The Cooking view and
+  used or the user types). Claude's import leaves a missing unit null only without an amount (see Issue #44 below). The Cooking view and
   logs show them as text (cookIngredient keeps a line without an amount unchanged when scaling; a blank unit shows the bare amount).
 - Match Ingredients Edit Amount: an empty amount keeps the line as plain text (skips the row) instead of an error.
 - Not changed: the food form serving unit stays free text (count works typed), and the recipe total yield stays weight or volume only.
+- Issue #44 (v70): an amount with no unit is count, and Claude and Search never produce a custom unit. Only a unit the user types in the unit control
+  (Custom) stays custom.
+  - `units.line_unit(amount, unit, name)` -> (unit, name), used by `recipe_ai.clean_recipe` (text, photo and URL import share it): no amount gives
+    unit None; a known unit or alias gives its canonical unit (`units.known_unit`); no unit, blank or "none" gives count; any other word (clove, can,
+    slice, pinch) gives count and joins the name, plural for an amount other than 1 and once only ("garlic" becomes "garlic cloves").
+  - To taste: `units.taste_line` (a line whose note, unit, name or text has "to taste" or "as needed") gives amount None, unit None, the phrase in
+    `note` (kept note text after it) and the phrase removed from name; text becomes "salt, to taste". Never a count. `clean_recipe` and the local
+    splitter (`parseIngredientLine`) both do it. `core.import_row` (POST /api/meals/import, add item) only turns an amount with a blank unit into count
+    ("1" and "" give "count"; the stored text is built before that, so it never reads "3 count carrots"), so typed units survive a review save.
+  - `recipe_ai.clean_unit` returns a known unit or None. `units.match_amount(food, amount, unit, custom=True)`: with custom=False (`fit_amount`,
+    used by Claude match and match-search proposals) a typed word that is not the label's own count word counts as a plain count. A line unit of None
+    or blank with an amount is count already; the same for `matchAmount` in util.js (no Check Amount, label count word else servings).
+  - Prompts: `recipe_ai.UNIT_NAMES` (g kg oz lb ml l floz cup tbsp tsp count) is listed in the import instruction (text, photos, URL) as "Use only these
+    units", with "Use count when the line gives no unit" and the to taste rule; the unit, amount and note schema descriptions and the match tool's
+    unit description say the same. The schema keeps plain strings, so the strict union count is unchanged and the server enforces the list.
+  - Client: the splitter gives count for an amount with no unit and moves an unknown unit word (clove, can) into the name; `reviewBody` saves count for
+    an amount with a blank unit; `rowText` omits the word count. `util.ingredientText(amount, unit, name)` shows "3 carrots" (count or blank shows no
+    unit word); the Cooking view (`cookIngredient`) and recipe log parts use it. The stored unit stays count.
+  - Tests: tests/test_count_default.py (every normalization path, three import routes, both match routes), tests/ui/recipeimport.test.mjs and
+    tests/ui/units.test.mjs. Shell cache macrolog-shell-v70.
 
 ## Photos on Foods and Recipes (v68)
 

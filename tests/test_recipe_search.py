@@ -161,7 +161,7 @@ def test_amount_comes_from_the_recipe_line_and_a_bad_conversion_is_flagged(env):
     m = saved_recipe(env, [{"amount": 1.5, "unit": "cup", "name": "flour"}, {"amount": 2, "name": "egg"},
                            {"amount": 3, "unit": "pinch", "name": "flour"}, {"name": "flour"}])
     p = search(env, m).json()["proposals"]
-    assert [(x["amount"], x["unit"], x["check"]) for x in p] == [(1.5, "cup", False), (2, "egg", False), (3, "pinch", False), (1, "cup", True)]
+    assert [(x["amount"], x["unit"], x["check"]) for x in p] == [(1.5, "cup", False), (2, "egg", False), (3, "serving", False), (1, "cup", True)]
     assert "label serving" in p[3]["warnings"][0] and p[0]["grams"] == 187.5
     r = env["c"].patch(f"/api/meals/{m['id']}/items", json={"items": [
         {"id": m["items"][0]["id"], "food_id": p[0]["food"]["id"], "amount": p[0]["amount"], "unit": p[0]["unit"]},

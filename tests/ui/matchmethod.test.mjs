@@ -80,6 +80,6 @@ test('a removed Check Amount row comes back with check, and the snapshot is a co
 
 test('a typed ingredient line is split into amount, unit and name for Add Ingredient', () => {
   assert.deepEqual(parseIngredientLine('1 tbsp olive oil'), { text: '1 tbsp olive oil', amount: 1, unit: 'tbsp', name: 'olive oil', note: null });
-  assert.deepEqual(parseIngredientLine('2 eggs, beaten'), { text: '2 eggs, beaten', amount: 2, unit: null, name: 'eggs', note: 'beaten' });
+  assert.deepEqual(parseIngredientLine('2 eggs, beaten'), { text: '2 eggs, beaten', amount: 2, unit: 'count', name: 'eggs', note: 'beaten' });
   assert.equal(parseIngredientLine('   '), null);
 });

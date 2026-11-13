@@ -1685,6 +1685,8 @@ def import_row(raw) -> tuple:
     note = short_text(raw.get("note"), "note", 300)
     text = short_text(raw.get("text"), "text", 300) or " ".join(str(x) for x in (
         None if amount is None else f"{amount:g}", unit, name) if x) + (f", {note}" if note else "")
+    if amount is not None and amount > 0 and not (unit or "").strip():
+        unit = units.COUNT  # an amount with no unit is a count (3 carrots); a line with no amount stays plain text
     return text, amount, unit, name, note
 
 

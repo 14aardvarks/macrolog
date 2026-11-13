@@ -96,7 +96,7 @@ def test_import_url_returns_a_draft_with_its_source(env):
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["recipe"]["name"] == "Pancakes" and body["recipe"]["servings"] == 4
-    assert [(i["amount"], i["unit"], i["name"]) for i in body["recipe"]["ingredients"]] == [(1.5, "cup", "flour"), (2, None, "egg")]
+    assert [(i["amount"], i["unit"], i["name"]) for i in body["recipe"]["ingredients"]] == [(1.5, "cup", "flour"), (2, "count", "egg")]
     assert body["recipe"]["steps"] == ["Mix.", "Cook."] and body["recipe"]["source_url"] == URL
     assert body["warnings"] == ["Claude's note: Clear."]
     assert body["used_this_month"] == 1 and body["input_tokens"] == 4200 and body["key_source"] == "global"

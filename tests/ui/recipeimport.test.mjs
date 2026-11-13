@@ -9,20 +9,20 @@ const parts = (line) => { const r = parseIngredientLine(line); return r && [r.am
 
 test('ingredient lines split into amount, unit, name and note', () => {
   assert.deepEqual(parts('1 1/2 cups all-purpose flour, sifted'), [1.5, 'cup', 'all-purpose flour', 'sifted']);
-  assert.deepEqual(parts('2 eggs'), [2, null, 'eggs', null]);
+  assert.deepEqual(parts('2 eggs'), [2, 'count', 'eggs', null]);
   assert.deepEqual(parts('½ tsp salt'), [0.5, 'tsp', 'salt', null]);
   assert.deepEqual(parts('1½ Tbsp. olive oil'), [1.5, 'tbsp', 'olive oil', null]);
   assert.deepEqual(parts('2 T butter'), [2, 'tbsp', 'butter', null]);
   assert.deepEqual(parts('2 t vanilla'), [2, 'tsp', 'vanilla', null]);
   assert.deepEqual(parts('200g dark chocolate (70%)'), [200, 'g', 'dark chocolate', '70%']);
-  assert.deepEqual(parts('2-3 cloves garlic, minced'), [2.5, 'clove', 'garlic', 'minced']);
-  assert.deepEqual(parts('2 to 3 tomatoes'), [2.5, null, 'tomatoes', null]);
-  assert.deepEqual(parts('2 tomatoes'), [2, null, 'tomatoes', null]);
+  assert.deepEqual(parts('2-3 cloves garlic, minced'), [2.5, 'count', 'garlic cloves', 'minced']);
+  assert.deepEqual(parts('2 to 3 tomatoes'), [2.5, 'count', 'tomatoes', null]);
+  assert.deepEqual(parts('2 tomatoes'), [2, 'count', 'tomatoes', null]);
   assert.deepEqual(parts('8 fl oz milk'), [8, 'floz', 'milk', null]);
   assert.deepEqual(parts('1 cup of sugar'), [1, 'cup', 'sugar', null]);
   assert.deepEqual(parts('1,5 kg potatoes'), [1.5, 'kg', 'potatoes', null]);
   assert.deepEqual(parts('Salt to taste'), [null, null, 'Salt', 'to taste']);
-  assert.deepEqual(parts('- 3 large carrots'), [3, null, 'large carrots', null]);
+  assert.deepEqual(parts('- 3 large carrots'), [3, 'count', 'large carrots', null]);
   assert.deepEqual(parts('1. 2 cups rice'), [2, 'cup', 'rice', null]);
   assert.equal(parseIngredientLine('   '), null);
   assert.equal(parseIngredientLine('1 cup flour').text, '1 cup flour');
@@ -170,4 +170,32 @@ test('perServingText and logAmountText', () => {
   assert.equal(logAmountText(1, 4), 'Amounts are for 1 of 4 servings.');
   assert.equal(logAmountText(2, 1), 'Amounts are for 2 servings.');
   assert.equal(logAmountText(1, 1), '');
+});
+
+test('an amount with no unit is a count, and a unit word the server does not know joins the name', () => {
+  assert.deepEqual(parts('3 carrots'), [3, 'count', 'carrots', null]);
+  assert.deepEqual(parts('2 cloves garlic'), [2, 'count', 'garlic cloves', null]);
+  assert.deepEqual(parts('1 can black beans, drained'), [1, 'count', 'black beans can', 'drained']);
+  assert.deepEqual(parts('4 slices bread'), [4, 'count', 'bread slices', null]);
+  assert.deepEqual(parts('2 cloves garlic cloves'), [2, 'count', 'garlic cloves', null]);  // the word is not added twice
+  assert.deepEqual(parts('1 cup flour'), [1, 'cup', 'flour', null]);
+  assert.deepEqual(parts('1 count egg'), [1, 'count', 'egg', null]);
+  assert.deepEqual(parts('fresh basil'), [null, null, 'fresh basil', null]);  // no amount and no unit stays plain text
+  assert.equal(parseIngredientLine('3 carrots').text, '3 carrots');
+});
+
+test('a line that says to taste or as needed has no amount or unit and keeps to taste in the note', () => {
+  assert.deepEqual(parseIngredientLine('Salt to taste'), { text: 'Salt, to taste', amount: null, unit: null, name: 'Salt', note: 'to taste' });
+  assert.deepEqual(parseIngredientLine('1 tsp salt, to taste'), { text: 'salt, to taste', amount: null, unit: null, name: 'salt', note: 'to taste' });
+  assert.deepEqual(parseIngredientLine('2 pinches pepper to taste'), { text: 'pepper, to taste', amount: null, unit: null, name: 'pepper', note: 'to taste' });
+  assert.deepEqual(parseIngredientLine('Black pepper, as needed'), { text: 'Black pepper, as needed', amount: null, unit: null, name: 'Black pepper', note: 'as needed' });
+  assert.deepEqual(parseIngredientLine('Water (as needed), cold'), { text: 'Water, as needed, cold', amount: null, unit: null, name: 'Water', note: 'as needed, cold' });
+  const r = parseIngredientText('2 eggs\nSalt to taste');
+  assert.deepEqual(r.ingredients.map((i) => [i.amount, i.unit, i.name, i.note]), [[2, 'count', 'eggs', null], [null, null, 'Salt', 'to taste']]);
+});
+
+test('the review body makes an amount with no unit a count and leaves a to taste line blank', () => {
+  const d = reviewDraft({ name: 'Soup', ingredients: [{ text: '3 carrots', amount: 3, unit: 'count', name: 'carrots', note: null }, { text: 'salt, to taste', amount: null, unit: null, name: 'salt', note: 'to taste' }] });
+  const b = reviewBody(d).body.ingredients;
+  assert.deepEqual(b.map((i) => [i.text, i.amount, i.unit, i.note]), [['3 carrots', 3, 'count', null], ['salt, to taste', null, null, 'to taste']]);
 });

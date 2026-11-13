@@ -63,7 +63,7 @@ def test_import_keeps_blank_amount_and_unit_as_plain_text(a):
     src = [i["src"] for i in m["items"]]
     assert src[1] == {"text": "salt, to taste", "amount": None, "unit": None, "name": "salt", "note": "to taste"}
     assert src[2]["text"] == "a pinch of salt" and src[2]["amount"] is None
-    assert src[3]["amount"] == 1 and src[3]["unit"] is None  # an amount alone saves too
+    assert src[3]["amount"] == 1 and src[3]["unit"] == "count"  # an amount with no unit is a count
     assert m["needed"] == 4
 
 
