@@ -555,3 +555,24 @@ textarea { font: inherit; color: inherit; width: 100%; min-height: 160px; paddin
 .undo-text { flex: 1; min-width: 0; }
 .undo-bar .btn { min-height: 44px; border-color: var(--accent); color: var(--accent); font-weight: 600; }
 body.has-undo main { padding-bottom: 96px; }  /* room to scroll the last rows above the Undo notice */
+
+/* Photos on foods and recipes (js/photo.js). Fixed boxes, so nothing moves while an image loads. */
+.photo-section { margin: 0 0 12px; }
+.photo-section .row { margin-top: 8px; }
+.photo-frame { width: 100%; max-width: 360px; margin: 0 0 8px; }
+.photo-box { position: relative; width: 100%; height: 0; padding-top: 75%; overflow: hidden; border-radius: 12px;
+  background: var(--track); border: 1px solid var(--line); }
+.photo-box img { position: absolute; inset: 0; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; }
+.cook-photo { max-width: 480px; margin-bottom: 16px; }
+.photo-thumb { flex: none; width: 48px; height: 48px; border-radius: 8px; object-fit: cover; background: var(--track); cursor: pointer; margin-left: 8px; }
+.saved-item { position: relative; }
+.saved-item .photo-thumb { position: absolute; top: 10px; right: 4px; margin: 0; }
+.saved-item .photo-thumb ~ .item-title, .saved-item .photo-thumb ~ .item-sub { padding-right: 60px; min-height: 0; }
+.crop { max-width: 480px; max-height: 100%; overflow-y: auto; }
+.crop .chips { margin-bottom: 8px; }
+.crop-stage { display: flex; justify-content: center; margin: 8px 0; }
+.crop-canvas { display: block; touch-action: none; cursor: grab; border-radius: 8px; background: var(--track); box-shadow: 0 0 0 2px var(--accent); }
+.crop-canvas:active { cursor: grabbing; }
+.crop-zoom input { width: 100%; padding: 0; min-height: 44px; border: 0; background: transparent; }
+.crop .row .btn { flex: 1 1 auto; }
+.crop-overlay { align-items: center; }

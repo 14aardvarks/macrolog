@@ -5,6 +5,7 @@
 import { api } from './api.js';
 import { h, clear, field, message, show, select, sourceBadge, unitControl, kcalCue, extLink } from './dom.js';
 import { toJpeg } from './ai.js';
+import { importPhotoChoice, loadPhotoConfig } from './photo.js';
 import { confirmClaude } from './notice.js';
 import { chips } from './saved.js';
 import { stepsEditor } from './steps.js';
@@ -29,6 +30,7 @@ export async function renderImport(root, ctx) {
   const input = ctx.flow.input;
   let st = null;
   try { st = await api.aiStatus(); } catch (e) { st = { enabled: false }; }
+  loadPhotoConfig();  // fresh for the review screen's Use As Recipe Photo
   const aiOn = aiFeature(st, 'recipe');
   // Full Claude Use: Read With Claude (text or photos) runs without the extra confirm, and the matching right after the import
   // uses Claude on its own. The cost is shown where the setting is turned on; the text line shows it again, and at the monthly
@@ -130,7 +132,7 @@ export async function renderImport(root, ctx) {
       if (note.input.value.trim()) form.append('hint', note.input.value.trim());
       show(status, message('Claude is reading the recipe...'));
       const r = await api.recipeFromPhotos(form);
-      done(r.recipe, { warnings: r.warnings, cost: r.cost });
+      done(r.recipe, { warnings: r.warnings, cost: r.cost, photoFiles: chosen.slice() });  // offered as the recipe photo on review
     } catch (e) { show(status, message(e.status === 429 && direct ? CLAUDE_CAP_NOTE : e.message, 'error')); } finally { readPhotos.disabled = capped || !chosen.length; }
   }
 
@@ -188,7 +190,12 @@ export function renderReview(root, ctx) {
     const r = reviewBody(draft);
     if (r.error) { show(status, message(r.error, 'error')); return; }
     save.disabled = true;
-    try { const meal = await api.importMeal(r.body); ctx.flow.saved(meal); } catch (e) { save.disabled = false; show(status, message(e.message, 'error')); }
+    let meal;
+    try { meal = await api.importMeal(r.body); } catch (e) { save.disabled = false; show(status, message(e.message, 'error')); return; }
+    if (draft.photoBlob) {  // the recipe exists now; a failed photo upload never blocks matching (Add Photo on the recipe screen)
+      try { await api.mealPhoto(meal.id, draft.photoBlob); } catch (e) { /* the recipe is saved; the photo can be added later */ }
+    }
+    ctx.flow.saved(meal);
   } }, 'Save and Continue');
 
   root.appendChild(h('section', { class: 'screen import' }, bar(ctx), h('h1', null, 'Check the Recipe'),
@@ -205,6 +212,7 @@ export function renderReview(root, ctx) {
     h('h2', null, 'Meal Tags'),
     h('p', { class: 'sub' }, 'Tags decide where the recipe shows on Add. Untagged recipes show under every meal.'),
     chips(draft.meals, (m) => { draft.meals = m; }, status),
+    importPhotoChoice(draft),
     status,
     h('div', { class: 'row wrap' }, save, h('button', { class: 'btn ghost', type: 'button', onclick: ctx.flow.cancel }, 'Cancel'))));
   paintRows();

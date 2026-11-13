@@ -12,6 +12,7 @@ import { chips, renameRecipe, deleteRecipe } from './saved.js';
 import { stepsList, stepsEditor } from './steps.js';
 import { deletedHint, deletedTitle, daysLeftText, deleteForeverConfirm, restoredText, purgedText, sortDeleted, withoutDeleted } from './trash.js';
 import { closeUndo } from './undo.js';
+import { loadPhotoConfig, photoThumb, photoSection } from './photo.js';
 
 // The recipe's ingredients as a read only list: "Wheat flour" over "1 1/2 cup, 188 g". Skipped lines keep their own text.
 function ingredientList(meal) {
@@ -60,18 +61,21 @@ const listView = { meal: 'all', sort: 'name', deletedOpen: false };
 // ctx: { go, back, newRecipe(), importRecipe(), defaultMeal(), display, saveDisplay(patch) }
 // The owner filter (Mine, Shared With Me, All) is the Display setting recipe_owner, saved when it changes.
 export async function renderRecipes(root, ctx) {
-  const [list, trash] = await Promise.all([api.meals('all'), api.deletedMeals().catch(() => ({ meals: [] }))]);
+  const [list, trash] = await Promise.all([api.meals('all'), api.deletedMeals().catch(() => ({ meals: [] })), loadPhotoConfig()]);
   let all = list.meals;
   let owner = recipeOwner(ctx.display && ctx.display.recipe_owner);
   const listBox = h('div');
   let shown = PAGE_SIZE;
   let query = '';
   const open = (m) => ctx.go('recipeview', { mealId: m.id });
-  const row = (m) => h('li', { class: 'item' },
+  const row = (m) => {
+    const thumb = photoThumb(m, () => open(m));
+    return h('li', { class: thumb ? 'item has-thumb' : 'item' }, thumb,
     h('button', { class: 'item-main', type: 'button', onclick: () => open(m) },
       h('span', { class: 'item-title' }, m.name),
       h('span', { class: 'item-sub' }, recipeListSub(m, fmtNum(m.kcal, 0))),
       ownerText(m) ? h('span', { class: 'item-sub owner-line' }, ownerText(m)) : null));
+  };
   const q = h('input', { type: 'search', placeholder: 'Search recipes', 'aria-label': 'Search recipes', autocomplete: 'off', enterkeyhint: 'search' });
   const sortSel = select(RECIPE_SORTS.map((s) => ({ value: s, label: RECIPE_SORT_LABELS[s] })), listView.sort, { 'aria-label': 'Sort recipes' });
   const filterBox = h('div', { class: 'chips', role: 'group', 'aria-label': 'Meal filter' });
@@ -185,7 +189,7 @@ function recentlyDeleted(trash, restored) {
 // ingredients with Edit Ingredients (the Match Ingredients page); meal tags, Rename, Steps, Serving Size and Delete Recipe.
 // The checklist with Adjust is only for logging a recipe from Add.
 export async function renderRecipeView(root, params, ctx) {
-  const meal = await api.meal(params.mealId);
+  const [meal] = await Promise.all([api.meal(params.mealId), loadPhotoConfig()]);
   const status = h('div', { 'aria-live': 'polite' });
   const mealSel = select([{ value: 'none', label: MEAL_LABELS.none }, ...MEALS.map((m) => ({ value: m, label: MEAL_LABELS[m] }))],
     ctx.defaultMeal(), { 'aria-label': 'Meal' });
@@ -248,6 +252,7 @@ export async function renderRecipeView(root, params, ctx) {
     h('h1', null, meal.name),
     owned ? h('p', { class: 'owner-line' }, owned) : null,
     sub, per, sourceNode(meal.source_url),
+    photoSection(meal, 'meal', meal.can_edit !== false),
     h('h2', null, 'Log'),
     h('label', { class: 'field' }, h('span', null, 'Meal'), mealSel),
     h('div', { class: 'grid2 recipe-log' }, amount, h('label', { class: 'field' }, h('span', null, 'Of the recipe'), unitSel)),

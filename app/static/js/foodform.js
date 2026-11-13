@@ -1,6 +1,7 @@
 import { api } from './api.js';
 import { h, field, message, show, select, sourceLine, kcalCue } from './dom.js';
 import { refreshControl } from './refresh.js';
+import { photoSection } from './photo.js';
 import { DELETE_FOOD_CONFIRM, sentence, canLookUp, aiMicrosText, parseDecimal, fmtAmount, MEALS, MEAL_LABELS, guessMeal, MICROS } from './util.js';
 
 const NUM = [
@@ -52,6 +53,7 @@ export function renderFoodForm(root, opts, ctx) {
       : fromAi ? 'Fix anything that looks wrong and fill any empty boxes. Values are per label serving.'
       : 'Values are per label serving, as printed.'),
     warns.length ? h('ul', { class: 'warnings', role: 'alert' }, warns) : null,
+    edit ? photoSection(edit, 'food', true) : null,
     f.name, f.brand,
     h('div', { class: 'grid2' }, f.serving_amount, f.serving_unit),
     f.label_text,

@@ -40,6 +40,7 @@ async function request(method, path, opts = {}) {
 }
 
 const day = () => localDate();
+function photoForm(blob) { const f = new FormData(); f.append('photo', blob, 'photo.jpg'); return f; }
 const get = (p, query) => request('GET', p, { query });
 const send = (m, p, json) => request(m, p, { json: json === undefined ? {} : json });
 
@@ -114,5 +115,11 @@ export const api = {
   recipeFromUrl: (url, note) => send('POST', '/api/recipes/import/url', note ? { url, note } : { url }),
   recipeFromPhotos: (form) => request('POST', '/api/recipes/import/photos', { form }),
   matchSearch: (mealId, ids, source) => send('POST', '/api/recipes/' + mealId + '/match-search', source ? { item_ids: ids, source } : { item_ids: ids }),
+  // Photos (js/photo.js): multipart field "photo", always a JPEG the client made through a canvas.
+  photoConfig: () => get('/api/photo-config'),
+  foodPhoto: (id, blob) => request('POST', '/api/foods/' + id + '/photo', { form: photoForm(blob) }),
+  mealPhoto: (id, blob) => request('POST', '/api/meals/' + id + '/photo', { form: photoForm(blob) }),
+  deleteFoodPhoto: (id) => request('DELETE', '/api/foods/' + id + '/photo'),
+  deleteMealPhoto: (id) => request('DELETE', '/api/meals/' + id + '/photo'),
   matchIngredients: (mealId, ids) => send('POST', '/api/recipes/' + mealId + '/match', { item_ids: ids }),
 };

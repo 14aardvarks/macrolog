@@ -201,6 +201,9 @@ def init(c: sqlite3.Connection) -> None:
     if "group_id" not in {r[1] for r in c.execute("PRAGMA table_info(entries)")}:  # databases made before recipe logs were grouped
         c.execute("ALTER TABLE entries ADD COLUMN group_id INTEGER")  # null: a plain entry, or one logged from a recipe before this
     c.execute("CREATE INDEX IF NOT EXISTS entries_group ON entries(group_id)")
+    for table in ("foods", "meals"):  # databases made before photos: no photo (null), nothing rewritten
+        if "photo" not in {r[1] for r in c.execute(f"PRAGMA table_info({table})")}:
+            c.execute(f"ALTER TABLE {table} ADD COLUMN photo TEXT")
 
 
 # ---------- validation helpers ----------
@@ -272,6 +275,8 @@ def food_dict(row) -> dict:
     out["kcal_estimated"] = bool(out["kcal_estimated"])
     if not out["kcal_estimated"] and out["source"] in PARSED_SOURCES:  # saved before estimates: a 0 next to macros is missing energy
         out["kcal"], out["kcal_estimated"] = units.resolve_kcal(out["kcal"], out["carbs"], out["protein"], out["fat"], out["fiber"])
+    if "photo" in row.keys():  # the photo file name (app/photos.py), null = none
+        out["photo"] = row["photo"]
     if "ai_micros" in row.keys():  # micronutrients Claude estimated on Refresh Nutrients (Full Claude Use)
         out["ai_micros"] = [k for k in (row["ai_micros"] or "").split(",") if k in MICROS]
     return out
@@ -1296,7 +1301,8 @@ def meal_dict(c, row, user: dict | None = None) -> dict:
             "checks": sum(1 for i in needed if i["check"]), "steps": read_steps(row["steps"]),
             "complete": complete, "yield": yld, "portions": portions(servings, yld),
             "ingredient_grams": ingredient_grams(items, complete),
-            "shared": bool(row["shared"]), "source_url": row["source_url"] if "source_url" in row.keys() else None, "mine": mine, "can_edit": mine or bool(user and user.get("is_admin")),
+            "shared": bool(row["shared"]), "source_url": row["source_url"] if "source_url" in row.keys() else None,
+            "photo": row["photo"] if "photo" in row.keys() else None, "mine": mine, "can_edit": mine or bool(user and user.get("is_admin")),
             "owner": {"id": row["user_id"], "name": owner_name(c, row["user_id"])}}
 
 
@@ -1522,9 +1528,15 @@ def days_left(deleted_at: str) -> int:
 
 
 def hard_delete_meal(c, meal_id: int) -> None:
+    """Delete a recipe for good, with its rows and its photo file."""
+    from . import photos
+    cols = {r[1] for r in c.execute("PRAGMA table_info(meals)")}
+    row = c.execute("SELECT photo FROM meals WHERE id=?", (meal_id,)).fetchone() if "photo" in cols else None
     for table in ("meal_items", "recipe_tags", "recipe_logs"):
         c.execute(f"DELETE FROM {table} WHERE meal_id=?", (meal_id,))
     c.execute("DELETE FROM meals WHERE id=?", (meal_id,))
+    if row is not None:
+        photos.remove_file(row["photo"])
 
 
 def purge_deleted(c) -> int:
@@ -1588,6 +1600,9 @@ def duplicate_meal(meal_id: int, user: CurrentUser, body: dict | None = Body(Non
                         "VALUES(?,?,?,?,?,?,?,0,?)", (user["id"], name, row["meal"], row["servings"], row["steps"], row["yield_amount"],
                                                        row["yield_unit"], row["source_url"]))
         new = cur.lastrowid
+        if row["photo"]:  # the copy gets its own file, so removing either photo never touches the other
+            from . import photos
+            c.execute("UPDATE meals SET photo=? WHERE id=?", (photos.copy_file(row["photo"]), new))
         c.execute("INSERT INTO recipe_tags(meal_id, meal) SELECT ?, meal FROM recipe_tags WHERE meal_id=?", (new, meal_id))
         c.execute("INSERT INTO meal_items(meal_id, food_id, amount, unit, position, src_text, src_amount, src_unit, src_name, src_note, "
                   "skipped, needs_check) SELECT ?, food_id, amount, unit, position, src_text, src_amount, src_unit, src_name, src_note, "

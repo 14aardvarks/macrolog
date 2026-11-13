@@ -383,7 +383,7 @@ Managed keys (env fallback): local_login (LOCAL_LOGIN), oidc_issuer, oidc_client
 ai_global_key* (ANTHROPIC_API_KEY), ai_model, ai_monthly_cap (AI_MONTHLY_REQUEST_CAP, 0..100000), ai_price_in_per_mtok,
 ai_price_out_per_mtok (0..10000), ai_allow_label (AI_ALLOW_LABEL), ai_allow_lookup (AI_ALLOW_LOOKUP), ai_allow_recipe
 (AI_ALLOW_RECIPE) (bools, default on), ai_allow_recipe_url (AI_ALLOW_RECIPE_URL, bool, default off), ai_recipe_url_max_tokens
-(AI_RECIPE_URL_MAX_CONTENT_TOKENS, int 2000..100000, default 30000; read values are clamped to those bounds), fdc_api_key*. Starred keys are secrets: Fernet encrypted with a key derived from SECRET_KEY by
+(AI_RECIPE_URL_MAX_CONTENT_TOKENS, int 2000..100000, default 30000; read values are clamped to those bounds), fdc_api_key*, allow_photos (ALLOW_PHOTOS, bool, default off) and photo_max_mb (PHOTO_MAX_MB, int 1..20, default 5), see Photos. Starred keys are secrets: Fernet encrypted with a key derived from SECRET_KEY by
 HKDF-SHA256 (info `macrolog/secret-store/v1`); never returned, logged or put in exceptions; APIs report `{"set": bool}`. An undecryptable
 secret counts as unset (env fallback) and is flagged `unreadable`. Empty string stored = explicitly empty; deleting the row = use env.
 Environment only, never stored: SECRET_KEY, DB_PATH, PUBLIC_URL, TRUST_PROXY, COOKIE_SECURE. Also `user_secrets(user_id, name,
@@ -867,3 +867,48 @@ POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log i
   logs show them as text (cookIngredient keeps a line without an amount unchanged when scaling; a blank unit shows the bare amount).
 - Match Ingredients Edit Amount: an empty amount keeps the line as plain text (skips the row) instead of an error.
 - Not changed: the food form serving unit stays free text (count works typed), and the recipe total yield stays weight or volume only.
+
+## Photos on Foods and Recipes (v68)
+
+- Storage: files in `photos/` next to the database (`Path(DB_PATH).parent / "photos"`, made on demand), never blobs. `foods.photo` and `meals.photo`
+  (TEXT, null = none) hold the file name, added in place by core.init (nothing rewritten). Names are `secrets.token_urlsafe(24) + ".jpg"`, written to a
+  temp file then renamed, new on every replace, so served photos are cached as immutable. One photo per item. food_dict and meal_dict carry `photo`.
+- app/photos.py (router prefix `/api`, current_user). Settings: `allow_photos` (ALLOW_PHOTOS, bool, default OFF) and `photo_max_mb` (PHOTO_MAX_MB, int 1..20,
+  default 5, read values clamped). Admin page section Photos (adminutil.js PHOTO_SPECS) with hints stating both defaults.
+```
+GET    /api/photo-config -> {"enabled", "max_mb", "max_side": 1600}
+POST   /api/foods/{id}/photo   multipart field "photo" (same pattern as /api/ai/label) -> {"photo": name}
+POST   /api/meals/{id}/photo   multipart field "photo" -> {"photo": name}
+DELETE /api/foods/{id}/photo | /api/meals/{id}/photo -> {"photo": null}   # also fine when there is none
+GET    /api/photos/{name}  -> image/jpeg, Cache-Control "private, max-age=31536000, immutable", X-Content-Type-Options nosniff
+```
+- Switch off: uploads and deletes 403 "Photos are turned off on this server.", GET /api/photos 403; files and columns are kept. The client hides every
+  photo element (a browser may still hold a cached copy of a photo it saw before).
+- Validation (photos.process, in a thread): magic bytes (JPEG, PNG, WebP) and Pillow's decoded format must agree; the client filename and content
+  type are ignored. Raw size over photo_max_mb is 413. Width x height over PHOTO_MAX_PIXELS (50 MP) is 400 before decoding; Pillow's
+  MAX_IMAGE_PIXELS is set to the same and DecompressionBombWarning is raised as an error. Corrupt or truncated files are 400 "That file is not a
+  readable JPEG, PNG or WebP image.". Then ImageOps.exif_transpose, transparency flattened on white, RGB, thumbnail to 1600 px longest side (LANCZOS),
+  saved as JPEG quality 82 (72, then 62 while above 1 MB) with no exif, ICC or comments, so all metadata is gone.
+- Permissions: food photo: the creator of a custom or Claude food (foods.created_by, as PATCH /api/foods) or an admin; Open Food Facts and USDA foods have
+  no creator, so admin only; 404 unknown, 403 otherwise. This adds admin to the food edit rule for photos only. Recipe photo: core.writable_meal (owner,
+  or admin for a shared recipe; another user's private recipe 404, deleted recipe 404).
+- Visibility (GET /api/photos/{name}): name must match `[A-Za-z0-9_-]{16,64}\.jpg` (else 404, no path is ever built from other text), then a food with
+  that photo (any signed in user, foods are one shared table) or a recipe with it that is mine (Recently Deleted included) or shared and not deleted;
+  else 404, also for files nobody references.
+- Files follow the rows: replace writes the new file, saves the row, then deletes the old file (a failed upload keeps the old photo); delete removes the
+  file; Duplicate copies the file under a new name (photos.copy_file); restore keeps it; purge (Delete Forever and the 30 day auto purge,
+  core.hard_delete_meal) deletes it. Food soft delete keeps it.
+- Client: js/photomath.js (pure, tests/ui/photo.test.mjs): photoUrl, photoAlt ("Photo of <name>"), scaledSize (1600), frameSize (Square, Original no
+  taller than 1.25 widths), startView, clampView, panView, zoomView (keeps the point under the pinch, zoom 1..4), reframe, cropRect. js/photo.js:
+  loadPhotoConfig (cached 30 s, fresh after login and after an admin save), photoSection (heading Photo, the photo in a fixed 4:3 box at most
+  360 px wide with alt text, lazy; Add Photo or Replace Photo and Remove Photo with REMOVE_PHOTO_CONFIRM; only with can_edit), photoThumb (48 px,
+  decorative alt "", lazy, fixed size), photoFigure, cropPhoto (in page dialog, role dialog, focus trapped, Escape cancels; canvas drag with
+  pointer events, pinch, wheel, arrow keys and + or -; Zoom slider; Square or Original; Use Photo, Skip Crop, Cancel; output a JPEG through a
+  canvas at most 1600 px), importPhotoChoice.
+- Where: recipe screen (under the source line), Edit Food (own foods from Saved), Cooking view (top, larger box), thumbnails on the Recipes tab list,
+  Add's Recipes list and Saved favorites and My Foods. The file input has accept image/* and no capture attribute, so phones offer the camera and the library.
+- Import: after a screenshot import, the review screen has Recipe Photo with Use As Recipe Photo (Use Photo N when several) opening the crop dialog;
+  Save and Continue uploads the cropped photo after the recipe is saved (a failed upload does not block matching). No automatic crop and no Claude call
+  for it. URL imports never bring a photo.
+- Shell cache macrolog-shell-v68 (js/photo.js and js/photomath.js added). sw.js never handles /api, so photos never enter the shell cache.
+- Tests: tests/test_photos.py, tests/ui/photo.test.mjs, tests/test_static_shell.py.

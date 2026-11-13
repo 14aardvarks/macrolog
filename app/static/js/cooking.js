@@ -3,6 +3,7 @@
 // the Wake Lock API when the browser has it; without it nothing changes and nothing is shown.
 import { api } from './api.js';
 import { h, clear } from './dom.js';
+import { loadPhotoConfig, photoFigure } from './photo.js';
 import { servingText, cookBase, cookServingsNext, cookIngredients, cookSteps, cookToggle } from './util.js';
 
 // Asks for a screen wake lock and asks again when the page comes back to the front (the browser drops it when the page is hidden).
@@ -30,7 +31,7 @@ export function keepAwake(nav = typeof navigator === 'undefined' ? null : naviga
 
 // params: { mealId }. ctx: { back }. Returns the cleanup that releases the wake lock.
 export async function renderCooking(root, params, ctx) {
-  const meal = await api.meal(params.mealId);
+  const [meal] = await Promise.all([api.meal(params.mealId), loadPhotoConfig()]);
   const base = cookBase(meal);
   let shown = base;
   let checked = new Set();
@@ -63,6 +64,7 @@ export async function renderCooking(root, params, ctx) {
   root.appendChild(h('section', { class: 'screen cooking' },
     h('div', { class: 'bar' }, h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back')),
     h('h1', null, meal.name),
+    photoFigure(meal, 'cook-photo'),
     h('div', { class: 'cook-servings', role: 'group', 'aria-label': 'Servings' }, less, count, more),
     h('p', { class: 'sub' }, 'Tap an item to check it off.'),
     h('h2', null, 'Ingredients'),

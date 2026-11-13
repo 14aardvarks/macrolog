@@ -221,6 +221,16 @@ export const GUIDE = [
     'Use Default puts a setting back to its environment value.',
     'Activity lists the latest admin changes.',
   ] },
+  { heading: 'Photos', bullets: [
+    'An administrator turns on Allow Photos first. It is off by default.',
+    'Add Photo sits on the recipe screen and on Edit Food for your own foods.',
+    'Crop before saving: drag to move, zoom with the slider or a pinch.',
+    'Skip Crop keeps the whole photo. Large photos are made smaller first.',
+    'Replace Photo swaps it. Remove Photo deletes it after asking.',
+    'Owners and administrators can change a photo. Shared recipes show theirs to everyone.',
+    'After a screenshot import, Use As Recipe Photo picks one and crops it.',
+    'Web address imports never bring a photo.',
+  ] },
   { heading: 'Two Users', bullets: [
     'Each person has their own log, goals and settings.',
     'Foods are shared.',

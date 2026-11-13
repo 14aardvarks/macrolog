@@ -21,6 +21,7 @@ Dark mode follows the device setting, and the layout also works on desktop.
 - With Claude chosen as the source, nothing is sent while you type. Pressing Search sends the description (up to 200 characters, for example "Chipotle chicken burrito bowl") to Claude after the usual cost notice, and shows one estimated result. Tap it to check the values and save. All Sources never uses Claude.
 - Nutrients are stored per label serving. The amount picker offers the units the label allows, with grams, ounces, cups and tablespoons converted where the label makes that possible. Conversions that rely on an estimate are marked as estimated.
 - Custom foods can be created by hand.
+- Optional photos on foods and recipes (an administrator turns on Allow Photos, off by default). The recipe screen and Edit Food have Add Photo, Replace Photo and Remove Photo, with a crop step (Square or Original frame, drag and zoom, or Skip Crop). Thumbnails show on the Recipes tab, Add's Recipes list and Saved, and the Cooking view shows the photo at the top. After a screenshot import, Use As Recipe Photo crops one of the screenshots into the recipe photo. Web address imports never bring a photo.
 - The Today screen shows calorie and macro bars against your targets. A bar turns orange past 75% of its target with a Near Limit note, and red past 100% with an Over note. Entries are grouped by meal. Above the list, Scan is the green button and Add is plain. An Add Food button sits at the top, and each meal has small Add, Scan and Search buttons that open with that meal chosen.
 - Micronutrients (fiber, sugars, saturated fat, sodium, cholesterol, potassium, calcium, iron and vitamin D) come from Open Food Facts, USDA, Claude or your own entry, with per user daily targets.
 - Removing an entry on Today, or changing a portion, keeps your place on the screen, so you can remove the next item without scrolling down again. Focus moves to the next row's Remove button.
@@ -119,6 +120,8 @@ All settings can be given as environment variables in `.env`. Anything left empt
 | `AI_MONTHLY_REQUEST_CAP` | `100` | Live. Requests allowed per calendar month with the household key, counted for the whole household. |
 | `AI_PRICE_IN_PER_MTOK` | empty | Live. Input price of the model in USD per million tokens. Used only to show costs. Set both price variables, or the app shows "Cost not available". Look up the current price on Anthropic's pricing page. |
 | `AI_PRICE_OUT_PER_MTOK` | empty | Live. Output price of the model in USD per million tokens. |
+| `ALLOW_PHOTOS` | `0` | Live. Photos on foods and recipes. Off hides every photo and refuses uploads (403); stored files are kept. |
+| `PHOTO_MAX_MB` | `5` | Live. The largest photo upload accepted, 1 to 20 MB. Every photo is checked and re-encoded by the server (JPEG, PNG or WebP only, metadata removed, at most 1600 pixels on the longest side, JPEG quality 82). |
 | `FDC_API_KEY` | `DEMO_KEY` | Live, secret. USDA FoodData Central key. An empty value means `DEMO_KEY`. Use a real free key from https://api.data.gov/signup/ because `DEMO_KEY` is heavily rate limited. |
 
 Generate a `SECRET_KEY` with:
@@ -234,7 +237,7 @@ Users marked as administrators see an Admin page with Users, Sign-in, Claude and
 
 **Users.** Administrators can create local users, change names and emails, reset passwords, make or remove administrators, allow or refuse the household Claude key per user, unlink a user's single sign-on, and disable accounts. There is no delete, so history stays intact. A disabled user cannot sign in with a password or SSO, and any session they have stops working at once. Disabling, resetting a password, removing administrator rights and unlinking SSO all sign that user out everywhere. The last active administrator cannot be demoted or disabled, and nobody can disable their own account.
 
-**What is editable live.** Password sign-in on or off, the SSO issuer, client ID, client secret, button label and sign-up, the household Claude key, model, monthly cap and prices, the three Allow Claude switches, and the USDA key. Each Claude field shows its default under it. A saved value wins over `.env`. Clearing a field back to "use environment" removes the saved value, so `.env` (or the default) applies again. Changes take effect on the next request, without a restart. The household Claude key, the USDA key and the client secret are write only: the page shows only whether each one is set, and saving an empty value clears it.
+**What is editable live.** Password sign-in on or off, the SSO issuer, client ID, client secret, button label and sign-up, the household Claude key, model, monthly cap and prices, the Allow Claude switches, the USDA key, and Allow Photos with Max Photo Size. Each Claude field shows its default under it. A saved value wins over `.env`. Clearing a field back to "use environment" removes the saved value, so `.env` (or the default) applies again. Changes take effect on the next request, without a restart. The household Claude key, the USDA key and the client secret are write only: the page shows only whether each one is set, and saving an empty value clears it.
 
 **What stays in the environment and why.** `SECRET_KEY`, `DB_PATH`, `PUBLIC_URL`, `TRUST_PROXY` and `COOKIE_SECURE` are shown read only in the Admin page (`SECRET_KEY` only as set or not set) and need a restart to change. `SECRET_KEY` signs cookies and encrypts the saved secrets, and `DB_PATH` says where the settings themselves are stored, so neither can live in the database. `PUBLIC_URL`, `TRUST_PROXY` and `COOKIE_SECURE` decide which origins, client addresses and cookies are trusted, so someone with a stolen administrator session must not be able to change them.
 
@@ -272,12 +275,14 @@ The workflow builds linux/amd64 only. A comment in `.github/workflows/publish.ym
 
 ## Backups
 
-All data is one SQLite file, `macrolog.db`, in the `macrolog-data` volume. While the app runs there are also `-wal` and `-shm` files next to it. Copying the raw files while the app runs can miss recent changes. Use SQLite's backup function, which is safe while the app runs:
+All data is one SQLite file, `macrolog.db`, in the `macrolog-data` volume, plus a `photos` folder next to it when photos are used (the database keeps only each photo's file name). Back up the whole data folder. While the app runs there are also `-wal` and `-shm` files next to it. Copying the raw files while the app runs can miss recent changes. Use SQLite's backup function, which is safe while the app runs:
 
 ```
 docker compose exec macrolog python -c "import sqlite3; src = sqlite3.connect('/data/macrolog.db'); dst = sqlite3.connect('/tmp/backup.db'); src.backup(dst); dst.close(); src.close()"
 docker compose cp macrolog:/tmp/backup.db ./macrolog-backup.db
 ```
+
+Copy the photos folder too, for example `docker compose cp macrolog:/data/photos ./macrolog-photos`. Photo files are only ever added under new names or deleted, so copying them while the app runs is safe.
 
 You can also stop the app with `docker compose stop`, copy the volume contents, and start it again.
 
@@ -297,7 +302,7 @@ node --test tests/ui
 
 Run pytest as `python -m pytest`, so the `app` package is on the import path. The Python tests run offline and stub the network. The browser helper tests use Node's built-in test runner and need no npm packages.
 
-Layout: `app/` holds the FastAPI backend (`auth.py`, `admin.py`, `config.py`, `core.py`, `ai.py`, `lookup.py`, `units.py`, `db.py`). `app/static/` holds the frontend, which is plain HTML, CSS and ES modules with no build step.
+Layout: `app/` holds the FastAPI backend (`auth.py`, `admin.py`, `config.py`, `core.py`, `ai.py`, `lookup.py`, `units.py`, `db.py`, `photos.py`). Photos are decoded and re-encoded with Pillow, the one image library the server needs. `app/static/` holds the frontend, which is plain HTML, CSS and ES modules with no build step.
 
 ## Known gaps
 

@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import admin, ai, auth, config, core, db, recipe_ai
+from . import admin, ai, auth, config, core, db, photos, recipe_ai
 
 MIN_SECRET_LEN = 32
 STATIC = Path(__file__).parent / "static"
@@ -74,6 +74,7 @@ def create_app() -> FastAPI:
     app.include_router(ai.router)
     app.include_router(admin.router)
     app.include_router(recipe_ai.router)
+    app.include_router(photos.router)
 
     @app.get("/", include_in_schema=False)
     def index():

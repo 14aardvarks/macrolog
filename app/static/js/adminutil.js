@@ -199,6 +199,12 @@ export const CLAUDE_SPECS = [
   { key: 'ai_recipe_url_max_tokens', kind: 'int', label: 'Recipe Page Size Limit (Tokens)',
     hint: '30000 by default, from 2000 to 100000. The most page text Claude reads for one web address, about 4 characters per token. Longer pages are cut off, and the cost estimate assumes a page at this limit.' },
 ];
+export const PHOTO_SPECS = [
+  { key: 'allow_photos', kind: 'bool', label: 'Allow Photos',
+    hint: 'Off by default. Turn on to let users add photos to foods and recipes. When off, photos are hidden and uploads are refused. Stored photos are kept.' },
+  { key: 'photo_max_mb', kind: 'int', label: 'Max Photo Size (MB)',
+    hint: '5 by default, from 1 to 20. The largest photo upload accepted. Photos are resized to 1600 pixels and saved as JPEG.' },
+];
 export const FOOD_SPECS = [
   { key: 'fdc_api_key', kind: 'secret', label: 'USDA API key',
     hint: 'Without your own key, the shared demo key allows only 30 lookups per hour and 50 per day, for everyone on this server together. A free personal key allows 1,000 per hour. Get one at fdc.nal.usda.gov/api-key-signup.html, enter your email, and the key arrives by email within minutes. Foods already saved here never use a lookup again.' },

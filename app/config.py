@@ -76,6 +76,9 @@ MANAGED: dict[str, Setting] = {
     "ai_allow_recipe_url": Setting("AI_ALLOW_RECIPE_URL", "bool", "0"),
     "ai_recipe_url_max_tokens": Setting("AI_RECIPE_URL_MAX_CONTENT_TOKENS", "int", "30000", lo=2000, hi=100000),
     "fdc_api_key": Setting("FDC_API_KEY", "secret", "DEMO_KEY", max_len=256),
+    # Photos on foods and recipes (app/photos.py). Off by default; the size limit is the raw upload in MB.
+    "allow_photos": Setting("ALLOW_PHOTOS", "bool", "0"),
+    "photo_max_mb": Setting("PHOTO_MAX_MB", "int", "5", lo=1, hi=20),
 }
 
 SCHEMA = """

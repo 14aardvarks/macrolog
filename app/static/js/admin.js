@@ -1,8 +1,9 @@
 import { api } from './api.js';
 import { sentence } from './util.js';
 import { h, clear, field, message, show, extLink } from './dom.js';
+import { loadPhotoConfig } from './photo.js';
 import {
-  sourceLabel, userName, userBadges, initialValue, buildChanges, SIGNIN_SPECS, CLAUDE_SPECS, FOOD_SPECS, envRows, testLine, logLine, setupError,
+  sourceLabel, userName, userBadges, initialValue, buildChanges, SIGNIN_SPECS, CLAUDE_SPECS, FOOD_SPECS, PHOTO_SPECS, envRows, testLine, logLine, setupError,
   PRICING_URL, PRICING_LINK_TEXT,
 } from './adminutil.js';
 
@@ -149,6 +150,12 @@ function foodSection(cfg, note, onSaved) {
     h('p', { class: 'sub' }, 'DEMO_KEY is rate limited. Get a free key at api.data.gov.'), s.el);
 }
 
+function photoAdminSection(cfg, note, onSaved) {
+  const s = configSection('Photos', PHOTO_SPECS, cfg, note, { onSaved: (next, text) => { loadPhotoConfig(true); onSaved(next, text); } });
+  return h('section', { class: 'admin-sec' }, h('h2', null, 'Photos'),
+    h('p', { class: 'sub' }, 'Photos are files in the photos folder next to the database, so back up that folder too.'), s.el);
+}
+
 function serverSection(cfg) {
   const rows = envRows(cfg.environment);
   return h('section', { class: 'admin-sec' }, h('h2', null, 'Server Info'),
@@ -281,12 +288,13 @@ export async function renderAdmin(root, ctx) {
     cfgBox.appendChild(signInSection(cfg, where === 'signin' ? note : '', repaint('signin')));
     cfgBox.appendChild(claudeSection(cfg, where === 'claude' ? note : '', repaint('claude')));
     cfgBox.appendChild(foodSection(cfg, where === 'food' ? note : '', repaint('food')));
+    cfgBox.appendChild(photoAdminSection(cfg, where === 'photos' ? note : '', repaint('photos')));
     cfgBox.appendChild(serverSection(cfg));
   }
   paint(cfg0);
   const users = usersSection(me);
   const activity = activitySection();
-  // Sections in order: Users, Sign-in, Claude, Food data, Server info, Activity.
+  // Sections in order: Users, Sign-in, Claude, Food data, Photos, Server info, Activity.
   root.appendChild(h('section', { class: 'screen admin' },
     h('div', { class: 'bar' }, h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back')),
     h('h1', null, 'Admin'), users, cfgBox, activity));

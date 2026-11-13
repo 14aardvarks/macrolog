@@ -5,6 +5,7 @@ import { refreshAllControl } from './refresh.js';
 import { recipeSubText } from './recipeimport.js';
 import { deleteRecipeConfirm } from './trash.js';
 import { showUndo } from './undo.js';
+import { loadPhotoConfig, photoThumb } from './photo.js';
 import { DELETE_FOOD_CONFIRM, MEALS, MEAL_LABELS, toggleMeal, fmtNum, amountText, SAVED_FILTERS, SAVED_FILTER_LABELS, filterSavedItems, pageOf, PAGE_SIZE } from './util.js';
 
 const title = (f) => (f.brand ? f.name + ' (' + f.brand + ')' : f.name);
@@ -39,7 +40,7 @@ function favoriteRow(fav, again) {
     if (!window.confirm(DELETE_FOOD_CONFIRM)) return;
     try { await api.deleteFood(fav.food.id); await again(); } catch (e) { show(status, message(e.message, 'error')); }
   } }, 'Delete Food');
-  return h('li', { class: 'saved-item' }, h('span', { class: 'item-title' }, title(fav.food)), sourceLine(fav.food),
+  return h('li', { class: 'saved-item' }, photoThumb(fav.food), h('span', { class: 'item-title' }, title(fav.food)), sourceLine(fav.food),
     chips(fav.meals, async (m) => { await api.favoriteTags(fav.food.id, m); fav.meals = m; }, status), h('div', { class: 'row wrap' }, remove, del), status);
 }
 
@@ -89,14 +90,14 @@ function foodRowMine(food, ctx, again) {
     if (!window.confirm(DELETE_FOOD_CONFIRM)) return;
     try { await api.deleteFood(food.id); await again(); } catch (e) { show(status, message(e.message, 'error')); }
   };
-  return h('li', { class: 'saved-item' }, h('span', { class: 'item-title' }, title(food)),
+  return h('li', { class: 'saved-item' }, photoThumb(food), h('span', { class: 'item-title' }, title(food)),
     h('span', { class: 'item-sub' }, amountText(food.serving_amount, food.serving_unit) + ' - ' + fmtNum(food.kcal, 0) + ' kcal', ' ', sourceBadge(food.source, true), kcalCue(food)),
     h('div', { class: 'row wrap' }, h('button', { class: 'btn', type: 'button', onclick: () => ctx.go('editfood', { food }) }, 'Edit'),
       h('button', { class: 'btn', type: 'button', onclick: del }, 'Delete')), status);
 }
 
 export async function renderSaved(root, ctx) {
-  let data = await api.saved();
+  let [data] = await Promise.all([api.saved(), loadPhotoConfig()]);
   const view = { query: '', meal: 'all', shown: { favorites: PAGE_SIZE, recipes: PAGE_SIZE, foods: PAGE_SIZE } };
   // Remove, delete and rename reload the data and repaint in place, so the search text and filter stay.
   const again = async () => { data = await api.saved(); paint(); };
