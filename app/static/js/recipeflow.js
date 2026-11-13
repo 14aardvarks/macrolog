@@ -13,7 +13,7 @@ import {
   parseIngredientText, parseIngredientLine, reviewDraft, reviewBody, blankRow, matchState, matchCountText, toggleAll, toggleId,
   proposalText, matchWhat, importWhat, matchSnapshot, restoreBody, changedSince, nextUnmatched, pendingProposals,
   acceptAllText, notMatchedText, saveChoice, canSaveWithout, SAVE_WITHOUT_NONE, unmatchedIds, photoPick, PHOTOS_TEXT, MATCH_METHODS, matchMethod, matchRunText, methodBatch, matchDoneText, proposalHead,
-  importUnitOptions, AUTO_MATCH_LOADING, AUTO_MATCH_FAILED, autoMatchIds, autoMatchResult, autoMatchPlan, autoClaudeBatch, AUTO_CLAUDE_FAILED, AUTO_CLAUDE_CANCELLED, rateLimitNote,
+  importUnitOptions, AUTO_MATCH_LOADING, AUTO_MATCH_FAILED, autoMatchIds, autoMatchResult, autoMatchPlan, autoClaudeBatch, claudeKeep, claudeOffNote, previousCountText, PREVIOUS_CUE, AUTO_CLAUDE_FAILED, AUTO_CLAUDE_CANCELLED, rateLimitNote,
 } from './recipeimport.js';
 import { servingSizeEditor } from './servingsize.js';
 
@@ -233,7 +233,9 @@ export async function renderMatch(root, params, ctx) {
     matchBtn.textContent = matchRunText(method);
   }
   const acceptBtn = h('button', { class: 'btn primary', type: 'button', onclick: acceptAll }, '');
-  const acceptRow = h('div', { class: 'row wrap match-bulk' }, acceptBtn);
+  const previousNote = h('span', { class: 'sub match-previous' });
+  previousNote.hidden = true;  // how many suggestions come from an earlier recipe
+  const acceptRow = h('div', { class: 'row wrap match-bulk' }, acceptBtn, previousNote);
   const jumpBtn = h('button', { class: 'link-btn', type: 'button', onclick: jump }, 'Jump to Next Unmatched');
   const saveBtn = h('button', { class: 'btn primary', type: 'button', onclick: save }, 'Save');
   const backBtn = h('button', { class: 'btn', type: 'button', onclick: leave }, 'Back');
@@ -287,9 +289,12 @@ export async function renderMatch(root, params, ctx) {
   // cost as Match Selected With Claude), Search Then Claude asks Claude only about rows Search left without a proposal. It never
   // blocks: the page is already usable, and a failure or a cancel only leaves the rows unmatched (and ticked) with a quiet note.
   async function autoRun() {
-    // Full Claude Use turns the Search setting into Search Then Claude; without Claude that falls back to Search silently.
-    const eff = effectiveAutoMatch(ctx.display.auto_match, ctx.settings.full_claude === true);
-    const plan = autoMatchPlan(eff.forced && !aiOn ? 'search' : eff.value, aiOn);
+    // Full Claude Use turns the Search setting (the default, so it cannot be told from a choice) into Search Then Claude, and then
+    // Claude is asked about every row Search did not take from a previous recipe. Without Claude, Search runs and a note says why.
+    const full = ctx.settings.full_claude === true;
+    const eff = effectiveAutoMatch(ctx.display.auto_match, full);
+    const base = autoMatchPlan(eff.value, aiOn);
+    const plan = base.note ? { ...base, note: claudeOffNote(st) } : base;
     if (!plan.search && !plan.claude) return;
     busy = true;
     status.setAttribute('aria-busy', 'true');
@@ -317,20 +322,20 @@ export async function renderMatch(root, params, ctx) {
         }
       }
       if (plan.claude) {
-        const b = autoClaudeBatch(meal.items, props);
+        const b = autoClaudeBatch(meal.items, props, full);
         let left = null;  // the monthly cap: automatic Claude steps stop there with one quiet note, nothing is sent
         if (b.send.length) { try { left = (await api.aiStatus()).remaining; } catch (e) { left = null; } }
         if (b.send.length && left != null && left <= 0) {
           text = [text, CLAUDE_CAP_NOTE].filter(Boolean).join(' ');
         } else if (b.send.length) {
           // Full Claude Use: the matching after an import never asks; otherwise the usual confirm
-          if (ctx.settings.full_claude !== true && !(await confirmClaude(ctx.settings, { what: matchWhat(b.send.length), query: { match_rows: b.send.length } }))) {
+          if (!full && !(await confirmClaude(ctx.settings, { what: matchWhat(b.send.length), query: { match_rows: b.send.length } }))) {
             text = [text, AUTO_CLAUDE_CANCELLED].filter(Boolean).join(' ');
           } else {
             show(status, message('Claude is matching ' + b.send.length + (b.send.length === 1 ? ' ingredient...' : ' ingredients...')));
             try {
               const r = await api.matchIngredients(meal.id, b.send);
-              keep(r);
+              keep({ ...r, proposals: claudeKeep(r.proposals, props) });
               text = matchDoneText('claude', Object.values(props), b.rest.length, r.cost != null ? 'This cost about ' + centsText(r.cost) + '.' : '');
             } catch (e) { text = [text, AUTO_CLAUDE_FAILED].filter(Boolean).join(' '); }
           }
@@ -472,9 +477,10 @@ export async function renderMatch(root, params, ctx) {
     const bySearch = p.method === 'search';
     return h('div', { class: 'proposal', role: 'group', 'aria-label': bySearch ? 'Search suggestion' : 'Claude suggestion' },
       h('p', { class: 'proposal-head' }, proposalHead(p) + ' ', p.food ? sourceBadge(p.food.source, true) : null,
-        p.kind === 'candidate' && !bySearch ? h('span', { class: 'src-est' }, ' Database Match') : null),
+        p.kind === 'candidate' && !bySearch && !p.from_previous ? h('span', { class: 'src-est' }, ' Database Match') : null,
+        p.from_previous ? h('span', { class: 'src-est previous-cue' }, ' ' + PREVIOUS_CUE) : null),
       h('p', null, proposalText(p) + (p.food ? kcal : '')),
-      p.food && p.note ? h('p', { class: 'sub' }, sentence(p.note)) : null,
+      p.food && p.note && !p.from_previous ? h('p', { class: 'sub' }, sentence(p.note)) : null,
       est && !p.food.id ? h('p', { class: 'sub' }, 'No database food fitted, so this is an estimate. Accept saves it as a Claude food.') : null,
       p.warnings && p.warnings.length ? h('ul', { class: 'warnings' }, p.warnings.map((w) => h('li', null, sentence(w)))) : null,
       h('div', { class: 'row wrap' },
@@ -556,9 +562,12 @@ export async function renderMatch(root, params, ctx) {
     matchBtn.disabled = busy || !selected.length;
     matchHint.hidden = selected.length > 0;
     jumpBtn.hidden = nextUnmatched(meal.items, current) < 0;
-    const pending = pendingProposals(meal.items, props).length;
-    acceptRow.hidden = !pending;
-    acceptBtn.textContent = acceptAllText(pending);
+    const pending = pendingProposals(meal.items, props);
+    acceptRow.hidden = !pending.length;
+    acceptBtn.textContent = acceptAllText(pending.length);
+    const fromBefore = previousCountText(pending);
+    previousNote.textContent = fromBefore;
+    previousNote.hidden = !fromBefore;
   }
   function paintRows() {
     clear(list);

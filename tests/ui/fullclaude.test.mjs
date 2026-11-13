@@ -4,7 +4,7 @@ import {
   effectiveAutoMatch, autoClaudePlan, fullClaudeRows, fullClaudePriceNote, aiMicrosText, microsWhat, recipeTextCostLine, fullClaudeWarning,
   noticeLines, bulkSummary, CLAUDE_CAP_NOTE, FALLBACK_TEXT, FALLBACK_FAILED, sentence,
 } from '../../app/static/js/util.js';
-import { autoMatchPlan } from '../../app/static/js/recipeimport.js';
+import { autoMatchPlan, autoClaudeBatch, claudeKeep, claudeOffNote, previousCountText, AUTO_CLAUDE_SWITCH, AUTO_CLAUDE_NO_KEY } from '../../app/static/js/recipeimport.js';
 import { GUIDE } from '../../app/static/js/guide.js';
 
 const ON = { full_claude: true, confirm_ai: true };
@@ -19,11 +19,42 @@ test('effectiveAutoMatch: Full Claude Use turns only Search (or unset) into Sear
   assert.deepEqual(effectiveAutoMatch('off', false), { value: 'off', forced: false });
 });
 
-test('a forced Search Then Claude without Claude falls back to Search silently', () => {
-  const eff = effectiveAutoMatch('search', true);
-  assert.deepEqual(autoMatchPlan(eff.forced ? 'search' : eff.value, false), { search: true, claude: false, note: '' });
-  assert.equal(autoMatchPlan(eff.value, true).claude, true);
-  assert.ok(autoMatchPlan('search_claude', false).note);  // an explicit choice still says so
+test('Full Claude Use auto match: Search Then Claude asks Claude even when Search proposed a food for every row (issue #40)', () => {
+  const items = [1, 2, 3].map((id) => ({ id, food: null, skipped: false, check: false }));
+  const props = { 1: { item_id: 1, food: { id: 7 } }, 2: { item_id: 2, food: { id: 8 } }, 3: { item_id: 3, food: { id: 9 } } };
+  const eff = effectiveAutoMatch('search', true);  // the default and a stored explicit search look the same
+  const plan = autoMatchPlan(eff.value, true);
+  assert.deepEqual(plan, { search: true, claude: true, note: '' });
+  assert.deepEqual(autoClaudeBatch(items, props, false).send, []);  // the old plan: real Search data covers every row, Claude never ran
+  assert.deepEqual(autoClaudeBatch(items, props, true).send, [1, 2, 3]);  // Full Claude Use asks about all of them
+  assert.deepEqual(autoClaudeBatch(items, {}, true).send, [1, 2, 3]);
+});
+
+test('a proposal from a previous recipe is not sent to Claude, and Claude finding nothing keeps the Search proposal', () => {
+  const items = [1, 2, 3].map((id) => ({ id, food: null, skipped: false, check: false }));
+  const props = { 1: { item_id: 1, food: { id: 7 }, from_previous: true }, 2: { item_id: 2, food: { id: 8 } }, 3: { item_id: 3, food: null } };
+  assert.deepEqual(autoClaudeBatch(items, props, true).send, [2, 3]);
+  const answers = [{ item_id: 2, food: null }, { item_id: 3, food: null }, { item_id: 4, food: { id: 1 } }];
+  assert.deepEqual(claudeKeep(answers, props).map((p) => p.item_id), [3, 4]);  // row 2 keeps Search, row 3 had nothing to lose
+  assert.deepEqual(claudeKeep(undefined, props), []);
+});
+
+test('a skipped Claude always has a reason: switch off, no key, and the cap note', () => {
+  assert.equal(claudeOffNote(st({ features: { recipe: false } })), AUTO_CLAUDE_SWITCH);
+  assert.equal(claudeOffNote(st({ enabled: false })), AUTO_CLAUDE_NO_KEY);
+  assert.equal(claudeOffNote(null), AUTO_CLAUDE_NO_KEY);
+  for (const t of [AUTO_CLAUDE_SWITCH, AUTO_CLAUDE_NO_KEY, CLAUDE_CAP_NOTE]) assert.ok(/^[A-Z].*\.$/.test(t) && !t.includes('\u2014'));
+  assert.notEqual(AUTO_CLAUDE_SWITCH, AUTO_CLAUDE_NO_KEY);
+  assert.ok(autoMatchPlan('search_claude', false).note);  // Full Claude Use without Claude still falls back to Search with a note
+  assert.equal(autoMatchPlan('search_claude', false).search, true);
+});
+
+test('previousCountText counts the suggestions from earlier recipes', () => {
+  const p = (from) => ({ p: { food: {}, ...(from ? { from_previous: true } : {}) } });
+  assert.equal(previousCountText([p(false)]), '');
+  assert.equal(previousCountText([]), '');
+  assert.equal(previousCountText([p(true), p(false)]), '1 of these is From Previous Recipe.');
+  assert.equal(previousCountText([p(true), p(true)]), '2 of these are From Previous Recipe.');
 });
 
 test('autoClaudePlan: setting, switch, key, cap and confirm', () => {

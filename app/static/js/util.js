@@ -1065,8 +1065,9 @@ export function cookToggle(checked, key) {
 
 export const CLAUDE_CAP_NOTE = sentence('Monthly Claude limit reached, so Claude was not used');
 
-// Auto-Match After Import with Full Claude Use: Search (the default) becomes Search Then Claude. An explicit Claude, Search Then
-// Claude or Off is never changed. forced: Full Claude Use made the change, so a missing Claude falls back to Search silently.
+// Auto-Match After Import with Full Claude Use: Search (the default, which a stored explicit "search" cannot be told from) becomes
+// Search Then Claude. Claude, Search Then Claude and Off are never changed. forced: Full Claude Use made the change. Under Full
+// Claude Use the Claude step asks about every row Search did not take from a previous recipe (see autoClaudeBatch).
 export function effectiveAutoMatch(setting, full) {
   const s = autoMatch(setting);
   return full && s === 'search' ? { value: 'search_claude', forced: true } : { value: s, forced: false };

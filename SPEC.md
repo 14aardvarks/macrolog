@@ -654,6 +654,24 @@ POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log i
   otherwise only Steps (read only) and Make It Yours with Duplicate. Add, Recipes lists mine and shared (owner in the sub line, delete only on mine).
   Shell cache macrolog-shell-v57 (v57, issue #32: amount boxes keep the exact stored value until edited).
 
+## From Previous Recipe (v64, issue #40)
+
+- `app/ingredients.py`: `words()` (the Search normalizer, lowercase words with light singulars, now shared by recipe_ai `_words`) and `key()`: lowercase, text in
+  brackets and after the first comma dropped, numbers, fractions and units (cup, tbsp, g, clove, can ...) and preparation or size words (chopped, fresh, large ...)
+  dropped, plural to singular (ies to y, oes, s; ss, us and is endings stay), words sorted. Words that change the food (whole, dried, brown, ground) stay.
+- `recipe_ai.previous_matches(user_id, names, exclude_meal, source)` runs one SELECT over meal_items joined to meals and foods (existing meal_items_meal
+  index; no schema change): recipes with user_id = me or shared = 1, rows matched (food_id set, not skipped, src_name set), the food not deleted
+  (foods.deleted = 0 and not in deleted_foods for me), not the recipe being matched, and f.source = source when the Search source is off or fdc. Names are
+  keyed in Python and only the wanted keys kept. Per key the food wins by newest recipe id, then times matched, then newest row id (meal_items has no
+  timestamp, so recipe id is the recency). Other users' private recipes are never read. No query when no name has a key.
+- match-search: a row with an earlier match gets that food first (kind candidate, note "Matched to this food in an earlier recipe", `from_previous: true`), with no
+  network lookup for it, so it is also faster and never rate limited. Other rows search as before.
+- POST /api/recipes/{id}/match (Claude): the earlier food becomes candidate 1 for its row (one per row, at most 15), the row block gets `earlier match: [1]`
+  and the instruction asks Claude to prefer it. A proposal that ends on that food has `from_previous: true`; when Claude chooses no candidate (null, missing
+  row or an estimate) the earlier food is used instead. Claude may still pick another candidate when the line clearly differs.
+- Client: Match Ingredients shows the cue "From Previous Recipe" in the proposal head (instead of Database Match), and under Accept N Suggested Matches the
+  line "N of these are From Previous Recipe." (`previousCountText`, `PREVIOUS_CUE`). Tests: tests/test_previous_match.py, tests/ui/fullclaude.test.mjs. Shell cache macrolog-shell-v64.
+
 ## Auto-Match After Import
 
 - Settings, Display has Auto-Match After Import (select: Search, Claude, Search Then Claude, Off; saved at once like the other Display choices, per user,
@@ -664,7 +682,7 @@ POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log i
   `DEFAULT_DISPLAY.auto_match`; recipeimport.js `autoMatchOn` (every value except off), `autoMatchPlan(setting, aiOn)`, `autoClaudeBatch`.
 - Claude options (same flow as Match Selected With Claude, no new route): `autoRun` computes the plan with aiOn = Claude is set up and the recipe switch is on.
   Search runs Search only. Claude asks Claude about every unmatched row (up to 15, the rest stay ticked). Search Then Claude runs Search first, then asks Claude
-  about the unmatched rows that have no food proposal (up to 15). `confirmClaude` runs first (respects confirm_ai, shows the request count and cost, blocks past the
+  about the unmatched rows that have no food proposal (up to 15; with Full Claude Use about every row not taken from a previous recipe, see Full Claude Use). `confirmClaude` runs first (respects confirm_ai, shows the request count and cost, blocks past the
   monthly cap); Cancel leaves those rows unmatched and ticked with a quiet note, keeping any Search proposals. With Claude not set up or the switch off, Claude and
   Search Then Claude run Search only and add the note "Claude is not available, so Search ran instead." A Claude failure keeps the Search proposals and adds a quiet
   note. Proposals are Claude Suggests like a manual run, never accepted automatically; Accept N Suggested Matches works as before.
@@ -712,7 +730,13 @@ POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log i
   reached, so Claude was not used.", util.js `CLAUDE_CAP_NOTE`); with Confirm before using Claude on the usual notice with the estimated cost
   comes first, with it off it runs quietly (util.js `autoClaudePlan` gives off, cap, confirm or run; notice.js `autoClaude`).
   1. Auto-Match After Import (ai_allow_recipe): util.js `effectiveAutoMatch` turns Search (or an unset or bad value) into Search Then Claude;
-     an explicit Claude, Search Then Claude or Off is never changed. Without Claude the forced choice runs Search with no note.
+     an explicit Claude, Search Then Claude or Off is never changed (a stored explicit "search" is the default and cannot be told from a choice, so it
+     is treated as unset). Issue #40: Search Then Claude used to ask Claude only about rows Search left without a proposal, and real USDA and Open Food
+     Facts data proposes something for every row, so Claude never ran and nothing said so (the mocks only missed a row or two). Under Full Claude Use
+     `autoClaudeBatch(items, props, true)` now asks about every unmatched row except proposals with `from_previous`; `claudeKeep` keeps a Search
+     proposal when Claude finds no food for that row. Without Claude the run does Search and always shows a note (`claudeOffNote`: recipe switch off
+     "Claude recipe matching is turned off on this server, so Search ran instead.", else "Claude is not set up for you, so Search ran instead."); at
+     the cap `CLAUDE_CAP_NOTE`; a failure `AUTO_CLAUDE_FAILED`. A skip is never silent.
   2. A search on Add with no result (remote search, text up to 200 characters, ai_allow_lookup) asks POST /api/ai/lookup for one estimate,
      shown with the Claude badge, Estimate and "Nothing was found in the databases, so this is a Claude Estimate." plus Enter Manually; kept for
      the session (state.fallback) so Back asks nothing again. A barcode Not Found screen cannot describe the food, so it offers a typed lookup

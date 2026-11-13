@@ -228,6 +228,10 @@ export const AUTO_MATCH_FAILED = sentence('Suggestions could not be found just n
 export const RATE_LIMIT_NOTE = sentence('USDA lookup limit reached. Rows below were not searched');
 
 export const AUTO_CLAUDE_OFF = sentence('Claude is not available, so Search ran instead');
+// Why Claude was skipped, so a skip is never silent: the administrator's switch for recipe import and matching, else no usable key.
+export const AUTO_CLAUDE_SWITCH = sentence('Claude recipe matching is turned off on this server, so Search ran instead');
+export const AUTO_CLAUDE_NO_KEY = sentence('Claude is not set up for you, so Search ran instead');
+export const claudeOffNote = (st) => (st && st.features && st.features.recipe === false ? AUTO_CLAUDE_SWITCH : AUTO_CLAUDE_NO_KEY);
 export const AUTO_CLAUDE_FAILED = sentence('Claude could not match the rest just now. Match Selected With Claude tries again');
 export const AUTO_CLAUDE_CANCELLED = sentence('Claude was not asked. Match Selected With Claude runs it later');
 
@@ -248,9 +252,25 @@ export function autoMatchPlan(setting, aiOn) {
 export const autoMatchIds = (items) => methodBatch('search', unmatchedIds(items)).send;
 
 // The rows to ask Claude about: unmatched rows with no proposal (nothing waiting, or a Search Result with no food), up to the Claude
-// cap. send: ask now, rest: stay ticked for a manual Match Selected With Claude.
-export const autoClaudeBatch = (items, proposals) =>
-  methodBatch('claude', unmatchedIds(items).filter((id) => !(proposals && proposals[id] && proposals[id].food)));
+// cap. all (Full Claude Use): rows Search already proposed a food for are asked too, because Search nearly always finds something
+// and Claude would otherwise never run; only a proposal from a previous recipe is left alone. send: ask now, rest: stay ticked
+// for a manual Match Selected With Claude.
+export const autoClaudeBatch = (items, proposals, all) =>
+  methodBatch('claude', unmatchedIds(items).filter((id) => {
+    const p = proposals && proposals[id];
+    return !(p && p.food) || (!!all && !p.from_previous);
+  }));
+
+// Claude's answers to keep: a row Claude found no food for keeps the Search proposal it already has.
+export const claudeKeep = (answers, proposals) =>
+  (answers || []).filter((p) => p.food || !(proposals && proposals[p.item_id] && proposals[p.item_id].food));
+
+// "2 of these are From Previous Recipe." under Accept Suggested Matches, else ''.
+export function previousCountText(pending) {
+  const n = (pending || []).filter((x) => x.p && x.p.from_previous).length;
+  return n ? sentence(n === 1 ? '1 of these is From Previous Recipe' : n + ' of these are From Previous Recipe') : '';
+}
+export const PREVIOUS_CUE = 'From Previous Recipe';
 
 // What to do with the answer. Rows that were matched or skipped while it ran are left alone. found: rows that got a food (these
 // are un-ticked); the rest stay ticked. fresh: the proposals to keep waiting.

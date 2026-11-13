@@ -283,3 +283,14 @@ def test_auto_match_claude_route_honors_switch_key_and_cap(env, monkeypatch):
     monkeypatch.delenv("ANTHROPIC_API_KEY")
     assert env["a"].post(f"/api/recipes/{m['id']}/match", json=body).status_code == 503
     assert env["requests"] == []
+
+
+def test_full_claude_survives_other_settings_saves_and_gives_the_client_what_auto_match_reads(env):
+    full(env)
+    assert env["a"].put("/api/settings", json={"start_screen": "search", "confirm_ai": False}).json()["full_claude"] is True
+    assert env["a"].put("/api/settings/display", json={"auto_match": "search"}).status_code == 200
+    assert env["a"].get("/api/settings").json()["full_claude"] is True  # a stored explicit Search is the default, not a choice
+    assert env["a"].get("/api/settings/display").json()["auto_match"] == "search"
+    st = env["a"].get("/api/ai/status").json()  # the client plan reads exactly these
+    assert st["enabled"] is True and st["features"]["recipe"] is True and st["remaining"] > 0
+    assert env["b"].get("/api/settings").json()["full_claude"] is False

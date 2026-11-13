@@ -107,6 +107,7 @@ export const GUIDE = [
     'Search is the default. It needs no Claude and costs nothing. Up to 40 rows.',
     'Right after an import, Search runs once for you, so suggestions are waiting.',
     'Settings, Display, Auto-Match After Import can use Claude too, or be Off.',
+    'An ingredient you matched in an earlier recipe is proposed first, marked From Previous Recipe.',
     'Claude choices ask first and show the cost. Cancel leaves rows unmatched.',
     'Without Claude set up, Search runs alone and says so.',
     'If USDA is at its limit, a note says which rows were not searched.',
@@ -170,7 +171,9 @@ export const GUIDE = [
   ] },
   { heading: 'Full Claude Use', bullets: [
     'Settings, Claude, Full Claude Use lets Claude help on its own. It is off by default.',
-    'Auto-Match After Import set to Search then runs as Search Then Claude.',
+    'Auto-Match After Import set to Search runs as Search Then Claude, unless you chose Off.',
+    'Claude then checks every row, except those taken from a previous recipe.',
+    'If Claude is skipped, a note says why: switch off, no key, or the limit.',
     'A search with no result asks Claude, marked Claude Estimate.',
     'A barcode not found offers a typed Claude estimate.',
     'Refresh Nutrients lets Claude fill blanks the source left. It never overwrites values.',

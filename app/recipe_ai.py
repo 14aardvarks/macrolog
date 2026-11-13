@@ -22,7 +22,7 @@ from typing import Annotated, Any, Optional
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile
 
-from . import ai, core, db, deps, lookup, units
+from . import ai, core, db, deps, ingredients, lookup, units
 
 router = APIRouter(prefix="/api/recipes", dependencies=[Depends(deps.current_user)])
 CurrentUser = Annotated[dict, Depends(deps.current_user)]
@@ -124,6 +124,10 @@ MATCH_INSTRUCTION = (
     "then set choice to its number and estimate to null. Only when no candidate fits, set choice to null and give an estimate "
     "for one household serving. Give amount and unit for how much of the food the line means, using the line's own unit when it "
     "has one. For water, ice, or salt and pepper to taste, set choice and estimate to null and say so in note."
+)
+PREVIOUS_INSTRUCTION = (
+    " A row marked \"earlier match\" names the candidate this user already chose for the same ingredient in an earlier recipe. "
+    "Prefer that candidate and choose it unless the line clearly means a different food."
 )
 
 
@@ -262,6 +266,45 @@ def item_query(it) -> str:
     return (it["src_name"] or it["src_text"] or "").strip()[:100]
 
 
+PREVIOUS_NOTE = "Matched to this food in an earlier recipe"
+
+
+def previous_matches(user_id: int, names, exclude_meal: Optional[int] = None, source: str = "all") -> dict[str, dict]:
+    """From Previous Recipe: {ingredient key: food} for the imported names that an earlier recipe already matched, in one
+    query. Only recipes the user can see count (their own and shared ones, never anyone else's private recipe), only rows
+    still matched to a food (not skipped, not unmatched) whose food is not deleted for this user. The food most recently
+    matched wins (latest recipe, the newest recipe id), a tie goes to the food matched most often, then to the newer row.
+    exclude_meal leaves out the recipe being matched. source (off or fdc) keeps only foods from that source, like Search."""
+    wanted = {k for k in map(ingredients.key, names) if k}
+    if not wanted:
+        return {}
+    sql = ("SELECT f.*, mi.src_name AS _name, mi.meal_id AS _meal, mi.id AS _item FROM meal_items mi "
+           "JOIN meals m ON m.id=mi.meal_id JOIN foods f ON f.id=mi.food_id "
+           "WHERE (m.user_id=? OR m.shared=1) AND mi.skipped=0 AND mi.src_name IS NOT NULL AND mi.meal_id<>? AND " + core.VISIBLE)
+    params: list = [user_id, exclude_meal if exclude_meal is not None else -1, user_id]
+    if source != "all":
+        sql, params = sql + " AND f.source=?", [*params, source]
+    seen: dict = {}  # (key, food id) -> [latest recipe, times matched, newest row, food row]
+    with db.conn() as c:
+        for r in c.execute(sql, params):
+            k = ingredients.key(r["_name"])
+            if k not in wanted:
+                continue
+            hit = seen.setdefault((k, r["id"]), [0, 0, 0, r])
+            hit[0], hit[1], hit[2] = max(hit[0], r["_meal"]), hit[1] + 1, max(hit[2], r["_item"])
+    best: dict = {}
+    for (k, _), hit in seen.items():
+        if k not in best or hit[:3] > best[k][:3]:
+            best[k] = hit
+    return {k: core.food_dict(hit[3]) for k, hit in best.items()}
+
+
+def previous_for(prev: dict, it) -> Optional[dict]:
+    """The earlier match for one imported row, or None."""
+    k = ingredients.key(it["src_name"] or it["src_text"])
+    return prev.get(k) if k else None
+
+
 def local_candidates(query: str, per: int = CANDIDATES_PER_SOURCE, source: str = "all") -> list[dict]:
     if not query.split():
         return []
@@ -321,11 +364,14 @@ def candidate_line(n: int, f: dict) -> str:
             f"protein {f['protein']:g} g, fat {f['fat']:g} g{fiber}")
 
 
-def match_request(rows: list[tuple[int, Any, list[dict]]]) -> dict:
-    parts = [MATCH_INSTRUCTION.format(tool=MATCH_TOOL_NAME)]
+def match_request(rows: list[tuple[int, Any, list[dict]]], previous: Optional[dict] = None) -> dict:
+    """previous: {row number: candidate number} for rows whose candidate is the food an earlier recipe matched (a hint)."""
+    previous = previous or {}
+    parts = [MATCH_INSTRUCTION.format(tool=MATCH_TOOL_NAME) + (PREVIOUS_INSTRUCTION if previous else "")]
     for n, it, cands in rows:
         lines = "\n".join(candidate_line(k, f) for k, f in enumerate(cands, 1)) or "(no candidates)"
-        parts.append(f'<ingredient row="{n}">\nline: {ai._quote(it["src_text"] or it["src_name"] or "")}\n{lines}\n</ingredient>')
+        hint = f"earlier match: [{previous[n]}]\n" if n in previous else ""
+        parts.append(f'<ingredient row="{n}">\nline: {ai._quote(it["src_text"] or it["src_name"] or "")}\n{hint}{lines}\n</ingredient>')
     return {"model": ai.model(), "max_tokens": min(8000, 200 + MATCH_TOKENS_PER_ROW * len(rows)), "tools": [MATCH_TOOL],
             "tool_choice": ai.tool_choice(MATCH_TOOL_NAME), "messages": [{"role": "user", "content": [{"type": "text", "text": "\n".join(parts)}]}]}
 
@@ -359,12 +405,15 @@ def estimate_food(est) -> tuple[Optional[dict], list[str]]:
     return food, ai.check_values(food, from_text=True)
 
 
-def proposal(it, cands: list[dict], m: Optional[dict]) -> dict:
+def proposal(it, cands: list[dict], m: Optional[dict], prev: Optional[dict] = None) -> dict:
+    """prev: the food an earlier recipe matched to this ingredient. It is used when Claude chose no candidate, and a proposal
+    that ends on it carries from_previous."""
     out = {"item_id": it["id"], "kind": "none", "food": None, "amount": None, "unit": None, "check": False, "grams": None,
            "note": None, "warnings": [], "preview": None}
-    if not isinstance(m, dict):
+    if not isinstance(m, dict) and prev is None:
         out["note"] = "Claude did not answer for this ingredient."
         return out
+    m = m if isinstance(m, dict) else {}
     out["note"] = _clip(m.get("note"), 300)
     prefs = [(it["src_amount"], it["src_unit"]), (ai._num(m.get("amount")), clean_unit(m.get("unit")))]
     choice = m.get("choice")
@@ -374,11 +423,15 @@ def proposal(it, cands: list[dict], m: Optional[dict]) -> dict:
             with db.conn() as c:
                 food = core.save_food(c, food)
         out["kind"], out["food"] = "candidate", food
+    elif prev is not None:  # Claude chose nothing: the earlier recipe's food
+        out["kind"], out["food"], out["note"] = "candidate", prev, PREVIOUS_NOTE
     else:
         food, warns = estimate_food(m.get("estimate"))
         if food is None:
             return out
         out["kind"], out["food"], out["warnings"] = "estimate", food, warns
+    if prev is not None and out["food"].get("id") == prev["id"]:
+        out["from_previous"] = True
     amount, unit, warn, check = fit_amount(out["food"], prefs)
     out["amount"], out["unit"], out["check"] = amount, unit, check
     out["grams"] = units.grams(out["food"], amount, unit)
@@ -413,37 +466,25 @@ async def match(meal_id: int, user: CurrentUser, body: Any = Body(None)):
     source, key = _key(user["id"])
     gate = asyncio.Semaphore(SEARCH_CONCURRENCY)
     cands = await asyncio.gather(*(find_candidates(item_query(it), gate) for it in items))
+    prev = previous_matches(user["id"], [it["src_name"] or it["src_text"] for it in items], meal_id)  # hints, at most one per row
+    before = [previous_for(prev, it) for it in items]
+    cands = [cs if b is None else ([b] + [f for f in cs if f.get("id") != b["id"]])[:MAX_CANDIDATES] for cs, b in zip(cands, before)]
     rows = [(n, it, cs) for n, (it, cs) in enumerate(zip(items, cands), 1)]
-    out = await ai._ask(user["id"], source, key, match_request(rows), "match the ingredients",
+    hints = {n: 1 for n, b in enumerate(before, 1) if b is not None}  # the earlier match is candidate 1
+    out = await ai._ask(user["id"], source, key, match_request(rows, hints), "match the ingredients",
                         "Claude did not return readable matches. Try again, or search for each ingredient.", MATCH_TOOL_NAME)
     by_row: dict = {}
     for m in out.pop("data").get("matches") or []:
         if isinstance(m, dict) and isinstance(m.get("row"), int) and m["row"] not in by_row:
             by_row[m["row"]] = m
-    return {"proposals": [proposal(it, cs, by_row.get(n)) for n, it, cs in rows], **out}
+    return {"proposals": [proposal(it, cs, by_row.get(n), b) for (n, it, cs), b in zip(rows, before)], **out}
 
 
 # ---------- Match With Search: the same candidates, no Claude ----------
 # Each ticked row gets the best name match among the user's own foods (favorites, past foods, foods they made), the foods
 # already saved on this server, USDA and Open Food Facts. Ranking is plain token overlap, so it needs no key and costs nothing.
 
-_STOP = {"a", "an", "the", "of", "and", "with", "or"}
-
-
-def _words(text: str) -> frozenset:
-    """Lowercase word set with light singulars (eggs, berries, tomatoes), articles dropped."""
-    out = set()
-    for w in re.findall(r"[a-z0-9]+", (text or "").lower()):
-        if w in _STOP:
-            continue
-        if len(w) > 4 and w.endswith("ies"):
-            w = w[:-3] + "y"
-        elif len(w) > 4 and w.endswith("oes"):
-            w = w[:-2]
-        elif len(w) > 3 and w.endswith("s") and not w.endswith("ss"):
-            w = w[:-1]
-        out.add(w)
-    return frozenset(out)
+_words = ingredients.words  # lowercase word set with light singulars, articles dropped (see ingredients.py)
 
 
 def _overlap(q: frozenset, n: frozenset):
@@ -494,7 +535,7 @@ def own_foods(user_id: int, source: str = "all") -> list[dict]:
         return [core.food_dict(r) for r in c.execute(sql + " ORDER BY f.name", params)]
 
 
-def search_proposal(it, food: Optional[dict], own: bool = False, cls: int = 0, skipped: bool = False) -> dict:
+def search_proposal(it, food: Optional[dict], own: bool = False, cls: int = 0, skipped: bool = False, previous: bool = False) -> dict:
     """A pending proposal for one row, shaped like Claude's (kind candidate or none), with method search. No estimates."""
     out = {"item_id": it["id"], "kind": "none", "food": None, "amount": None, "unit": None, "check": False, "grams": None,
            "note": "No match found.", "warnings": [], "preview": None, "method": "search"}
@@ -511,7 +552,9 @@ def search_proposal(it, food: Optional[dict], own: bool = False, cls: int = 0, s
     where = "your foods" if own else {"fdc": "USDA", "off": "Open Food Facts"}.get(food["source"], "foods on this server")
     out.update(kind="candidate", food=food, amount=amount, unit=unit, check=check, grams=units.grams(food, amount, unit),
                preview=core.macros(food, amount, unit),
-               note=("Same name in " if cls == 2 else "Closest name in ") + where)
+               note=PREVIOUS_NOTE if previous else ("Same name in " if cls == 2 else "Closest name in ") + where)
+    if previous:
+        out["from_previous"] = True
     if warn:
         out["warnings"].append(warn)
     return out
@@ -543,6 +586,7 @@ async def match_search(meal_id: int, user: CurrentUser, body: Any = Body(None)):
         raise HTTPException(404, "Ingredient not found")
     items = [found[i] for i in ids]
     mine = [(f, True) for f in own_foods(user["id"], source)]
+    prev = previous_matches(user["id"], [it["src_name"] or it["src_text"] for it in items], meal_id, source)
     gate = asyncio.Semaphore(SEARCH_CONCURRENCY)
     usda: dict = {"limited": False, "skipped": set()}
 
@@ -553,11 +597,15 @@ async def match_search(meal_id: int, user: CurrentUser, body: Any = Body(None)):
             pick = pick_best(query, [*mine, *((f, False) for f in more)])
         return pick
 
-    tasks: dict = {}  # one lookup per distinct ingredient name
+    tasks: dict = {}  # one lookup per distinct ingredient name, none for a row an earlier recipe already matched
     for it in items:
-        if item_query(it) not in tasks:
+        if previous_for(prev, it) is None and item_query(it) not in tasks:
             tasks[item_query(it)] = asyncio.ensure_future(best(item_query(it)))
-    picks = [await tasks[item_query(it)] for it in items]
-    skipped = usda["skipped"]
-    return {"proposals": [search_proposal(it, *(p or (None,)), skipped=item_query(it) in skipped) for it, p in zip(items, picks)],
-            "method": "search", "rate_limited": bool(skipped)}
+    out = []
+    for it in items:
+        before = previous_for(prev, it)  # an earlier recipe's match for this ingredient comes first
+        if before is not None:
+            out.append(search_proposal(it, before, True, 2, previous=True))
+        else:
+            out.append(search_proposal(it, *((await tasks[item_query(it)]) or (None,)), skipped=item_query(it) in usda["skipped"]))
+    return {"proposals": out, "method": "search", "rate_limited": bool(usda["skipped"])}
