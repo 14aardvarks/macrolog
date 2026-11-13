@@ -838,7 +838,7 @@ POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log i
   | Label photo (1 photo) | 2300 / 400 | about 0.04 cents |
   | Claude lookup (typed, 200 characters) | 700 / 400 | about 0.03 cents |
   | Recipe import from text (8000 characters) | 2900 / 1700 | about 0.11 cents |
-  | Claude match, 15 ingredients | 7650 / 2400 | about 0.2 cents |
+  | Claude match, 15 ingredients, with unit weights (v74) | 7750 / 2850 | about 0.22 cents |
   | Missing nutrients, one food | 600 / 150 | about 0.01 cents |
   | Heavy month: 30 lookups, 30 nutrient fills, 10 label photos, 8 recipe imports, 8 matches (86 requests) | | about 0.04 USD |
 
@@ -988,6 +988,52 @@ DELETE /api/foods/{id}/units/{unit} -> same              # removes the viewer's 
   (tests/conftest.py).
 - Tests: tests/test_food_units.py, tests/ui/foodunits.test.mjs, and the step 1 to 3 tests moved to names no table row matches. Shell cache
   macrolog-shell-v73.
+
+## Claude Weights and the Estimated Weight Tag (v74, issue #45 steps 7 and 8)
+
+- Step 7, Claude supplied weights, in the same batched match request (POST /api/recipes/{id}/match, no extra request, one cap
+  reservation). MATCH_TOOL items gain `unit_grams` ({unit, grams, confidence low|medium|high} or null) and `density_g_per_cup`
+  ({grams, confidence} or null), both required and nullable: nine unions in the strict schema (limit 16, tests/test_claude_weights.py).
+  `recipe_ai.weight_hint` marks a row "weight needed: one clove" (a count, package or fuzzy unit with an amount, no printed size and
+  no typical weight for the line's name) or "density needed" (a volume line); MATCH_INSTRUCTION says to prefer a printed or standard
+  size, estimate a typical weight from general nutrition knowledge, never invent a brand, and to use null elsewhere; Claude keeps the
+  line's amount and unit.
+- Code decides what is used (`weight_need`): the line's weight unit when match_amount gives no_weight or no_size on the chosen food,
+  "density" when a volume line converts only by the 1 g per ml guess, else nothing. `claude_weight` checks it: confidence medium or
+  high (low is dropped and the row keeps its check reason), grams 0.05 to 5000 per unit, density 20 to 400 g per cup
+  (`units.ai_number`, booleans and text rejected), the unit the line's (a plain count may say count, piece or a size). An accepted
+  value is saved by `save_ai_weight` as the user's own food_units row (source ai, estimated 1, unit cup for a density); never global,
+  never over the user's own row or an fdc or off row. The proposal is worked out again from it: weight_source ai, estimate_source
+  claude, weight_note "Estimated by Claude" (`units.AI_NOTE`), estimated. For Claude's own estimate food (not saved yet) the line
+  becomes grams instead (nothing is stored). A refused unit_grams also drops Claude's amount, so the row stays Check Amount.
+  Match With Search never calls Claude. The cost estimate grows a little: EST_TOKENS_MATCH_ROW_OUT 190 (was 160), 100 more prompt
+  tokens (EST_TOKENS_MATCH_WEIGHT_PROMPT), MATCH_TOKENS_PER_ROW 360; the Full Claude Use row reads "Claude match of 15 ingredients,
+  with weights".
+- Server for step 8: every recipe row, proposal and recipe log part carries `weight_grams` (`units.line_grams`, the line in grams,
+  estimated or not; null on a check row). `units.weight_info` also names the volume row a cup of a weight only label goes through.
+  item_dict and proposals say estimate_source claude for an ai row (`core.estimate_word`). GET /api/entry-groups/{id} parts carry
+  estimated, estimate_source, weight_source, weight_note and weight_grams (`core.part_weight`). Typed grams (`remember: true`) save
+  the user's weight from the row's own amount before the change (2 clove, 1 cup) or the line's, for count-like and volume units.
+```
+POST /api/units/preview {"lines": [{"amount", "unit", "name", "pkg_amount"?, "pkg_unit"?}]} (at most 100)
+  -> {"lines": [{"unit", "grams", "total", "source": "table"|"printed", "estimated", "note"?} | {"reason", "unit"} | {}]}
+```
+  No food needed and nothing saved: a printed size, else the typical weight or standard package size the name gives, else the reason.
+- Step 8, client. util.js `weightTag(it)` (grams and the source in words, `WEIGHT_SOURCE_WORDS`: USDA, Open Food Facts, Typical Weight,
+  Claude Estimate, Your Weight, Typical Density, 1 g per ml Guess) and dom.js `weightTagNode(it, name, onSave)`: "Estimated Weight 6 g
+  Typical Weight" (a dashed chip; "Weight" for an exact unit weight), shown on Match Ingredients rows and suggestions, the recipe
+  screen and the recipe log. The grams are a button: tapping them swaps in a grams box with Save and Cancel in place (same height,
+  Enter saves, Escape cancels). On a recipe row and a suggestion Save is a match in g with remember (Enter Grams), which clears the
+  estimate; on a recipe log part it saves the unit weight (PUT /api/foods/{id}/units) and the part in grams. The tag is not shown
+  on someone else's shared recipe's edit or Yesterday's copy (read only there).
+- Header: `checkBlock` shows the checks ("2 ingredients need a check") and, separately, `estimateList` and `estimateSummary`
+  ("3 amounts are estimated", "Garlic: 6 g, Typical Weight"), each with the first line visible and the rest under Show N More, on
+  Match Ingredients, the recipe screen and the recipe log.
+- Review before matching: a flagged row asks POST /api/units/preview once per unit and name (300 ms after typing) and shows
+  "Typical weight 3 g per clove (estimate)" or "Standard can size 425 g (estimate)" with an Estimated chip, else the real reason
+  (`unitPreviewText`); "Looking up a typical weight" holds the line meanwhile, so nothing moves. Use Grams stays.
+- Settings, Display has an Estimated Weights hint (`ESTIMATE_HELP`). Guide bullets added. Tests: tests/test_claude_weights.py,
+  tests/ui/estimatedweight.test.mjs. Shell cache macrolog-shell-v74.
 
 ## Photos on Foods and Recipes (v68)
 

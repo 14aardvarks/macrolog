@@ -2,7 +2,7 @@
 // to log it again. Shows the portion, the combined nutrition and the ingredients (read only). Today: change the portion
 // (the server rescales every row), move it to another meal, or remove it. Yesterday (params.copy): Log puts a copy on today.
 import { api } from './api.js';
-import { h, field, message, show, select, sourceBadge, kcalCue } from './dom.js';
+import { h, field, message, show, select, sourceBadge, kcalCue, checkBlock, weightTagNode } from './dom.js';
 import { MEALS, MEAL_LABELS, fmtNum, qtyText, amountText, amountMemo, ingredientText } from './util.js';
 import { portionUnits, portionFraction, portionAmount, recipeAmountText, scaledLog, partsText, REMOVE_RECIPE_CONFIRM } from './recipeimport.js';
 import { fillMacroBar } from './chart.js';
@@ -89,8 +89,15 @@ export async function renderRecipeLog(root, params, ctx) {
     const bare = !p.unit || p.unit === 'count';  // a count reads "3 carrots", the amount joins the name
     return h('li', { class: 'item' }, h('div', { class: 'item-main' },
       h('span', { class: 'item-title' }, bare ? ingredientText(p.amount, p.unit, name) : name),
-      h('span', { class: 'item-sub' }, (bare ? '' : amountText(p.amount, p.unit) + ' - ') + fmtNum(p.kcal, 0) + ' kcal', badge ? ' ' : null, badge, kcalCue(p))));
+      h('span', { class: 'item-sub' }, (bare ? '' : amountText(p.amount, p.unit) + ' - ') + fmtNum(p.kcal, 0) + ' kcal', badge ? ' ' : null, badge, kcalCue(p)),
+      weightTagNode(p, p.name, copy || p.food_id == null ? null : (g) => typedGrams(p, g))));
   }));
+  // Grams typed in an Estimated Weight tag: your weight of one of the part's unit for that food, then the part in grams.
+  async function typedGrams(p, g) {
+    await api.setFoodUnit(p.food_id, p.unit || 'count', g / p.amount);
+    await api.patchEntry(p.id, { amount: g, unit: 'g' });
+    await ctx.go('recipelog', { groupId: log.group_id }, true);
+  }
   root.appendChild(h('section', { class: 'screen recipe-log-view' },
     h('div', { class: 'bar' }, h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back')),
     h('h1', null, log.name),
@@ -105,6 +112,7 @@ export async function renderRecipeLog(root, params, ctx) {
     status,
     saveBtn,
     h('h2', null, 'Ingredients'),
+    checkBlock({ items: (log.parts || []).map((p) => ({ ...p, food: { name: p.name } })) }),
     parts,
     copy ? null : removeStatus,
     copy ? null : h('button', { class: 'btn danger', type: 'button', onclick: remove }, 'Remove Recipe')));

@@ -1,5 +1,5 @@
 import { h, field, select } from './dom.js';
-import { SEARCH_SOURCES, searchSource, AUTO_MATCHES, autoMatch, MICROS, shownMicros, microValue, microText, microNote, barWidth, barState, toggleMicro, parseDecimal, fmtAmount, sentence, REFRESH_MODES, refreshModeHint, resolveRefreshMode } from './util.js';
+import { SEARCH_SOURCES, searchSource, AUTO_MATCHES, autoMatch, MICROS, shownMicros, microValue, microText, microNote, barWidth, barState, toggleMicro, parseDecimal, fmtAmount, sentence, REFRESH_MODES, refreshModeHint, resolveRefreshMode, ESTIMATE_HELP } from './util.js';
 
 let seq = 0;
 
@@ -117,7 +117,9 @@ export function displaySection(display, sources, save, claude) {
     h('p', { class: 'sub', id: 'disp-source-help' }, 'Where the search on Add looks first. All Sources by default. Changing Source on Add lasts until the app is reloaded.'),
     h('label', { class: 'field', for: 'disp-auto' }, h('span', null, 'Auto-Match After Import'), autoSel),
     h('p', { class: 'sub', id: 'disp-auto-help' }, sentence('Search is the default') + ' ' + sentence('After an import, Search is free and fills in suggested matches for you to review') + ' ' + sentence('Claude matches the ingredients with Claude, and Search Then Claude asks Claude only about the ingredients Search did not match') + ' ' + sentence('Claude uses Claude requests, shows the cost first when Confirm before using Claude is on, and falls back to Search when it is not set up') + ' ' + sentence('Off leaves every ingredient for you to match') + ' ' + sentence('With Full Claude Use on, Search runs as Search Then Claude')),
-    h('label', { class: 'field', for: 'disp-refresh' }, h('span', null, 'Refresh Nutrients'), refSel), refWhy, refHelp);
+    h('label', { class: 'field', for: 'disp-refresh' }, h('span', null, 'Refresh Nutrients'), refSel), refWhy, refHelp,
+    h('h3', { class: 'field-cap', id: 'disp-est-head' }, 'Estimated Weights'),
+    h('p', { class: 'sub', id: 'disp-est-help' }, ESTIMATE_HELP));
   node.repaintRefresh = paintRefresh;
   return node;
 }

@@ -78,6 +78,7 @@ export const api = {
   deleteFoodUnit: (id, unit) => send('DELETE', '/api/foods/' + id + '/units/' + encodeURIComponent(unit)),
   createFood: (f) => send('POST', '/api/foods', f),
   preview: (food_id, amount, unit) => get('/api/preview', { food_id, amount, unit }),
+  unitsPreview: (lines) => send('POST', '/api/units/preview', { lines }),
   logEntry: (e) => send('POST', '/api/entries', { day: day(), ...e }),
   patchEntry: (id, patch) => send('PATCH', '/api/entries/' + id, patch),
   deleteEntry: (id) => request('DELETE', '/api/entries/' + id),

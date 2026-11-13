@@ -108,7 +108,7 @@ def test_column_is_added_in_place_off(tmp_path, monkeypatch):
 def test_action_costs_from_tokens_with_sample_prices():
     t = ai.action_tokens()
     assert t["label"] == (2300, 400) and t["lookup"] == (700, 400) and t["micros"] == (600, 150)
-    assert t["recipe_text"] == (2900, 1700) and t["match"] == (900 + 15 * 450, 15 * 160)
+    assert t["recipe_text"] == (2900, 1700) and t["match"] == (1000 + 15 * 450, 15 * 190)
     c = ai.action_costs(None)
     assert c["sample"] is True
     assert c["label"] == pytest.approx((2300 * 0.10 + 400 * 0.50) / 1e6)

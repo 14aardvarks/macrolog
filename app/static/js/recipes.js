@@ -1,7 +1,7 @@
 // Recipes tab: New Recipe, Import Recipe and the list of my recipes, plus one recipe's screen with Log and the edit tools
 // from Saved. Matching is optional: a recipe with unmatched ingredients opens and logs like any other.
 import { api } from './api.js';
-import { h, clear, field, message, show, select, checkBlock } from './dom.js';
+import { h, clear, field, message, show, select, checkBlock, weightTagNode } from './dom.js';
 import { MEALS, MEAL_LABELS, fmtNum, checkReasonLine, pageOf, PAGE_SIZE, matchedAmountText, stepsCheck, amountMemo, SAVED_FILTERS, SAVED_FILTER_LABELS, filterSavedItems,
   RECIPE_SORTS, RECIPE_SORT_LABELS, sortRecipes, sentence, RECIPE_OWNERS, RECIPE_OWNER_LABELS, recipeOwner, filterRecipeOwner, ownerText,
   ownerEmptyText, groupRecipesByMeal, pageGroups } from './util.js';
@@ -14,8 +14,9 @@ import { deletedHint, deletedTitle, daysLeftText, deleteForeverConfirm, restored
 import { closeUndo } from './undo.js';
 import { loadPhotoConfig, photoThumb, photoSection } from './photo.js';
 
-// The recipe's ingredients as a read only list: "Wheat flour" over "1 1/2 cup, 188 g". Skipped lines keep their own text.
-function ingredientList(meal) {
+// The recipe's ingredients as a read only list: "Wheat flour" over "1 1/2 cup, 188 g". Skipped lines keep their own text. A row
+// whose weight is a unit weight or an estimate shows the Estimated Weight tag; onGrams(item, grams) saves grams typed in it.
+function ingredientList(meal, onGrams) {
   const LABELS = { skipped: 'Skipped', unmatched: 'Unmatched', check: 'Check Amount' };
   return h('ul', { class: 'list recipe-ings' }, meal.items.map((it) => (matchState(it) !== 'matched'
     ? h('li', { class: 'item' }, h('div', { class: 'item-main' }, h('span', { class: 'item-title' }, (it.src && it.src.text) || (it.food && it.food.name) || 'Ingredient'),
@@ -23,7 +24,8 @@ function ingredientList(meal) {
       matchState(it) === 'check' ? h('span', { class: 'check-reason' }, checkReasonLine(it.check_reason, (it.src && it.src.unit) || it.unit)) : null))
     : h('li', { class: 'item' }, h('div', { class: 'item-main' },
       h('span', { class: 'item-title' }, it.food.brand ? it.food.name + ' (' + it.food.brand + ')' : it.food.name),
-      h('span', { class: 'item-sub' }, matchedAmountText(it.amount, it.unit, it.grams)))))));
+      h('span', { class: 'item-sub' }, matchedAmountText(it.amount, it.unit, it.grams)),
+      weightTagNode(it, it.food.name, onGrams ? (g) => onGrams(it, g) : null))))));
 }
 
 // Steps with Edit Steps: the editor works on a copy, Save Steps sends it (PATCH steps), Cancel drops it.
@@ -263,7 +265,10 @@ export async function renderRecipeView(root, params, ctx) {
     h('div', { class: 'row wrap' }, logBtn),
     h('div', { class: 'row wrap' }, h('button', { class: 'btn', type: 'button', onclick: () => ctx.go('cooking', { mealId: meal.id }) }, 'Cooking')),
     h('h2', null, 'Ingredients'),
-    ingredientList(meal),
+    ingredientList(meal, edit ? async (it, g) => {
+      await api.matchItem(meal.id, it.id, { food_id: it.food_id, amount: g, unit: 'g', remember: true });
+      await again();
+    } : null),
     edit ? editTools() : viewOnly()));
 
   // Someone else's shared recipe: steps to read and Duplicate to make my own private copy.

@@ -148,7 +148,7 @@ def test_status_estimates_for_recipes(env, monkeypatch):
     get = lambda **q: env["c"].get("/api/ai/status", params=q).json()["est_cost_label"]  # noqa: E731
     assert get(recipe_chars=4000) == pytest.approx((900 + 1000) / 1e6 + 1700 * 5 / 1e6)
     assert get(recipe_images=2) == pytest.approx((2 * 1600 + 900) / 1e6 + 1700 * 5 / 1e6)
-    assert get(match_rows=3) == pytest.approx((900 + 3 * 450) / 1e6 + 3 * 160 * 5 / 1e6)
+    assert get(match_rows=3) == pytest.approx((1000 + 3 * 450) / 1e6 + 3 * 190 * 5 / 1e6)
     assert env["c"].get("/api/ai/status", params={"match_rows": 99}).status_code == 422
 
 

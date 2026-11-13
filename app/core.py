@@ -13,7 +13,7 @@ import re
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
 from urllib.parse import urlsplit
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 
@@ -641,6 +641,50 @@ def delete_food_unit(food_id: int, unit: str, user: CurrentUser):
         return units_payload(c, food, user["id"])
 
 
+UNIT_PREVIEW_MAX = 100
+
+
+def unit_preview(line: dict) -> dict:
+    """What an imported line weighs before it has a food (issue #45 step 8): a printed size is exact, else the typical weight or
+    standard package size the line's name gives (units.table_weights, estimated), else the reason Check Amount would give.
+    {"unit", "grams" (one unit), "total", "source" printed|table, "estimated", "note"?} or {"reason": no_weight|no_size}; {} for a
+    line that is not a count, package or fuzzy unit with an amount (a cup, 100 g, salt to taste)."""
+    a = units._pos(line.get("amount"))
+    try:
+        u = units.unit_or_blank(line.get("unit") or "") if isinstance(line.get("unit"), (str, type(None))) else None
+    except ValueError:
+        u = None
+    if a is None or u is None or not units.is_countlike(u):
+        return {}
+    wu = units.weight_unit(u) or units.COUNT
+    pkg = units.pkg_size(line.get("pkg_amount"), line.get("pkg_unit"))
+    if pkg:  # a printed size is exact (the review shows it as "15 oz per can, exact"); a printed volume has no grams here
+        g = pkg[0] * units.MASS[pkg[1]] if pkg[1] in units.MASS else None
+        return {"unit": wu, "grams": None if g is None else round(g, 1), "total": None if g is None else round(a * g, 1),
+                "source": "printed", "estimated": False}
+    name = str(line.get("name") or "")[:200]
+    rows = {r["unit"]: r for r in units.table_weights({"name": name})}
+    size = units.size_hint(name) if wu in (units.COUNT, "piece") else None
+    pick = rows.get(wu) or (rows.get(size) if size else None)
+    if pick is None and wu in (units.COUNT, "piece", *units.SIZE_WORDS):
+        pick = next((rows[k] for k in (wu, units.COUNT, "medium", "large", "small") if k in rows), None)
+    if pick is None:
+        return {"reason": units.NO_SIZE if wu in units.PACKAGE_UNITS else units.NO_WEIGHT, "unit": wu}
+    return {"unit": wu, "grams": pick["grams"], "total": round(a * pick["grams"], 1), "source": "table", "estimated": True,
+            **({"note": pick["note"]} if pick.get("note") else {})}
+
+
+@router.post("/units/preview")
+def units_preview(user: CurrentUser, body: Any = Body(None)):
+    """{"lines": [{"amount", "unit", "name", "pkg_amount"?, "pkg_unit"?}, ...]} (at most 100) -> {"lines": [unit_preview, ...]} in
+    the same order. Nothing is saved and no food is needed: the import review uses it before matching."""
+    if not isinstance(body, dict) or set(body) != {"lines"} or not isinstance(body["lines"], list):
+        raise bad("Send {\"lines\": [...]}")
+    if len(body["lines"]) > UNIT_PREVIEW_MAX:
+        raise bad(f"Send at most {UNIT_PREVIEW_MAX} lines")
+    return {"lines": [unit_preview(x) if isinstance(x, dict) else {} for x in body["lines"]]}
+
+
 @router.get("/preview")
 def preview(user: CurrentUser, food_id: int, amount: str = "", unit: str = ""):
     with db.conn() as c:
@@ -809,7 +853,26 @@ def group_out(c, uid: int, gid: int) -> dict:
                      "WHERE e.user_id=? AND e.group_id=? ORDER BY e.id", (uid, gid)).fetchall()
     if not rows:
         raise HTTPException(404, "Recipe log not found")
-    return group_item(g, [day_entry(r) for r in rows])
+    return group_item(g, [part_weight(c, uid, day_entry(r)) for r in rows])
+
+
+def part_weight(c, uid: int, part: dict) -> dict:
+    """One ingredient of a recipe log with the Estimated Weight fields of a recipe row (issue #45 step 8): estimated,
+    estimate_source, weight_source, weight_note and weight_grams, worked out from its food now. Unchanged when the food is gone."""
+    part.update(estimated=False, estimate_source=None, weight_source=None, weight_note=None, weight_grams=None)
+    row = c.execute("SELECT * FROM foods WHERE id=?", (part["food_id"],)).fetchone() if part["food_id"] is not None else None
+    if row is None:
+        return part
+    food = with_units(c, uid, food_dict(row))
+    try:
+        est = units.servings_for(food, part["amount"], part["unit"])["estimated"]
+    except ValueError:
+        return part
+    wsrc, wnote = units.weight_info(food, part["unit"])
+    part.update(estimated=est, estimate_source=estimate_word(units.estimate_source(food, part["unit"])) if est else None,
+                weight_source=wsrc, weight_note=wnote,
+                weight_grams=units.line_grams(food, part["amount"], part["unit"]) if est or wsrc else None)
+    return part
 
 
 def portion_body(g, body: dict) -> tuple[float, str, float]:
@@ -1342,7 +1405,13 @@ def item_dict(c, it, uid: int | None = None) -> dict:
     # weight_note says why (Standard can size assumed).
     wsrc, wnote = (None, None) if check else units.weight_info(food, it["unit"])
     return {**base, "food": food, "grams": grams, **m, "weight_source": wsrc, "weight_note": wnote,
-            "estimate_source": units.estimate_source(food, it["unit"]) if m["estimated"] and not check else None}
+            "estimate_source": estimate_word(units.estimate_source(food, it["unit"])) if m["estimated"] and not check else None,
+            "weight_grams": None if check else units.line_grams(food, it["amount"], it["unit"])}
+
+
+def estimate_word(source: str | None) -> str | None:
+    """estimate_source as the app names it: a Claude row (food_units source ai) is claude, like Claude's own weight on a proposal."""
+    return "claude" if source == "ai" else source
 
 
 def check_reason(food: dict, src: dict | None) -> str | None:
@@ -1947,10 +2016,19 @@ def check_item_body(body) -> None:
         raise bad("remember must be true or false and needs food_id")
 
 
-def remember_weight(c, uid: int, item_id: int, food: dict, amount: float, unit: str, typed: bool) -> None:
-    """Grams the user typed for a count-like recipe line become their own weight of one unit of the food (a user food_units row),
-    so the next line with that unit and food converts at once. Use Grams on the review screen kept the line (item_was_*): any
-    match in a weight saves it. Enter Grams on Match Ingredients sends remember (typed): the line's own unit, without a printed size."""
+def _weighable(unit) -> bool:
+    """A unit typed grams can become a weight of: count-like (clove, can, count) or a volume row unit (cup, tbsp, tsp, fl oz)."""
+    try:
+        return units.is_countlike(unit or "") or units.weight_unit(unit or "") in units.VOLUME_ROW_UNITS
+    except ValueError:
+        return False
+
+
+def remember_weight(c, uid: int, item_id: int, food: dict, amount: float, unit: str, typed: bool, was: tuple | None = None) -> None:
+    """Grams the user typed for a recipe line become their own weight of one unit of the food (a user food_units row), so the next
+    line with that unit and food converts at once. Use Grams on the review screen kept the line (item_was_*): any match in a weight
+    saves it. Enter Grams on Match Ingredients and the Estimated Weight tag send remember (typed): the row's amount before the
+    change (was, 2 clove or 1 cup, when it was matched in such a unit), else the line's own, without a printed size."""
     if unit not in units.MASS:
         return
     it = c.execute("SELECT src_amount, src_unit, src_name, item_pkg_amount, item_was_amount, item_was_unit FROM meal_items WHERE id=?",
@@ -1958,7 +2036,9 @@ def remember_weight(c, uid: int, item_id: int, food: dict, amount: float, unit: 
     grams = amount * units.MASS[unit]
     if it["item_was_amount"] and it["item_was_unit"]:
         n, line_unit = it["item_was_amount"], it["item_was_unit"]
-    elif typed and it["src_amount"] and it["item_pkg_amount"] is None and units.is_countlike(it["src_unit"] or ""):
+    elif typed and was and was[0] and was[1] not in units.MASS and _weighable(was[1]):
+        n, line_unit = was[0], was[1]
+    elif typed and it["src_amount"] and it["item_pkg_amount"] is None and _weighable(it["src_unit"]):
         n, line_unit = it["src_amount"], it["src_unit"] or units.COUNT
     else:
         return
@@ -1986,12 +2066,14 @@ def apply_item(c, item_id: int, body: dict, uid: int | None = None) -> None:
     elif "food_id" in body:
         food = need_food(c, whole_id(body["food_id"], "food_id"), uid)
         amount, unit = check_amount_unit(food, body.get("amount"), body.get("unit"))
+        prior = c.execute("SELECT food_id, amount, unit, needs_check FROM meal_items WHERE id=?", (item_id,)).fetchone()
+        was = (prior["amount"], prior["unit"]) if prior and prior["food_id"] == food["id"] and not prior["needs_check"] else None
         c.execute("UPDATE meal_items SET food_id=?, amount=?, unit=?, skipped=0, needs_check=? WHERE id=?",
                   (food["id"], amount, unit, int(body.get("check") is True), item_id))
         if uid is not None:
             undelete(c, uid, food["id"])  # picking a deleted food again for a recipe brings it back
             if body.get("check") is not True:
-                remember_weight(c, uid, item_id, food, amount, unit, body.get("remember") is True)
+                remember_weight(c, uid, item_id, food, amount, unit, body.get("remember") is True, was)
     if "skipped" in body:
         c.execute("UPDATE meal_items SET skipped=? WHERE id=?", (int(body["skipped"]), item_id))
 

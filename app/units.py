@@ -885,7 +885,50 @@ def estimate_source(food, unit=None):
     return "density" if density(food) else "guess"
 
 
+AI_NOTE = "Estimated by Claude"  # the note of a Claude weight (food_units source ai, issue #45 step 7)
+
+
+def _density_row(food, unit):
+    """The volume row a volume line of a weight only label converts through (1 cup of a 100 g label), else None."""
+    try:
+        u = parse_unit(unit_or_blank(unit))
+        label_unit = _profile(food)[0]
+    except ValueError:
+        return None
+    if u not in VOLUME or label_unit in VOLUME or _pos(food.get("serving_ml")):
+        return None
+    return _volume_row(food)
+
+
 def weight_info(food, unit):
-    """(source, note) of the food_units row a count-like unit converts through on this food, else (None, None)."""
-    row = count_row(food, unit)
-    return (row["source"], row.get("note")) if row else (None, None)
+    """(source, note) of the food_units row the unit converts through on this food: the count-like unit's row, or the volume row
+    a cup of a weight only label goes through. (None, None) when there is none. A Claude row says "Estimated by Claude"."""
+    row = count_row(food, unit) or _density_row(food, unit)
+    if not row:
+        return None, None
+    return row["source"], row.get("note") or (AI_NOTE if row["source"] == "ai" else None)
+
+
+def line_grams(food, amount, unit):
+    """The weight of a line in grams, estimated or not (2 cloves at a typical 3 g are 6 g), rounded to 0.1, else None. The
+    Estimated Weight tag shows it; grams() stays None for an estimate."""
+    try:
+        servings, _ = _convert(food, amount, unit)
+        g = _profile(food)[2]
+    except ValueError:
+        return None
+    return round(servings * g, 1) if g else None
+
+
+# Claude's unit weights and densities (issue #45 step 7) are checked here before they are saved: never trusted as sent.
+AI_GRAMS_MIN, AI_GRAMS_MAX = 0.05, 5000.0  # one clove, can or count
+AI_DENSITY_MIN, AI_DENSITY_MAX = 20.0, 400.0  # grams per cup
+AI_CONFIDENT = ("medium", "high")  # low confidence is dropped, the row keeps its check reason
+
+
+def ai_number(v, lo, hi):
+    """A finite number from Claude within [lo, hi], else None (booleans, text and out of range values are rejected)."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return None
+    v = float(v)
+    return v if lo <= v <= hi else None

@@ -3,13 +3,13 @@
 // but only Save makes it count as saved: Back writes the state of the last save back after asking Discard Changes?.
 // Matching is optional: Save always saves. Rows still not matched are kept (to finish later) or removed, the user's choice.
 import { api } from './api.js';
-import { h, clear, field, message, show, select, sourceBadge, unitControl, kcalCue, extLink, checkBlock } from './dom.js';
+import { h, clear, field, message, show, select, sourceBadge, unitControl, kcalCue, extLink, checkBlock, weightTagNode } from './dom.js';
 import { toJpeg } from './ai.js';
 import { importPhotoChoice, loadPhotoConfig } from './photo.js';
 import { confirmClaude } from './notice.js';
 import { chips } from './saved.js';
 import { stepsEditor } from './steps.js';
-import { unitChoices, fmtNum, fmtAmount, servingText, centsText, sentence, amountMemo, rowAmountText, matchedAmountText, MICROS, microValue, aiFeature, aiFeatureOff, effectiveAutoMatch, CLAUDE_CAP_NOTE, recipeTextCostLine, checkReasonLine, ESTIMATE_SOURCES } from './util.js';
+import { unitChoices, fmtNum, fmtAmount, servingText, centsText, sentence, amountMemo, rowAmountText, matchedAmountText, MICROS, microValue, aiFeature, aiFeatureOff, effectiveAutoMatch, CLAUDE_CAP_NOTE, recipeTextCostLine, checkReasonLine, ESTIMATE_SOURCES, weightTag, unitPreviewText } from './util.js';
 import {
   parseIngredientText, parseIngredientLine, reviewDraft, reviewBody, blankRow, matchState, matchCountText, toggleAll, toggleId,
   proposalText, matchWhat, importWhat, matchSnapshot, restoreBody, changedSince, nextUnmatched, pendingProposals,
@@ -153,6 +153,9 @@ export function sourceNode(url) {
   return h('p', { class: 'sub source-line' }, 'Source ', a);
 }
 
+// One typical weight lookup per unit and name: the grams of one clove do not depend on how many.
+const previewKey = (r) => String(r.unit || '').trim().toLowerCase() + '|' + String(r.name || '').trim().toLowerCase();
+
 export function renderReview(root, ctx) {
   const draft = ctx.flow.draft;
   if (!draft) { ctx.go('import', {}, true); return; }
@@ -173,23 +176,32 @@ export function renderReview(root, ctx) {
     };
     const unitSel = unitControl(importUnitOptions(), String(r.unit == null ? '' : r.unit).trim(), { 'aria-label': 'Unit of ingredient ' + (i + 1) });
     const unitBox = h('label', { class: 'field import-unit' }, h('span', null, 'Unit'), unitSel);
-    // A package or fuzzy unit with no printed size: the reason, and Use Grams to type grams at once (or pick another unit).
+    // A package or fuzzy unit with no printed size: the typical weight or standard package size its name gives (POST
+    // /api/units/preview, an estimate until a food is matched), else the reason; Use Grams types grams at once either way.
     const flagText = h('span', null);
-    const flag = h('p', { class: 'check-reason import-flag', id: 'flag-' + i },
-      h('span', { class: 'match-state match-check' }, 'Check Amount'), ' ', flagText, ' ',
+    const chip = h('span', { class: 'match-state match-check' }, 'Check Amount');
+    const flag = h('p', { class: 'check-reason import-flag', id: 'flag-' + i }, chip, ' ', flagText, ' ',
       h('button', { class: 'link-btn', type: 'button', onclick: () => { useGrams(r); paintRows(); focusRow(i, '.import-amount input'); } }, 'Use Grams'));
     const pkg = h('p', { class: 'pkg-note' });
     const paintFlag = () => {
       const t = reviewFlag(r);
-      flagText.textContent = t;
+      const p = t ? previews[previewKey(r)] : null;
+      const known = p ? unitPreviewText(p) : '';
+      const est = !!(p && p.grams && !p.reason);
+      chip.className = 'match-state ' + (est || p === undefined ? 'match-est' : 'match-check');
+      chip.textContent = est ? 'Estimated' : p === undefined ? 'Weight' : 'Check Amount';
+      flagText.textContent = p === undefined ? 'Looking up a typical weight' : known || t;
       flag.hidden = !t;
       pkg.textContent = pkgNote(r);
       pkg.hidden = !pkg.textContent;
     };
-    unitSel.addEventListener('change', () => { r.unit = unitSel.value; paintFlag(); });
+    flags.push(paintFlag);
+    const changed = () => { paintFlag(); lookupSoon(); };
+    unitSel.addEventListener('change', () => { r.unit = unitSel.value; changed(); });
     const fields = h('div', { class: 'import-fields' }, box('amount', 'Amount', { inputmode: 'decimal' }), unitBox,
       box('name', 'Ingredient'), box('note', 'Note'));
-    fields.querySelector('.import-amount input').addEventListener('input', paintFlag);
+    fields.querySelector('.import-amount input').addEventListener('input', changed);
+    fields.querySelector('.import-name input').addEventListener('input', changed);
     paintFlag();
     return h('li', { class: 'import-row' },
       h('div', null, fields, flag, pkg),
@@ -200,11 +212,28 @@ export function renderReview(root, ctx) {
     const el = list.children[i] && list.children[i].querySelector(sel);
     if (el) el.focus();
   }
+  // Typical weights before matching, looked up once per line (amount, unit and name) and kept on the draft for the visit.
+  const previews = draft.unitPreviews || (draft.unitPreviews = {});
+  let flags = [];
+  let timer = null;
+  function lookupSoon() { clearTimeout(timer); timer = setTimeout(lookup, 300); }
+  async function lookup() {
+    const want = draft.rows.filter((r) => reviewFlag(r) && !(previewKey(r) in previews));
+    const keys = [...new Set(want.map(previewKey))];
+    if (!keys.length) return;
+    const lines = keys.map((k) => { const r = want.find((x) => previewKey(x) === k); return { amount: 1, unit: r.unit, name: r.name }; });
+    let out = null;
+    try { out = (await api.unitsPreview(lines)).lines; } catch (e) { out = null; }
+    keys.forEach((k, n) => { previews[k] = (out && out[n]) || {}; });  // a failure shows the plain reason
+    flags.forEach((f) => f());
+  }
   function paintRows(focusLast) {
+    flags = [];
     clear(list);
     draft.rows.forEach((r, i) => list.appendChild(rowNode(r, i)));
     if (!draft.rows.length) list.appendChild(h('li', { class: 'sub' }, 'No ingredients yet.'));
     if (focusLast) { const last = list.querySelector('li:last-child .import-name input'); if (last) last.focus(); }
+    lookup();
   }
   const save = h('button', { class: 'btn primary', type: 'button', onclick: async () => {
     const r = reviewBody(draft);
@@ -251,13 +280,15 @@ function totalsTable(meal) {
       h('td', null, per[k] == null ? '-' : k === 'kcal' ? fmtNum(per[k], 0) : microValue(per[k], unit) + ' ' + unit)))));
 }
 
-// "Wheat flour [USDA] - 1 cup, 125 g - 455 kcal". A Check Amount row shows its tentative amount without calories.
-function foodLine(it) {
+// "Wheat flour [USDA] - 1 cup, 125 g - 455 kcal". A Check Amount row shows its tentative amount without calories. A row whose
+// weight comes from a unit weight or an estimate carries the Estimated Weight tag (onSave: the grams typed in it).
+function foodLine(it, onSave) {
   const f = it.food;
+  const tag = it.check ? null : weightTagNode(it, f.name, onSave);
   return h('span', { class: 'item-sub' }, (f.brand ? f.name + ' (' + f.brand + ')' : f.name) + ' ', sourceBadge(f.source, true),
     ' - ' + matchedAmountText(it.amount, it.unit, it.grams) + (it.check ? '' : ' - ' + fmtNum(it.kcal, 0) + ' kcal'),
     it.check ? null : kcalCue(it),
-    it.estimated && !it.check ? [' ', h('span', { class: 'src-est', title: 'From ' + (ESTIMATE_SOURCES[it.estimate_source] || ESTIMATE_SOURCES.guess) }, 'Estimated Conversion')] : null);
+    tag ? [' ', tag] : it.estimated && !it.check ? [' ', h('span', { class: 'src-est', title: 'From ' + (ESTIMATE_SOURCES[it.estimate_source] || ESTIMATE_SOURCES.guess) }, 'Estimated Conversion')] : null);
 }
 
 // Why a Check Amount row needs one, in words next to its chip: "No standard weight for clove, enter grams".
@@ -337,6 +368,18 @@ export async function renderMatch(root, params, ctx) {
       const food = await foodOf(p);
       await apply(item.id, { food_id: food.id, amount: p.amount, unit: p.unit, ...(p.check ? { check: true } : {}) });
     } catch (e) { fail(e); }
+  }
+  // The grams typed in an Estimated Weight tag: a match in g with remember, so they become your weight of one of the line's unit
+  // (Enter Grams does the same). On a suggestion it accepts it with those grams.
+  async function typedGrams(item, foodId, grams) {
+    setMeal(await api.matchItem(meal.id, item.id, { food_id: foodId, amount: grams, unit: 'g', remember: true }));
+    drop([item.id]);
+    paintAll(item.id);
+    show(status, message('Saved ' + fmtNum(grams, 1) + ' g for ' + item.food_name + '. The weight is remembered for this food.'));
+  }
+  async function acceptGrams(item, p, grams) {
+    const food = await foodOf(p);
+    await typedGrams({ ...item, food_name: food.name }, food.id, grams);
   }
   async function acceptAll() {
     const pending = pendingProposals(meal.items, props);
@@ -549,7 +592,8 @@ export async function renderMatch(root, params, ctx) {
       h('p', { class: 'proposal-head' }, proposalHead(p) + ' ', p.food ? sourceBadge(p.food.source, true) : null,
         p.kind === 'candidate' && !bySearch && !p.from_previous ? h('span', { class: 'src-est' }, ' Database Match') : null,
         p.from_previous ? h('span', { class: 'src-est previous-cue' }, ' ' + PREVIOUS_CUE) : null),
-      h('p', null, proposalText(p) + (p.food ? kcal : ''), p.estimated ? [' ', h('span', { class: 'src-est' }, 'Estimated Conversion')] : null),
+      h('p', null, proposalText(p) + (p.food ? kcal : ''), weightTag(p) ? [' ', weightTagNode(p, p.food.name, (g) => acceptGrams(item, p, g))]
+        : p.estimated ? [' ', h('span', { class: 'src-est' }, 'Estimated Conversion')] : null),
       p.food && p.note && !p.from_previous ? h('p', { class: 'sub' }, sentence(p.note)) : null,
       est && !p.food.id ? h('p', { class: 'sub' }, 'No database food fitted, so this is an estimate. Accept saves it as a Claude food.') : null,
       p.warnings && p.warnings.length ? h('ul', { class: 'warnings' }, p.warnings.map((w) => h('li', null, sentence(w)))) : null,
@@ -613,7 +657,8 @@ export async function renderMatch(root, params, ctx) {
     const box = !item.skipped ? h('input', { type: 'checkbox', checked: selected.indexOf(item.id) >= 0, 'aria-label': 'Select ' + label,
       onchange: () => { selected = toggleId(selected, item.id); keepSel(); paintHead(); } }) : null;
     const chip = (text) => h('span', { class: 'match-state match-' + state }, text);
-    const stateNode = state === 'matched' ? foodLine(item)
+    const onGrams = (g) => typedGrams({ ...item, food_name: item.food.name }, item.food_id, g);
+    const stateNode = state === 'matched' ? foodLine(item, onGrams)
       : state === 'check' ? h('span', { class: 'match-text' }, h('span', { class: 'item-sub' }, chip('Check Amount')), reasonLine(item), foodLine(item))
         : h('span', { class: 'item-sub' }, chip(state === 'skipped' ? 'Skipped' : 'Unmatched'));
     const p = props[item.id];

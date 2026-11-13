@@ -256,7 +256,8 @@ RECIPE_MATCH_MAX = 15
 EST_TOKENS_RECIPE_PROMPT = 900
 EST_TOKENS_RECIPE_OUT = 1700  # ingredient list plus the method steps
 EST_TOKENS_MATCH_ROW_IN = 450  # the ingredient plus up to 6 database candidates
-EST_TOKENS_MATCH_ROW_OUT = 160
+EST_TOKENS_MATCH_ROW_OUT = 190  # the match plus, where a line needs one, a unit weight or density (issue #45 step 7)
+EST_TOKENS_MATCH_WEIGHT_PROMPT = 100  # the weight and density rules in the match instruction and schema
 
 
 def estimate_recipe_tokens(chars: int = 0, images: int = 0) -> tuple[int, int]:
@@ -285,7 +286,7 @@ def estimate_recipe_url_tokens() -> tuple[int, int]:
 
 def estimate_match_tokens(rows: int) -> tuple[int, int]:
     n = min(RECIPE_MATCH_MAX, max(1, rows))
-    return EST_TOKENS_RECIPE_PROMPT + n * EST_TOKENS_MATCH_ROW_IN, n * EST_TOKENS_MATCH_ROW_OUT
+    return EST_TOKENS_RECIPE_PROMPT + EST_TOKENS_MATCH_WEIGHT_PROMPT + n * EST_TOKENS_MATCH_ROW_IN, n * EST_TOKENS_MATCH_ROW_OUT
 
 
 # Full Claude Use: Claude fills a saved food's missing micronutrients on Refresh Nutrients (one small request per food).

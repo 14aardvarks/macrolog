@@ -774,6 +774,56 @@ export function checkSummary(list) {
   return '';
 }
 
+// ---------- Estimated Weight tag (issue #45 step 8) ----------
+// The source of a line's weight in words. weight_source (the unit row: user, fdc, off, table, ai) comes first, else estimate_source
+// (claude, density, guess). "printed" is a size printed on the line (the review screen).
+export const WEIGHT_SOURCE_WORDS = { user: 'Your Weight', fdc: 'USDA', off: 'Open Food Facts', table: 'Typical Weight', ai: 'Claude Estimate',
+  claude: 'Claude Estimate', density: 'Typical Density', guess: '1 g per ml Guess', printed: 'Printed Size' };
+// The tag of a matched row, proposal or recipe log part, or null: shown when the line converts through a unit weight (2 cloves at
+// 3 g) or an estimate, and the server gave its grams (weight_grams). { estimated, grams, source, word, label, text }.
+export function weightTag(it) {
+  if (!it || it.check || it.kind === 'none') return null;
+  const g = Number(it.weight_grams);
+  if (!(it.weight_grams != null && g > 0) || it.unit === 'g') return null;
+  const src = it.estimated ? (it.weight_source === 'ai' || it.estimate_source === 'claude' ? 'claude' : it.weight_source || it.estimate_source || 'guess')
+    : it.weight_source;
+  if (!src) return null;
+  const word = WEIGHT_SOURCE_WORDS[src] || WEIGHT_SOURCE_WORDS.guess;
+  const label = it.estimated ? 'Estimated Weight' : 'Weight';
+  const grams = fmtNum(g, g >= 10 ? 0 : 1) + ' g';
+  return { estimated: !!it.estimated, grams: g, source: src, word, label, text: label + ' ' + grams + ', ' + word };
+}
+// The estimated rows of a recipe (or a recipe log's parts) for the header: { id, text } with "Garlic: 6 g, Typical Weight".
+export function estimateList(meal) {
+  const rows = ((meal && (meal.items || meal.parts)) || []).filter((it) => !it.skipped && !it.check);
+  const name = (it) => capFirst(String((it.src && it.src.name) || (it.food && it.food.name) || it.name || 'Ingredient').trim());
+  const out = [];
+  rows.forEach((it) => {
+    const t = weightTag(it);
+    if (t && t.estimated) out.push({ id: it.id, text: name(it) + ': ' + fmtNum(t.grams, t.grams >= 10 ? 0 : 1) + ' g, ' + t.word });
+    else if (it.estimated && (it.food || it.food_id)) out.push({ id: it.id, text: name(it) + ': ' + (WEIGHT_SOURCE_WORDS[it.estimate_source] || WEIGHT_SOURCE_WORDS.guess) });
+  });
+  return out;
+}
+export const estimateSummary = (n) => (n ? (n === 1 ? '1 amount is estimated' : n + ' amounts are estimated') : '');
+// The import review before matching, from POST /api/units/preview: "Typical weight 3 g per clove (estimate)", "Standard can size
+// 425 g (estimate)", or the Check Amount reason. '' for a printed size (pkgNote says it) and every other line.
+export function unitPreviewText(p) {
+  if (!p || p.source === 'printed') return '';
+  if (p.reason) return checkReasonLine(p.reason, p.unit);
+  if (!(Number(p.grams) > 0)) return '';
+  const g = fmtNum(p.grams, p.grams >= 10 ? 0 : 1) + ' g';
+  return p.note ? p.note.replace(/ assumed$/, '') + ' ' + g + ' (estimate)' : 'Typical weight ' + g + ' per ' + unitWord(p.unit, 1) + ' (estimate)';
+}
+// The grams typed in the tag: a number above 0 and at most 100000, else null.
+export function tagGrams(text) {
+  const v = parseAmount(String(text == null ? '' : text).trim());
+  return v != null && v > 0 && v <= 100000 ? v : null;
+}
+export const ESTIMATE_HELP = 'Some recipe amounts have no printed weight, such as 2 cloves garlic or 1 can of beans. The app then uses the best weight it knows: '
+  + 'your own weight first, then USDA and Open Food Facts, then a typical weight table, then a Claude estimate when Claude matched the recipe. '
+  + 'Each one is tagged Estimated Weight with its source. Tap the grams to type your own; it is remembered for that food.';
+
 // "1 cup, 125 g": the matched amount, plus grams when the server knows them and the unit is not grams already.
 export function matchedAmountText(amount, unit, grams) {
   const g = Number(grams);
@@ -1289,7 +1339,7 @@ export function autoClaudePlan(settings, st, feature) {
 // (computed on the server from the real token sizes, with your prices, else the Haiku 5.5 sample prices).
 export const FULL_CLAUDE_ACTIONS = [
   ['lookup', 'Claude lookup when a search finds nothing'], ['micros', 'Missing nutrients for one food'],
-  ['label', 'Label photo'], ['recipe_text', 'Recipe import from text'], ['match', 'Claude match of 15 ingredients'],
+  ['label', 'Label photo'], ['recipe_text', 'Recipe import from text'], ['match', 'Claude match of 15 ingredients, with weights'],
 ];
 export function fullClaudeRows(costs) {
   if (!costs) return [];

@@ -580,3 +580,17 @@ body.has-undo main { padding-bottom: 96px; }  /* room to scroll the last rows ab
 .match-est { border-color: var(--line); color: var(--muted); }
 .check-reason { display: block; font-size: .875rem; color: var(--text); margin-top: 2px; }
 .pkg-note { font-size: .8125rem; color: var(--muted); margin: 2px 0 0; }
+
+/* Estimated Weight tag (issue #45 step 8): grams and source in words, the grams a button that opens a grams box in place.
+   Both states keep the same height, so nothing below moves. */
+.weight-tag { display: flex; flex-wrap: wrap; width: fit-content; max-width: 100%; align-items: center; gap: 4px; min-height: 44px; font-size: .8125rem; color: var(--muted); }
+.weight-tag .weight-label { display: inline-block; padding: 0 8px; border-radius: 99px; border: 1px solid var(--line); color: var(--text); }
+.weight-tag.weight-est .weight-label { border-style: dashed; }
+.weight-tag .weight-grams { font-size: .875rem; font-weight: 600; }
+.weight-tag .link-btn.weight-grams { padding: 0 6px; }
+.weight-tag .weight-input { width: 6ch; min-height: 36px; padding: 2px 6px; font-size: 1rem; }
+.weight-tag .btn.small { min-height: 36px; }
+.weight-tag .weight-err { flex-basis: 100%; color: var(--danger, var(--text)); }
+.weight-tag .weight-err:empty { display: none; }
+.check-notes .check-list.estimates { border-color: var(--line); background: transparent; }
+.import-flag { min-height: 44px; }

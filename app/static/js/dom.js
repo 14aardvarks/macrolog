@@ -1,4 +1,4 @@
-import { sentence, sourceLabel, kcalEstimated, KCAL_ESTIMATE_CUE, isEstimate, sourceNote, CUSTOM_UNIT, CUSTOM_UNIT_LABEL, CUSTOM_UNIT_MAX, CUSTOM_UNIT_HINT, cleanUnitText, unitToSave, checkList, checkSummary } from './util.js';
+import { sentence, sourceLabel, kcalEstimated, KCAL_ESTIMATE_CUE, isEstimate, sourceNote, CUSTOM_UNIT, CUSTOM_UNIT_LABEL, CUSTOM_UNIT_MAX, CUSTOM_UNIT_HINT, cleanUnitText, unitToSave, checkList, checkSummary, estimateList, estimateSummary, weightTag, tagGrams } from './util.js';
 
 // Tiny DOM helpers. Text always goes through textContent / text nodes, never innerHTML.
 
@@ -117,20 +117,63 @@ export function kcalCue(x) {
   return kcalEstimated(x) ? h('span', { class: 'src-wrap' }, h('span', { class: 'src-est kcal-cue' }, KCAL_ESTIMATE_CUE)) : null;
 }
 
-// The recipe header note on amounts to check (issue #45): "2 ingredients need a check", the first reason under it ("Garlic: no
-// standard weight for clove, enter grams") and the rest in a collapsed list. Text says it all, the chip only repeats it. null when none.
-export function checkBlock(meal) {
-  const list = checkList(meal);
-  if (!list.length) return null;
+// The recipe header notes on amounts (issue #45): "2 ingredients need a check" with the first reason under it ("Garlic: no
+// standard weight for clove, enter grams"), and "3 amounts are estimated" with the first ingredient and its source ("Garlic: 6 g,
+// Typical Weight"); the rest of each list is collapsed. Text says it all, the chip only repeats it. null when there is neither.
+function noteList(kind, chipText, summary, list) {
   const [first, ...rest] = list;
-  const checks = list.some((x) => x.check);
-  return h('div', { class: 'check-list', role: 'note' },
-    h('p', { class: 'check-summary' }, h('span', { class: 'match-state ' + (checks ? 'match-check' : 'match-est') }, checks ? 'Check Amount' : 'Estimated'),
-      ' ', checkSummary(list)),
+  return h('div', { class: 'check-list ' + kind, role: 'note' },
+    h('p', { class: 'check-summary' }, h('span', { class: 'match-state ' + (kind === 'checks' ? 'match-check' : 'match-est') }, chipText), ' ', summary),
     h('p', { class: 'sub check-first' }, first.text),
     rest.length ? h('details', { class: 'check-more' }, h('summary', null, 'Show ' + rest.length + ' More'),
       h('ul', { class: 'sub' }, rest.map((x) => h('li', null, x.text)))) : null);
 }
+export function checkBlock(meal) {
+  const checks = checkList(meal).filter((x) => x.check);
+  const est = estimateList(meal);
+  if (!checks.length && !est.length) return null;
+  return h('div', { class: 'check-notes' },
+    checks.length ? noteList('checks', 'Check Amount', checkSummary(checks), checks) : null,
+    est.length ? noteList('estimates', 'Estimated', estimateSummary(est.length), est) : null);
+}
+
+// The Estimated Weight tag (issue #45 step 8): "Estimated Weight 6 g, Typical Weight", the grams a button when onSave is given.
+// Tapping the grams swaps them in place for a small grams box with Save and Cancel; onSave(grams) returns a promise, and an error
+// keeps the box open with the message. Text names the source, so nothing depends on color.
+export function weightTagNode(it, name, onSave) {
+  const t = weightTag(it);
+  if (!t) return null;
+  const grams = fmtGrams(t.grams);
+  const tag = h('span', { class: 'weight-tag' + (t.estimated ? ' weight-est' : '') });
+  const err = h('span', { class: 'weight-err', role: 'alert' });
+  function view(focus) {
+    clear(tag);
+    const g = onSave ? h('button', { class: 'link-btn weight-grams', type: 'button', 'aria-label': 'Edit grams of ' + name + ', ' + grams + ', ' + t.word,
+      onclick: edit }, grams) : h('span', { class: 'weight-grams' }, grams);
+    tag.append(h('span', { class: 'weight-label' }, t.label), ' ', g, ' ', h('span', { class: 'weight-src' }, t.word));
+    if (focus) g.focus();
+  }
+  function edit() {
+    clear(tag);
+    const box = h('input', { class: 'weight-input', inputmode: 'decimal', autocomplete: 'off', value: String(Math.round(t.grams * 10) / 10),
+      'aria-label': 'Grams of ' + name, size: '5' });
+    const save = async () => {
+      const v = tagGrams(box.value);
+      if (v == null) { err.textContent = 'Enter grams above zero.'; box.setAttribute('aria-invalid', 'true'); box.focus(); return; }
+      ok.disabled = true;
+      try { await onSave(v); } catch (e) { ok.disabled = false; err.textContent = e.message || 'Could not save the grams.'; box.focus(); }
+    };
+    const ok = h('button', { class: 'btn small primary', type: 'button', onclick: save }, 'Save');
+    box.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); save(); } else if (e.key === 'Escape') { err.textContent = ''; view(true); } });
+    tag.append(box, ' g ', ok, ' ',
+      h('button', { class: 'btn small ghost', type: 'button', onclick: () => { err.textContent = ''; view(true); } }, 'Cancel'), err);
+    box.focus();
+    box.select();
+  }
+  view(false);
+  return tag;
+}
+const fmtGrams = (g) => (g >= 10 ? String(Math.round(g)) : String(Math.round(g * 10) / 10)) + ' g';
 
 // A line for the picker and the food form: the badge, and for Claude foods the estimate note.
 export function sourceLine(source) {
