@@ -186,6 +186,8 @@ def init(c: sqlite3.Connection) -> None:
         c.execute("ALTER TABLE settings ADD COLUMN auto_match TEXT NOT NULL DEFAULT 'search'")
     if "refresh_mode" not in cols:  # databases made before the Refresh Nutrients choice
         c.execute("ALTER TABLE settings ADD COLUMN refresh_mode TEXT NOT NULL DEFAULT 'search'")
+    if "refresh_mode_set" not in cols:  # databases made before an explicit Search Only could be told from the default (0 = follow Full Claude Use)
+        c.execute("ALTER TABLE settings ADD COLUMN refresh_mode_set INTEGER NOT NULL DEFAULT 0")
     if "recipe_owner" not in cols:  # databases made before the Recipes owner filter
         c.execute("ALTER TABLE settings ADD COLUMN recipe_owner TEXT NOT NULL DEFAULT 'mine'")
     for table in ("foods", "entries"):  # databases made before estimated calories: all stay as stored (0, a real value)
@@ -850,7 +852,7 @@ def put_settings(user: CurrentUser, body: dict = Body(...)):
 # ---------- display settings and micronutrient targets ----------
 
 def read_display(c, uid: int) -> dict:
-    row = c.execute(f"SELECT {', '.join(DISPLAY_FLAGS)}, micros_hidden, today_view, search_source, auto_match, recipe_owner, refresh_mode FROM settings WHERE user_id=?",
+    row = c.execute(f"SELECT {', '.join(DISPLAY_FLAGS)}, micros_hidden, today_view, search_source, auto_match, recipe_owner, refresh_mode, refresh_mode_set FROM settings WHERE user_id=?",
                     (uid,)).fetchone()
     out = {k: bool(row[k]) if row else bool(v) for k, v in DISPLAY_FLAGS.items()}
     hidden = set((row["micros_hidden"] if row else "").split(","))
@@ -860,6 +862,8 @@ def read_display(c, uid: int) -> dict:
     out["auto_match"] = row["auto_match"] if row and row["auto_match"] in AUTO_MATCHES else "search"
     out["recipe_owner"] = row["recipe_owner"] if row and row["recipe_owner"] in RECIPE_OWNERS else "mine"
     out["refresh_mode"] = row["refresh_mode"] if row and row["refresh_mode"] in REFRESH_MODES else "search"
+    # refresh_mode_set: the user picked it (so an explicit Search Only holds under Full Claude Use); a stored search_claude always counts as picked
+    out["refresh_mode_set"] = bool(row and (row["refresh_mode_set"] or out["refresh_mode"] == "search_claude"))
     return out
 
 
@@ -906,9 +910,10 @@ def put_display(user: CurrentUser, body: dict = Body(...)):
             if body["refresh_mode"] not in REFRESH_MODES:
                 raise bad("refresh_mode must be " + " or ".join(REFRESH_MODES))
             d["refresh_mode"] = body["refresh_mode"]
-        cols = [*DISPLAY_FLAGS, "micros_hidden", "today_view", "search_source", "auto_match", "recipe_owner", "refresh_mode"]
+            d["refresh_mode_set"] = True
+        cols = [*DISPLAY_FLAGS, "micros_hidden", "today_view", "search_source", "auto_match", "recipe_owner", "refresh_mode", "refresh_mode_set"]
         vals = [int(d[k]) for k in DISPLAY_FLAGS] + [",".join(k for k in MICROS if k not in d["micros_shown"]), d["today_view"],
-                                                     d["search_source"], d["auto_match"], d["recipe_owner"], d["refresh_mode"]]
+                                                     d["search_source"], d["auto_match"], d["recipe_owner"], d["refresh_mode"], int(d["refresh_mode_set"])]
         c.execute("INSERT OR IGNORE INTO settings(user_id) VALUES(?)", (user["id"],))
         c.execute(f"UPDATE settings SET {', '.join(k + '=?' for k in cols)} WHERE user_id=?", [*vals, user["id"]])
         return read_display(c, user["id"])

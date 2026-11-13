@@ -1,23 +1,19 @@
 // Refresh Nutrients: fills blank micronutrients from the food's original source. Never changes existing values.
 import { api } from './api.js';
 import { h, message, show, clear } from './dom.js';
-import { missingMicros, kcalEstimated, refreshTargets, bulkSummary, pendingPlan, microsWhat, sentence, CLAUDE_CAP_NOTE, REFRESH_MODES, refreshModeHint, refreshClaudeReason, resolveRefreshMode } from './util.js';
+import { missingMicros, kcalEstimated, refreshTargets, bulkSummary, pendingPlan, microsWhat, sentence, CLAUDE_CAP_NOTE, REFRESH_CAPPED, resolveRefreshMode, refreshFallbackNote } from './util.js';
 import { refreshClaude } from './notice.js';
 
-// app.js hands over the signed-in user's settings (Full Claude Use, Confirm before using Claude), the display settings (refresh_mode)
-// and the display save, so every Refresh Nutrients control shows the same choice: Search Only or Search Then Claude.
+// app.js hands over the signed-in user's settings (Full Claude Use, Confirm before using Claude) and the display settings (refresh_mode),
+// so every Refresh Nutrients button uses the Search Only or Search Then Claude choice saved in Settings, Display.
 let settingsOf = () => null;
 let displayOf = () => null;
-let saveDisplay = async () => ({});
-export function useSettings(get, getDisplay, save) {
+export function useSettings(get, getDisplay) {
   settingsOf = get;
   if (getDisplay) displayOf = getDisplay;
-  if (save) saveDisplay = save;
 }
 const fullOn = () => { const s = settingsOf(); return !!(s && s.full_claude === true); };
 
-// The pick made this visit under Full Claude Use (Search Only cannot be saved apart from the default, see util.js resolveRefreshMode).
-let session = null;
 const STATUS_MS = 20000;
 let seen = { st: null, at: 0 };
 async function claudeStatus(fresh) {
@@ -27,64 +23,22 @@ async function claudeStatus(fresh) {
   seen = { st, at: Date.now() };
   return st;
 }
-const modeNow = (st) => resolveRefreshMode((displayOf() || {}).refresh_mode, fullOn(), session, st);
-
-// Listeners repaint when any control changes the choice, so every control on a screen agrees.
-const listeners = new Set();
-function onMode(fn) { listeners.add(fn); }
-function modeChanged() { for (const fn of listeners) if (!fn.alive || fn.alive()) fn(); }
+const modeNow = (st) => { const d = displayOf() || {}; return resolveRefreshMode(d.refresh_mode, d.refresh_mode_set, fullOn(), st); };
 
 // Whether the next run asks Claude (Search Then Claude chosen and available), from the last status read.
 const wantsClaude = () => modeNow(seen.st).value === 'search_claude';
 
-// The user picks a mode. Search Then Claude is refused while Claude is not available. Under Full Claude Use Search Only lasts for the visit,
-// otherwise the pick is saved as display.refresh_mode. Throws when the save fails. Repaints every control.
-export async function chooseRefreshMode(value) {
-  const st = await claudeStatus(false);
-  if (value === 'search_claude' && refreshClaudeReason(st)) return;
-  if (value === 'search' && fullOn()) session = 'search';
-  else { session = null; await saveDisplay({ refresh_mode: value }); }
-  modeChanged();
-}
-
-// The two option control shown next to every Refresh Nutrients button: Search Only or Search Then Claude. Search Then Claude is
-// disabled with the reason when Claude cannot be used. Returns { el }; the whole thing hides with el.hidden.
-function modeControl() {
-  const id = 'rm' + Math.random().toString(36).slice(2, 8);
-  const reasonP = h('p', { class: 'sub', id: id + '-why', hidden: '' });
-  const btns = REFRESH_MODES.map((m) => h('button', { class: 'seg-btn', type: 'button', 'data-mode': m.value, onclick: () => pick(m.value) }, m.label));
-  const hint = h('p', { class: 'sub', id: id + '-hint' }, refreshModeHint(fullOn()));
-  const group = h('div', { class: 'segmented', role: 'group', 'aria-label': 'Refresh Nutrients mode', 'aria-describedby': id + '-hint ' + id + '-why' }, btns);
-  const el = h('div', { class: 'refresh-mode' }, group, reasonP, hint);
-  async function pick(value) {
-    try { await chooseRefreshMode(value); } catch (e) { show(reasonP, message(e.message, 'error')); }
-  }
-  function paint() {
-    const m = modeNow(seen.st);
-    btns.forEach((b) => {
-      const claude = b.dataset.mode === 'search_claude';
-      b.setAttribute('aria-pressed', b.dataset.mode === m.value ? 'true' : 'false');
-      b.disabled = claude && (!seen.at || !!m.reason);
-      if (claude && m.reason) b.setAttribute('aria-describedby', id + '-why'); else b.removeAttribute('aria-describedby');
-    });
-    hint.textContent = refreshModeHint(fullOn());
-    if (seen.at && m.reason) { reasonP.textContent = 'Search Then Claude is not available. ' + m.reason; reasonP.hidden = false; } else { clear(reasonP); reasonP.hidden = true; }
-  }
-  paint.alive = () => el.isConnected || !el._mounted;
-  const repaint = () => { if (el.isConnected) el._mounted = true; paint(); };
-  repaint.alive = paint.alive;
-  onMode(repaint);
-  paint();
-  claudeStatus(false).then(() => { repaint(); modeChanged(); });
-  return { el };
-}
-
-// Whether Claude may fill blanks for the next n foods: nothing for Search Only (even with Full Claude Use on) and when Claude is not
-// available; a quiet note at the cap; else the usual confirm with the cost (Confirm before using Claude on) or nothing (off).
+// Whether Claude may fill blanks for the next n foods: nothing for Search Only (even with Full Claude Use on). A chosen Search Then Claude
+// that cannot be used falls back to Search Only with one quiet note naming the reason (Full Claude Use as the default stays silent,
+// except a note at the cap). Else the usual confirm with the cost (Confirm before using Claude on) or nothing (off).
 export async function claudeGo(n) {
   if (!n) return { go: false, note: '' };
   const st = await claudeStatus(true);
-  if (modeNow(st).value !== 'search_claude') return { go: false, note: '' };
+  const m = modeNow(st);
+  if (m.value !== 'search_claude') {
+    if (m.wanted === 'search_claude' && (!m.forced || m.reason === REFRESH_CAPPED)) return { go: false, note: refreshFallbackNote(m.reason) };
+    return { go: false, note: '' };
+  }
   return refreshClaude(settingsOf(), st, { what: microsWhat(n), requests: n, query: { micros: Math.min(10, n) } });
 }
 
@@ -92,7 +46,6 @@ export async function claudeGo(n) {
 export function refreshControl(food, onDone) {
   const status = h('div', { 'aria-live': 'polite' });
   const btn = h('button', { class: 'btn', type: 'button', onclick: run }, 'Refresh Nutrients');
-  const mode = modeControl();
   async function run() {
     btn.disabled = true;
     try {
@@ -100,14 +53,14 @@ export function refreshControl(food, onDone) {
       const res = await api.refreshNutrients(food.id, ai.go);
       Object.assign(food, res.food);
       show(status, message(ai.note ? sentence(res.message) + ' ' + ai.note : res.message, res.filled.length ? 'ok' : ''));
-      if (!missingMicros(food).length && !kcalEstimated(food)) { btn.hidden = true; mode.el.hidden = true; }
+      if (!missingMicros(food).length && !kcalEstimated(food)) { btn.hidden = true; }
       if (onDone) onDone(res);
     } catch (e) {
       show(status, message(e.message, 'error'));
     }
     btn.disabled = false;
   }
-  return { el: h('div', { class: 'refresh' }, mode.el, btn, status) };
+  return { el: h('div', { class: 'refresh' }, btn, status) };
 }
 
 // Refreshes the foods one after another and stops at a rate limit (429). left is how many more wait after this batch.
@@ -138,9 +91,8 @@ export async function refreshBatch(todo, left, claude) {
 export function refreshAllControl(getFoods, reload) {
   const status = h('div', { 'aria-live': 'polite' });
   const btn = h('button', { class: 'btn', type: 'button', onclick: run }, 'Refresh All Missing');
-  const mode = modeControl();
-  const el = h('div', { class: 'refresh' }, mode.el, btn, status);
-  function update() { btn.hidden = refreshTargets(getFoods()).todo.length === 0; mode.el.hidden = btn.hidden; }
+  const el = h('div', { class: 'refresh' }, btn, status);
+  function update() { btn.hidden = refreshTargets(getFoods()).todo.length === 0; }
   async function run() {
     const { todo, left } = refreshTargets(getFoods());
     btn.disabled = true;
@@ -168,15 +120,13 @@ export function refreshLoggedControl({ scope, load, label, quiet, onFinish }) {
   const st = scopeState(scope);
   const status = h('div', { 'aria-live': 'polite' });
   const btn = h('button', { class: 'btn', type: 'button', onclick: run }, label);
-  const mode = modeControl();
-  const el = h('div', { class: 'refresh' }, mode.el, btn, status);
+  const el = h('div', { class: 'refresh' }, btn, status);
   el.hidden = !!quiet;  // starts hidden when quiet, so a repaint of Today does not shift the page when the control turns out unneeded
   async function paint() {
     try {
       await claudeStatus(false);
       const plan = pendingPlan((await load(wantsClaude())).ids, st.done);
       btn.hidden = !plan.todo.length;
-      mode.el.hidden = btn.hidden;
       el.hidden = !!quiet && !plan.total && !st.note;
       if (st.note && Date.now() >= st.note.until) st.note = null;
       show(status, st.note ? message(st.note.text, st.note.kind) : '');
@@ -203,9 +153,6 @@ export function refreshLoggedControl({ scope, load, label, quiet, onFinish }) {
     btn.disabled = false;
     if (onFinish) onFinish(); else await paint();
   }
-  const again = () => { if (el.isConnected) { el._mounted = true; paint(); } };
-  again.alive = () => el.isConnected || !el._mounted;
-  onMode(again);
   paint();
   return { el };
 }

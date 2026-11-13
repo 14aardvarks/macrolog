@@ -137,7 +137,7 @@ def test_migration_adds_micro_columns_and_display_settings(tmp_path):
     assert set(core.NEW_MICROS) <= {r[1] for r in c.execute("PRAGMA table_info(foods)")}
     assert core.read_display(c, 1) == {**{k: bool(v) for k, v in core.DISPLAY_FLAGS.items()}, "micros_shown": list(core.MICROS),
                                             "today_view": "list", "search_source": "all",
-                                            "auto_match": "search", "recipe_owner": "mine", "refresh_mode": "search"}
+                                            "auto_match": "search", "recipe_owner": "mine", "refresh_mode": "search", "refresh_mode_set": False}
     assert c.execute("SELECT start_screen FROM settings").fetchone()[0] == "scan"
 
 
@@ -147,7 +147,7 @@ def test_display_defaults_keep_screens_as_before(a):
     d = a.get("/api/settings/display").json()
     assert d == {"show_macros": True, "show_micros": True, "show_split": True, "show_macro_bar": True, "show_table": True,
                  "group_recipes": True, "micros_open": False, "micros_shown": list(core.MICROS), "today_view": "list",
-                 "search_source": "all", "auto_match": "search", "recipe_owner": "mine", "refresh_mode": "search"}
+                 "search_source": "all", "auto_match": "search", "recipe_owner": "mine", "refresh_mode": "search", "refresh_mode_set": False}
 
 
 def test_display_put_partial_per_user_and_other_settings_kept(a, b):
@@ -293,6 +293,17 @@ def test_refresh_mode_default_save_and_isolation(a, b):
     assert b.get("/api/settings/display").json()["refresh_mode"] == "search"
 
 
+def test_refresh_mode_explicit_search_only_is_remembered(a):
+    d = a.get("/api/settings/display").json()
+    assert d["refresh_mode"] == "search" and d["refresh_mode_set"] is False  # the plain default, follows Full Claude Use
+    a.put("/api/settings/display", json={"show_split": False})
+    assert a.get("/api/settings/display").json()["refresh_mode_set"] is False  # other saves do not pick it
+    d = a.put("/api/settings/display", json={"refresh_mode": "search"}).json()
+    assert d["refresh_mode"] == "search" and d["refresh_mode_set"] is True  # an explicit Search Only survives
+    a.put("/api/settings/display", json={"auto_match": "off"})
+    assert a.get("/api/settings/display").json()["refresh_mode_set"] is True
+
+
 @pytest.mark.parametrize("value", ["", None, "claude", "Search", "search claude", "search_claude ", "off", True, 1, ["search"], {"a": 1}])
 def test_refresh_mode_validation(a, value):
     r = a.put("/api/settings/display", json={"refresh_mode": value})
@@ -315,6 +326,20 @@ def test_refresh_mode_migrates_and_bad_stored_value_reads_as_default(tmp_path, m
     for v in core.REFRESH_MODES:
         c.execute("UPDATE settings SET refresh_mode=?", (v,))
         assert core.read_display(c, 1)["refresh_mode"] == v
+
+
+def test_refresh_mode_set_migration_keeps_old_saved_values(tmp_path, monkeypatch):
+    import sqlite3
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "old2.db"))
+    c = sqlite3.connect(tmp_path / "old2.db")
+    c.executescript("CREATE TABLE settings(user_id INTEGER PRIMARY KEY, start_screen TEXT NOT NULL DEFAULT 'today', default_meal TEXT,"
+                    " refresh_mode TEXT NOT NULL DEFAULT 'search');"
+                    " INSERT INTO settings(user_id, refresh_mode) VALUES(1, 'search_claude'), (2, 'search');")
+    c.row_factory = sqlite3.Row
+    core.init(c)
+    core.init(c)
+    assert core.read_display(c, 1)["refresh_mode_set"] is True  # a saved Search Then Claude stays a choice
+    assert core.read_display(c, 2)["refresh_mode_set"] is False  # a plain stored search stays the default
 
 
 def test_display_group_recipes_default_validation_and_per_user(a, b):

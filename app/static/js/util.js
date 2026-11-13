@@ -814,7 +814,7 @@ export const MICROS = [
 
 // What the screens show before /api/settings/display answers. Matches the server defaults.
 export const DEFAULT_DISPLAY = { show_macros: true, show_micros: true, show_split: true, show_macro_bar: true, show_table: true, group_recipes: true,
-  micros_open: false, micros_shown: MICROS.map((m) => m.key), today_view: 'list', auto_match: 'search', recipe_owner: 'mine', refresh_mode: 'search' };
+  micros_open: false, micros_shown: MICROS.map((m) => m.key), today_view: 'list', auto_match: 'search', recipe_owner: 'mine', refresh_mode: 'search', refresh_mode_set: false };
 
 // The nutrients to list, in order. Empty when the section is switched off.
 export function shownMicros(display) {
@@ -1077,9 +1077,9 @@ export function effectiveAutoMatch(setting, full) {
 
 // ---------- Refresh Nutrients mode ----------
 // Every refresh run is Search Only (source lookups, free, never calls Claude) or Search Then Claude (source first, then Claude fills
-// what is still blank). Saved as display.refresh_mode (same values as core.REFRESH_MODES). Search is the default, and Full Claude Use makes
-// Search Then Claude the default. The saved value cannot tell an explicit Search from the default, so under Full Claude Use a pick of
-// Search Only lasts for the visit (session) and the saved value is only changed by picking Search Then Claude.
+// what is still blank). Chosen in Settings, Display as display.refresh_mode (same values as core.REFRESH_MODES) and used by every Refresh
+// button. display.refresh_mode_set says the user picked it; until then Search Only is the default and Full Claude Use makes Search Then
+// Claude the default, so an explicit Search Only holds under Full Claude Use.
 export const REFRESH_MODES = [{ value: 'search', label: 'Search Only' }, { value: 'search_claude', label: 'Search Then Claude' }];
 export const refreshMode = (v) => (REFRESH_MODES.some((o) => o.value === v) ? v : 'search');
 
@@ -1095,15 +1095,18 @@ export function refreshClaudeReason(st) {
   return '';
 }
 
-// The mode a run uses. setting: saved display.refresh_mode, full: Full Claude Use, session: the pick made this visit (or null), st: /api/ai/status.
-// value: what the control shows and the run does (Search Only whenever Claude is not available). reason: why Search Then Claude is disabled.
-// forced: Full Claude Use made Search Then Claude the default (the saved value is the plain default).
-export function resolveRefreshMode(setting, full, session, st) {
+// The mode a run uses. setting: saved display.refresh_mode, picked: display.refresh_mode_set, full: Full Claude Use, st: /api/ai/status.
+// wanted: the effective choice (what Settings shows). value: what the run does (Search Only whenever Claude is not available).
+// reason: why Search Then Claude cannot be used. forced: Full Claude Use made Search Then Claude the default (nothing was picked).
+export function resolveRefreshMode(setting, picked, full, st) {
   const reason = refreshClaudeReason(st);
-  const saved = refreshMode(setting);
-  const want = session != null ? refreshMode(session) : (full && saved === 'search' ? 'search_claude' : saved);
-  return { value: want === 'search_claude' && !reason ? 'search_claude' : 'search', reason, forced: session == null && full === true && saved === 'search' };
+  const forced = !picked && full === true;
+  const wanted = picked ? refreshMode(setting) : (full === true ? 'search_claude' : 'search');
+  return { wanted, value: wanted === 'search_claude' && !reason ? 'search_claude' : 'search', reason, forced };
 }
+
+// The quiet note when Search Then Claude was chosen but a run fell back to Search Only. Names the reason.
+export const refreshFallbackNote = (reason) => sentence('Search Then Claude is not available, so Search Only ran') + ' ' + reason;
 
 // The line under the choice. States both defaults.
 export function refreshModeHint(full) {

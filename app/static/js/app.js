@@ -897,6 +897,9 @@ async function settingsScreen(root) {
   const total = h('p', { class: 'sub' });
   const status = h('div', { 'aria-live': 'polite' });
   const dispStatus = h('div', { 'aria-live': 'polite' });
+  const dispSec = displaySection(disp, searchSources(ai), async (patch) => {
+    try { const d = await ctx.saveDisplay(patch); clear(dispStatus); return d; } catch (err) { show(dispStatus, message(err.message, 'error')); throw err; }
+  }, { full: () => state.settings.full_claude === true, status: ai });
   const vals = () => pcts.map((p) => parseDecimal(p[1].input.value) || 0);
   const paintTotal = () => { total.textContent = 'Split totals ' + fmtNum(pctTotal(...vals()), 2) + '%. It must be 100.'; };
   pcts.forEach((p) => p[1].input.addEventListener('input', paintTotal));
@@ -933,11 +936,9 @@ async function settingsScreen(root) {
       h('h2', null, 'Daily Goals'), kcal, h('div', { class: 'grid3' }, pcts.map((p) => p[1])), total, micro.node, status,
       h('button', { class: 'btn primary', type: 'submit' }, 'Save')),
     h('div', { class: 'col-b' },
-    displaySection(disp, searchSources(ai), async (patch) => {
-      try { const d = await ctx.saveDisplay(patch); clear(dispStatus); return d; } catch (err) { show(dispStatus, message(err.message, 'error')); throw err; }
-    }), dispStatus,
+    dispSec, dispStatus,
     h('h2', null, 'Claude'),
-    renderFullClaude(s, ai, async (on) => { state.settings = { ...state.settings, ...(await api.saveSettings({ full_claude: on })) }; }),
+    renderFullClaude(s, ai, async (on) => { state.settings = { ...state.settings, ...(await api.saveSettings({ full_claude: on })) }; dispSec.repaintRefresh(); }),
     ai ? renderClaudeSection(ai, me.use_global_ai) : h('p', { class: 'sub' }, 'Claude status is not available.'),
     h('h2', null, 'Saved'), h('p', { class: 'sub' }, 'Favorites, recipes and your own foods, with meal tags.'),
     h('button', { class: 'btn', type: 'button', onclick: () => go('saved') }, 'Open Saved'),
@@ -989,5 +990,5 @@ function hideSplash() {
   hideSplash();
 })();
 
-useSettings(() => state.settings, () => state.display, (patch) => ctx.saveDisplay(patch));  // Refresh Nutrients reads Full Claude Use, Confirm before using Claude and its Search Only or Search Then Claude choice
+useSettings(() => state.settings, () => state.display);  // Refresh Nutrients reads Full Claude Use, Confirm before using Claude and the Search Only or Search Then Claude choice from Settings, Display
 startUpdates();

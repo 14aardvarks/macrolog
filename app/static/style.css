@@ -381,11 +381,6 @@ input[type=text], input[type=search], input[type=password], input[type=email], i
 
 .refresh { margin: 10px 0 16px; }
 .refresh .btn { margin-bottom: 8px; }
-.refresh-mode { margin-bottom: 8px; }
-.refresh-mode .segmented { max-width: 100%; }
-.refresh-mode .seg-btn { min-width: 0; flex: 1 1 auto; }
-.refresh-mode .seg-btn:disabled { opacity: .5; cursor: not-allowed; }
-.refresh-mode .sub { margin: 6px 0 0; }
 .nutrients { margin-bottom: 16px; }
 
 /* Source badges. The word is always shown; Claude gets a filled badge so estimates stand out in light and dark. */

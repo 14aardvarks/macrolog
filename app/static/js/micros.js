@@ -1,5 +1,5 @@
 import { h, field, select } from './dom.js';
-import { SEARCH_SOURCES, searchSource, AUTO_MATCHES, autoMatch, MICROS, shownMicros, microValue, microText, microNote, barWidth, barState, toggleMicro, parseDecimal, fmtAmount, sentence } from './util.js';
+import { SEARCH_SOURCES, searchSource, AUTO_MATCHES, autoMatch, MICROS, shownMicros, microValue, microText, microNote, barWidth, barState, toggleMicro, parseDecimal, fmtAmount, sentence, REFRESH_MODES, refreshModeHint, resolveRefreshMode } from './util.js';
 
 let seq = 0;
 
@@ -62,8 +62,9 @@ function switchRow(id, label, checked, onChange) {
 }
 
 // Settings, Display: every change is saved at once through save(patch), which returns the new display settings.
-// sources: the Source choices this server offers (util.js searchSources).
-export function displaySection(display, sources, save) {
+// sources: the Source choices this server offers (util.js searchSources). claude: { full(), status } for Refresh Nutrients, Full Claude Use now
+// and /api/ai/status (null when unknown). The returned node has repaintRefresh() for after Full Claude Use changes.
+export function displaySection(display, sources, save, claude) {
   let shown = display.micros_shown.slice();
   const flags = [['show_macros', 'Macro Nutrients bars'], ['show_micros', 'Micro Nutrients section'],
     ['show_split', 'Calorie Split chart'], ['show_macro_bar', 'Macro balance bar on foods'], ['show_table', 'Table View on Today'],
@@ -90,7 +91,24 @@ export function displaySection(display, sources, save) {
     const want = autoSel.value;
     try { auto = (await save({ auto_match: want })).auto_match; } catch (e) { autoSel.value = auto; }
   });
-  return h('div', { class: 'display-sec' }, h('h2', null, 'Display'),
+  let cur = display;
+  const fullNow = () => !!(claude && claude.full && claude.full());
+  const refSel = select(REFRESH_MODES, resolveRefreshMode(cur.refresh_mode, cur.refresh_mode_set, fullNow(), claude && claude.status).wanted, { id: 'disp-refresh', 'aria-describedby': 'disp-refresh-help disp-refresh-why' });
+  const refWhy = h('p', { class: 'sub', id: 'disp-refresh-why', hidden: '' });
+  const refHelp = h('p', { class: 'sub', id: 'disp-refresh-help' }, refreshModeHint(fullNow()));
+  const paintRefresh = () => {
+    const m = resolveRefreshMode(cur.refresh_mode, cur.refresh_mode_set, fullNow(), claude && claude.status);
+    refSel.value = m.wanted;
+    refHelp.textContent = refreshModeHint(fullNow());
+    refWhy.textContent = m.reason ? 'Search Then Claude is not available. ' + m.reason : '';
+    refWhy.hidden = !m.reason;
+  };
+  refSel.addEventListener('change', async () => {
+    try { cur = await save({ refresh_mode: refSel.value }); } catch (e) { /* the old choice stays */ }
+    paintRefresh();
+  });
+  paintRefresh();
+  const node = h('div', { class: 'display-sec' }, h('h2', null, 'Display'),
     h('p', { class: 'sub' }, 'Choose what Today, the lists and the picker show. Changes apply at once.'),
     flags.map(([k, label]) => switchRow('disp-' + k, label, display[k] !== false, (on) => save({ [k]: on }))),
     h('p', { class: 'sub', id: 'disp-group-help' }, sentence('Group Recipes By Meal is on by default') + ' ' + sentence('The Recipes tab and the Recipes list on Add show a heading for each meal tag')),
@@ -98,7 +116,10 @@ export function displaySection(display, sources, save) {
     h('label', { class: 'field', for: 'disp-source' }, h('span', null, 'Default Search Source'), srcSel),
     h('p', { class: 'sub', id: 'disp-source-help' }, 'Where the search on Add looks first. All Sources by default. Changing Source on Add lasts until the app is reloaded.'),
     h('label', { class: 'field', for: 'disp-auto' }, h('span', null, 'Auto-Match After Import'), autoSel),
-    h('p', { class: 'sub', id: 'disp-auto-help' }, sentence('Search is the default') + ' ' + sentence('After an import, Search is free and fills in suggested matches for you to review') + ' ' + sentence('Claude matches the ingredients with Claude, and Search Then Claude asks Claude only about the ingredients Search did not match') + ' ' + sentence('Claude uses Claude requests, shows the cost first when Confirm before using Claude is on, and falls back to Search when it is not set up') + ' ' + sentence('Off leaves every ingredient for you to match') + ' ' + sentence('With Full Claude Use on, Search runs as Search Then Claude')));
+    h('p', { class: 'sub', id: 'disp-auto-help' }, sentence('Search is the default') + ' ' + sentence('After an import, Search is free and fills in suggested matches for you to review') + ' ' + sentence('Claude matches the ingredients with Claude, and Search Then Claude asks Claude only about the ingredients Search did not match') + ' ' + sentence('Claude uses Claude requests, shows the cost first when Confirm before using Claude is on, and falls back to Search when it is not set up') + ' ' + sentence('Off leaves every ingredient for you to match') + ' ' + sentence('With Full Claude Use on, Search runs as Search Then Claude')),
+    h('label', { class: 'field', for: 'disp-refresh' }, h('span', null, 'Refresh Nutrients'), refSel), refWhy, refHelp);
+  node.repaintRefresh = paintRefresh;
+  return node;
 }
 
 // Settings, Goals: one field per nutrient. read() returns { targets } or { error }.
