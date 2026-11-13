@@ -255,7 +255,7 @@ GET/POST /api/meals    POST {"name","items":[{"food_id","amount","unit"}],"meals
 POST /api/meals/from-meal {"name","day","meal": breakfast|lunch|dinner|snack|dessert|null,"entry_ids"}   # a meal group of one day (null = unassigned); my entries only,
         # each of that day and meal; at least one id, else 400; the recipe is tagged with that meal. The Today screen uses only this route (no day level recipe).
 POST /api/meals/from-day {"name","day","entry_ids"?}      # legacy API, not used by the app
-DELETE /api/meals/{id}
+DELETE /api/meals/{id}   # soft delete (v65, issue #41): the recipe moves to Recently Deleted, see that section
 POST /api/meals/{id}/log {"day"?,"meal"?,"items"?:[{"food_id","amount","unit"}],"amount"?,"unit"?}   # items override amounts, otherwise saved amounts
         # amount and unit (one of the meal's portions units) log that share of the whole recipe: amount / whole, at most 100
         # whole recipes, every saved amount scaled by it (core.recipe_fraction). Without them the whole saved recipe, as before.
@@ -402,7 +402,7 @@ Screens: Login, Today, Add, Recipes, Picker, Claude fallback, Settings. Bottom n
   (Meal, Amount and a unit from meal.portions: servings, % of recipe, and the yield units when a yield is set; POST /api/meals/{id}/log
   with amount and unit, so the server scales it), the Ingredients list with Edit Ingredients (opens Match Ingredients with edit true), Meal Tags, Rename, Steps, Serving Size (js/servingsize.js:
   servings, Total yield amount and unit, Use Total of Ingredients when the yield is blank and ingredient_grams is known, which fills it
-  in grams and saves at once; Save Serving Size), then a Delete Recipe button (btn danger, last; only on this screen, not on Match Ingredients). It asks "Delete This Recipe?" (saved.js `deleteRecipe`, the same confirm and DELETE /api/meals/{id} as Saved's Delete) and then goes back to the Recipes tab list.
+  in grams and saves at once; Save Serving Size), then a Delete Recipe button (btn danger, last; only on this screen, not on Match Ingredients). It asks "Delete This Recipe?" (saved.js `deleteRecipe`, the same confirm and DELETE /api/meals/{id} as Saved's Delete and Add's x), shows the Undo notice and then goes back to the Recipes tab list (see Recently Deleted Recipes).
   The log checklist (Add, Recipes sub-tab only; the recipe screen no longer has Adjust Items) has the same Amount and unit at the top; changing them scales every row by
   the same factor, so amounts changed by hand keep their ratio, and switching units keeps the same share of the recipe. New Recipe,
   Import, Match Ingredients and the recipe screen mark the Recipes tab; Save, Save and Continue, Cancel and Back come back to it.
@@ -671,6 +671,34 @@ POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log i
   row or an estimate) the earlier food is used instead. Claude may still pick another candidate when the line clearly differs.
 - Client: Match Ingredients shows the cue "From Previous Recipe" in the proposal head (instead of Database Match), and under Accept N Suggested Matches the
   line "N of these are From Previous Recipe." (`previousCountText`, `PREVIOUS_CUE`). Tests: tests/test_previous_match.py, tests/ui/fullclaude.test.mjs. Shell cache macrolog-shell-v64.
+
+## Recently Deleted Recipes (v65, issue #41)
+
+- `meals.deleted_at TEXT` (null = not deleted; added in place by core.init, existing rows untouched). DELETE /api/meals/{id} sets it
+  (UTC ISO time, core.now) and keeps every child row (meal_items, recipe_tags, recipe_logs, steps, servings, yield, shared), answering
+  {"deleted", "deleted_at", "days_left", "purge_days"}. Same rights as before: the owner, or an admin for a shared recipe (core.writable_meal).
+- A deleted recipe is left out everywhere a recipe is read or matched: core.own_meal and core.visible_meal (so GET, PATCH, items routes,
+  uncounted, log, duplicate, Cooking and recipe_ai match and match-search answer 404), GET /api/meals (every owner filter, which feeds the
+  Recipes tab and Add), GET /api/saved, recipe_ai.previous_matches, and core.count_log (logging again from a recipe log copy neither counts
+  nor tags a deleted recipe).
+- Logged entries keep working: entries snapshot nutrients and entry_groups snapshot the name, portion and portions (no foreign key), so Today,
+  history, the recipe log screen, PATCH, delete and copy of entry groups are unchanged after a delete and after a purge.
+- `POST /api/meals/{id}/restore` -> meal (deleted_at cleared, everything exactly as before); `DELETE /api/meals/{id}/purge` -> {"purged": id}
+  (hard delete of the recipe and its meal_items, recipe_tags and recipe_logs). Both only for a deleted recipe: same rights as delete
+  (owner, or admin for a shared one, 403 for anyone else on a shared one), 404 for another user's private or an unknown recipe, 409 "This recipe
+  is not deleted." for a recipe that is not deleted. `GET /api/meals/deleted` -> {"meals": [meal + "deleted_at","days_left"], "purge_days": 30}:
+  my own deleted recipes (shared or not), newest first. An admin's Undo restores a shared recipe they deleted; it then appears only in the owner's list.
+- Auto purge: core.RECIPE_PURGE_DAYS = 30. core.purge_deleted removes recipes deleted more than 30 days ago, at startup (core.init) and on
+  GET /api/meals and GET /api/meals/deleted. days_left is the whole days left, rounded up.
+- Client: js/trash.js (pure, tests/ui/trash.test.mjs): RECIPE_PURGE_DAYS, UNDO_MS (10 s), `deleteRecipeConfirm` ("Delete This Recipe? ... moves to
+  Recently Deleted for 30 days ..."), `deleteForeverConfirm`, `deletedNoticeText`, `restoredText`, `purgedText`, `deletedHint` (states the 30 day
+  default), `deletedTitle`, `daysLeftText` ("12 days left", "1 day left", "Last day"), `sortDeleted`, `withoutDeleted`. js/undo.js `showUndo` is the
+  Undo notice: a fixed bar above the bottom nav (role status, polite), Undo and Dismiss, about 10 seconds, paused while hovered or focused, Escape
+  closes it, one at a time; Undo calls restore and repaints the current screen (app.js `ctx.repaint`). Every recipe delete uses saved.js
+  `deleteRecipe` (recipe screen, Saved, the x on Add's Recipes list).
+- Recipes tab: Recently Deleted (N) at the bottom, a collapsible section (details) shown only when there is something, with the hint, each
+  recipe's days left and summary line, Restore and Delete Forever (asks `deleteForeverConfirm`). No new hash route.
+- Tests: tests/test_recipe_trash.py, tests/ui/trash.test.mjs. Shell cache macrolog-shell-v65 (js/trash.js and js/undo.js added to the shell).
 
 ## Auto-Match After Import
 

@@ -59,6 +59,9 @@ def test_recipe_tags_patch_and_auto_tag(a, b):
     assert a.patch(f"/api/meals/{m['id']}", json={}).status_code == 400
     assert b.patch(f"/api/meals/{m['id']}", json={"name": "Hack"}).status_code == 404
     assert a.delete(f"/api/meals/{m['id']}").status_code == 200
+    with db.conn() as c:  # a soft delete (#41) keeps the tags for a restore
+        assert c.execute("SELECT COUNT(*) FROM recipe_tags").fetchone()[0] == 2
+    assert a.delete(f"/api/meals/{m['id']}/purge").status_code == 200
     with db.conn() as c:
         assert c.execute("SELECT COUNT(*) FROM recipe_tags").fetchone()[0] == 0
         assert c.execute("SELECT COUNT(*) FROM recipe_logs").fetchone()[0] == 0

@@ -74,6 +74,14 @@ export const GUIDE = [
     'Delete Recipe at the bottom asks first, then returns to the Recipes tab.',
     'Add, then Recipes, still logs a recipe straight from Add.',
   ] },
+  { heading: 'Recently Deleted Recipes', bullets: [
+    'After deleting a recipe, tap Undo in the notice to bring it back.',
+    'Deleted recipes wait in Recently Deleted at the bottom of the Recipes tab.',
+    'They stay 30 days, then are removed for good.',
+    'Restore brings back the ingredients, steps, tags, servings, yield and sharing.',
+    'Delete Forever asks first and cannot be undone.',
+    'Logged recipes stay on Today and in your history.',
+  ] },
   { heading: 'Shared Recipes', bullets: [
     'Recipes are private by default. Only you see them.',
     'Turn on Share With Other Users on a recipe to share it.',

@@ -155,6 +155,9 @@ def init(c: sqlite3.Connection) -> None:
     c.execute("CREATE INDEX IF NOT EXISTS meal_items_meal ON meal_items(meal_id, position)")
     if "shared" not in {r[1] for r in c.execute("PRAGMA table_info(meals)")}:  # databases made before shared recipes: all stay private
         c.execute("ALTER TABLE meals ADD COLUMN shared INTEGER NOT NULL DEFAULT 0")
+    if "deleted_at" not in {r[1] for r in c.execute("PRAGMA table_info(meals)")}:  # databases made before Recently Deleted: none deleted
+        c.execute("ALTER TABLE meals ADD COLUMN deleted_at TEXT")
+    purge_deleted(c)  # at startup: recipes deleted more than RECIPE_PURGE_DAYS ago go for good
     if "user_id" not in {r[1] for r in c.execute("PRAGMA table_info(recipe_logs)")}:  # who logged it; null (older logs) means the owner
         c.execute("ALTER TABLE recipe_logs ADD COLUMN user_id INTEGER")
     if "use_last" not in {r[1] for r in c.execute("PRAGMA table_info(settings)")}:  # databases made before use_last
@@ -1342,7 +1345,7 @@ def meal_name(body: dict) -> str:
 
 
 def own_meal(c, uid: int, meal_id: int):
-    row = c.execute("SELECT * FROM meals WHERE id=? AND user_id=?", (meal_id, uid)).fetchone()
+    row = c.execute("SELECT * FROM meals WHERE id=? AND user_id=? AND deleted_at IS NULL", (meal_id, uid)).fetchone()
     if not row:
         raise HTTPException(404, "Recipe not found")
     return row
@@ -1354,7 +1357,7 @@ def own_meal(c, uid: int, meal_id: int):
 # else gets 403 on a shared recipe. Duplicate copies a recipe I can read into a new private recipe of mine.
 
 def visible_meal(c, uid: int, meal_id: int):
-    row = c.execute("SELECT * FROM meals WHERE id=? AND (user_id=? OR shared=1)", (meal_id, uid)).fetchone()
+    row = c.execute("SELECT * FROM meals WHERE id=? AND (user_id=? OR shared=1) AND deleted_at IS NULL", (meal_id, uid)).fetchone()
     if not row:
         raise HTTPException(404, "Recipe not found")
     return row
@@ -1370,8 +1373,8 @@ def writable_meal(c, user: dict, meal_id: int):
 def count_log(c, uid: int, meal_id: int, meal: str) -> None:
     """A log of a recipe with a meal: it counts toward my Most Used, and tags the recipe with that meal when the recipe is mine
     (someone else's shared recipe is never changed by my logging)."""
-    row = c.execute("SELECT user_id FROM meals WHERE id=?", (meal_id,)).fetchone()
-    if not row:
+    row = c.execute("SELECT user_id FROM meals WHERE id=? AND deleted_at IS NULL", (meal_id,)).fetchone()
+    if not row:  # gone or in Recently Deleted: the log still stands, the recipe is not counted or tagged
         return
     if row["user_id"] == uid:
         c.execute("INSERT OR IGNORE INTO recipe_tags(meal_id, meal) VALUES(?,?)", (meal_id, meal))
@@ -1385,8 +1388,20 @@ def list_meals(user: CurrentUser, owner: str = "mine"):
     uid = user["id"]
     where = {"mine": "user_id=?", "shared": "user_id<>? AND shared=1", "all": "(user_id=? OR shared=1)"}[owner]
     with db.conn() as c:
-        rows = c.execute(f"SELECT * FROM meals WHERE {where} ORDER BY name COLLATE NOCASE, id", (uid,)).fetchall()
+        purge_deleted(c)
+        rows = c.execute(f"SELECT * FROM meals WHERE {where} AND deleted_at IS NULL ORDER BY name COLLATE NOCASE, id", (uid,)).fetchall()
         return {"meals": [meal_dict(c, r, user) for r in rows]}
+
+
+@router.get("/meals/deleted")
+def list_deleted_meals(user: CurrentUser):
+    """Recently Deleted: my own deleted recipes, newest first, each with deleted_at and days_left before it is purged."""
+    with db.conn() as c:
+        purge_deleted(c)
+        rows = c.execute("SELECT * FROM meals WHERE user_id=? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC, id DESC",
+                         (user["id"],)).fetchall()
+        return {"meals": [{**meal_dict(c, r, user), "deleted_at": r["deleted_at"], "days_left": days_left(r["deleted_at"])} for r in rows],
+                "purge_days": RECIPE_PURGE_DAYS}
 
 
 @router.post("/meals")
@@ -1471,14 +1486,82 @@ def patch_meal(meal_id: int, user: CurrentUser, body: dict = Body(...)):
         return meal_dict(c, c.execute("SELECT * FROM meals WHERE id=?", (meal_id,)).fetchone(), user)
 
 
+# Recently Deleted (issue #41). DELETE /api/meals/{id} is a soft delete: meals.deleted_at is set and every child row (items,
+# tags, steps, logs counts) stays, so a restore brings the recipe back exactly. A deleted recipe is left out of every list,
+# picker, match and lookup, and GET or PATCH answer 404, as if it were gone. Log entries and entry_groups snapshot the name
+# and nutrients, so Today and history never change. Restore and purge take the same rights as delete (the owner, or an
+# admin for a shared recipe). Deleted recipes older than RECIPE_PURGE_DAYS are purged at startup and when recipes are listed.
+RECIPE_PURGE_DAYS = 30
+
+
+def purge_cutoff() -> str:
+    return (datetime.now(timezone.utc) - timedelta(days=RECIPE_PURGE_DAYS)).isoformat(timespec="microseconds")
+
+
+def days_left(deleted_at: str) -> int:
+    """Whole days (rounded up, at least 0) before a recipe deleted at deleted_at is purged."""
+    try:
+        when = datetime.fromisoformat(deleted_at)
+    except (TypeError, ValueError):
+        return 0
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    left = when + timedelta(days=RECIPE_PURGE_DAYS) - datetime.now(timezone.utc)
+    return max(0, math.ceil(left.total_seconds() / 86400))
+
+
+def hard_delete_meal(c, meal_id: int) -> None:
+    for table in ("meal_items", "recipe_tags", "recipe_logs"):
+        c.execute(f"DELETE FROM {table} WHERE meal_id=?", (meal_id,))
+    c.execute("DELETE FROM meals WHERE id=?", (meal_id,))
+
+
+def purge_deleted(c) -> int:
+    """Delete for good every recipe deleted more than RECIPE_PURGE_DAYS ago. Returns how many."""
+    ids = [r["id"] for r in c.execute("SELECT id FROM meals WHERE deleted_at IS NOT NULL AND deleted_at < ?", (purge_cutoff(),))]
+    for meal_id in ids:
+        hard_delete_meal(c, meal_id)
+    return len(ids)
+
+
+def deleted_meal(c, user: dict, meal_id: int):
+    """A recipe in Recently Deleted that user may restore or purge: same rule as delete (owner, or an admin for a shared one)."""
+    row = c.execute("SELECT * FROM meals WHERE id=? AND (user_id=? OR shared=1) AND deleted_at IS NOT NULL", (meal_id, user["id"])).fetchone()
+    if not row:
+        if c.execute("SELECT 1 FROM meals WHERE id=? AND (user_id=? OR shared=1)", (meal_id, user["id"])).fetchone():
+            raise HTTPException(409, "This recipe is not deleted.")
+        raise HTTPException(404, "Deleted recipe not found")
+    if row["user_id"] != user["id"] and not user.get("is_admin"):
+        raise HTTPException(403, "Only the owner or an admin can restore or delete this recipe.")
+    return row
+
+
 @router.delete("/meals/{meal_id}")
 def delete_meal(meal_id: int, user: CurrentUser):
+    """Soft delete: the recipe goes to Recently Deleted for RECIPE_PURGE_DAYS days and can be restored."""
+    stamp = now()
     with db.conn() as c:
         writable_meal(c, user, meal_id)
-        for table in ("meal_items", "recipe_tags", "recipe_logs"):
-            c.execute(f"DELETE FROM {table} WHERE meal_id=?", (meal_id,))
-        c.execute("DELETE FROM meals WHERE id=?", (meal_id,))
-    return {"deleted": meal_id}
+        c.execute("UPDATE meals SET deleted_at=? WHERE id=?", (stamp, meal_id))
+    return {"deleted": meal_id, "deleted_at": stamp, "days_left": RECIPE_PURGE_DAYS, "purge_days": RECIPE_PURGE_DAYS}
+
+
+@router.post("/meals/{meal_id}/restore")
+def restore_meal(meal_id: int, user: CurrentUser):
+    """Undo a delete: the recipe comes back exactly as it was."""
+    with db.conn() as c:
+        deleted_meal(c, user, meal_id)
+        c.execute("UPDATE meals SET deleted_at=NULL WHERE id=?", (meal_id,))
+        return meal_dict(c, c.execute("SELECT * FROM meals WHERE id=?", (meal_id,)).fetchone(), user)
+
+
+@router.delete("/meals/{meal_id}/purge")
+def purge_meal(meal_id: int, user: CurrentUser):
+    """Delete Forever: only a recipe already in Recently Deleted. Log entries and recipe logs on Today stay (snapshots)."""
+    with db.conn() as c:
+        deleted_meal(c, user, meal_id)
+        hard_delete_meal(c, meal_id)
+    return {"purged": meal_id}
 
 
 @router.post("/meals/{meal_id}/duplicate")
@@ -1776,7 +1859,7 @@ def get_saved(user: CurrentUser):
         tags = favorite_tags(c, uid)
         favs = c.execute(f"SELECT f.* FROM favorites v JOIN foods f ON f.id=v.food_id WHERE v.user_id=? AND {VISIBLE} "
                          "ORDER BY f.name COLLATE NOCASE, f.id", (uid, uid)).fetchall()
-        recipes = c.execute("SELECT * FROM meals WHERE user_id=? ORDER BY name COLLATE NOCASE, id", (uid,)).fetchall()
+        recipes = c.execute("SELECT * FROM meals WHERE user_id=? AND deleted_at IS NULL ORDER BY name COLLATE NOCASE, id", (uid,)).fetchall()
         mine = c.execute(f"SELECT f.*, {IN_USE} AS in_use FROM foods f WHERE f.created_by=? AND f.source IN ('custom','ai') AND {VISIBLE} "
                          "ORDER BY f.name COLLATE NOCASE, f.id", (uid, uid)).fetchall()
         return {"favorites": [{"food": food_dict(r), "meals": tags.get(r["id"], [])} for r in favs],

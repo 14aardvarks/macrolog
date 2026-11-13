@@ -45,7 +45,7 @@ def test_service_worker_waits_for_the_update_banner():
     install = re.search(r"addEventListener\('install'.*?\n\}\);", sw, re.S).group(0)
     assert "skipWaiting" not in install
     assert "SKIP_WAITING" in sw and "self.skipWaiting()" in sw
-    assert "macrolog-shell-v64" in sw and "'/js/update.js'" in sw
+    assert "macrolog-shell-v65" in sw and "'/js/update.js'" in sw
     assert (STATIC / "js" / "update.js").is_file()
 
 
@@ -71,3 +71,10 @@ def test_routes_module_is_in_the_shell_and_wired():
     assert "'/js/routes.js'" in sw and (STATIC / "js" / "routes.js").is_file()
     app = (STATIC / "js" / "app.js").read_text()
     assert "from './routes.js'" in app and "NAV_OF" not in app
+
+
+def test_recently_deleted_modules_are_in_the_shell():
+    sw = (STATIC / "sw.js").read_text()
+    for name in ("trash.js", "undo.js"):
+        assert f"'/js/{name}'" in sw and (STATIC / "js" / name).is_file()
+    assert "recentlyDeleted(" in (STATIC / "js" / "recipes.js").read_text()

@@ -280,7 +280,7 @@ def previous_matches(user_id: int, names, exclude_meal: Optional[int] = None, so
         return {}
     sql = ("SELECT f.*, mi.src_name AS _name, mi.meal_id AS _meal, mi.id AS _item FROM meal_items mi "
            "JOIN meals m ON m.id=mi.meal_id JOIN foods f ON f.id=mi.food_id "
-           "WHERE (m.user_id=? OR m.shared=1) AND mi.skipped=0 AND mi.src_name IS NOT NULL AND mi.meal_id<>? AND " + core.VISIBLE)
+           "WHERE (m.user_id=? OR m.shared=1) AND m.deleted_at IS NULL AND mi.skipped=0 AND mi.src_name IS NOT NULL AND mi.meal_id<>? AND " + core.VISIBLE)
     params: list = [user_id, exclude_meal if exclude_meal is not None else -1, user_id]
     if source != "all":
         sql, params = sql + " AND f.source=?", [*params, source]

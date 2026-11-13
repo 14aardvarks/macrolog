@@ -18,7 +18,7 @@ import { splitChart, macroBar } from './chart.js';
 import { renderGuide } from './guide-view.js';
 import { renderSetup } from './setup.js';
 import { renderAdmin } from './admin.js';
-import { renderSaved } from './saved.js';
+import { renderSaved, deleteRecipe } from './saved.js';
 import { renderRecipe } from './recipe.js';
 import { renderRecipes, renderRecipeView } from './recipes.js';
 import { renderCooking } from './cooking.js';
@@ -65,6 +65,8 @@ const ctx = {
   newRecipe: () => { state.recipe = newRecipeDraft(); return go('recipe', {}); },
   importRecipe: () => { state.importBase = state.depth; return go('import', {}); },
   defaultMeal: () => defaultMeal(),
+  // Draws the screen that is showing again from fresh data (after Undo restores a deleted recipe).
+  repaint: () => (history.state && history.state.name ? render(history.state) : go('today', {}, true)),
   // Create Recipe screen hooks. The draft is state.recipe.
   get recipe() { return state.recipe; },
   refresh: () => go('recipe', {}, true),
@@ -702,8 +704,7 @@ async function recipesList(meal) {  // my recipes and the ones shared with me; o
   if (!recipes.length) return message(emptyText('recipes', meal, all.length > 0));
   const rowOf = (m) => {
     const del = m.mine === false ? null : h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Delete recipe ' + m.name, onclick: async () => {
-      if (!window.confirm('Delete the recipe "' + m.name + '"?')) return;
-      try { await api.deleteMeal(m.id); await go('add', {}, true); } catch (e) { del.parentNode.appendChild(message(e.message, 'error')); }
+      try { if (await deleteRecipe(m, () => ctx.repaint())) await go('add', {}, true); } catch (e) { del.parentNode.appendChild(message(e.message, 'error')); }
     } }, '×');
     const open = () => go('meal', { mealId: m.id, meal: chosenMeal() });
     return foodRow(m.name, [recipeSubText(m, fmtNum(m.kcal, 0)), ownerText(m)].filter(Boolean).join(' · '), open, del);

@@ -3,6 +3,8 @@ import { api } from './api.js';
 import { h, clear, field, message, show, select, sourceBadge, kcalCue } from './dom.js';
 import { refreshAllControl } from './refresh.js';
 import { recipeSubText } from './recipeimport.js';
+import { deleteRecipeConfirm } from './trash.js';
+import { showUndo } from './undo.js';
 import { DELETE_FOOD_CONFIRM, MEALS, MEAL_LABELS, toggleMeal, fmtNum, amountText, SAVED_FILTERS, SAVED_FILTER_LABELS, filterSavedItems, pageOf, PAGE_SIZE } from './util.js';
 
 const title = (f) => (f.brand ? f.name + ' (' + f.brand + ')' : f.name);
@@ -41,10 +43,12 @@ function favoriteRow(fav, again) {
     chips(fav.meals, async (m) => { await api.favoriteTags(fav.food.id, m); fav.meals = m; }, status), h('div', { class: 'row wrap' }, remove, del), status);
 }
 
-// Asks Delete This Recipe?, then deletes through the same route Saved uses. Resolves true when deleted, false when cancelled.
-export async function deleteRecipe(rec) {
-  if (!window.confirm('Delete This Recipe? "' + rec.name + '" is removed for good. Entries already in your log stay.')) return false;
+// Asks Delete This Recipe?, then deletes (a soft delete: the recipe moves to Recently Deleted) and shows the Undo notice.
+// onRestored(meal) runs after Undo. Resolves true when deleted, false when cancelled.
+export async function deleteRecipe(rec, onRestored) {
+  if (!window.confirm(deleteRecipeConfirm(rec.name))) return false;
   await api.deleteMeal(rec.id);
+  showUndo(rec, onRestored);
   return true;
 }
 
@@ -66,7 +70,7 @@ export function recipeRow(rec, again, ctx, opts) {
   const body = h('div');
   const fail = (e) => show(status, message(e.message, 'error'));
   const del = async () => {
-    try { if (await deleteRecipe(rec)) await (opts && opts.onDeleted ? opts.onDeleted() : again()); } catch (e) { fail(e); }
+    try { if (await deleteRecipe(rec, () => (ctx.repaint ? ctx.repaint() : again()))) await (opts && opts.onDeleted ? opts.onDeleted() : again()); } catch (e) { fail(e); }
   };
   return h('li', { class: 'saved-item' }, h('span', { class: 'item-title' }, rec.name),
     h('span', { class: 'item-sub' }, recipeSubText(rec, fmtNum(rec.kcal, 0))),

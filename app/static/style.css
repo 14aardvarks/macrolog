@@ -533,3 +533,20 @@ textarea { font: inherit; color: inherit; width: 100%; min-height: 160px; paddin
 .unit-control > input[hidden] { display: none; }
 .pick-custom { margin: 8px 0 0; }
 .pick-custom[hidden] { display: none; }
+
+/* Recently Deleted recipes and the Undo notice (#41) */
+.recently-deleted { margin-top: 20px; }
+.recently-deleted[hidden] { display: none; }
+.recently-deleted > .sub, .recently-deleted > div { margin-left: 12px; margin-right: 12px; }
+.recently-deleted > .list { margin: 0; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: transparent; }
+.deleted-item { flex-wrap: wrap; gap: 8px; padding: 0 0 10px; }
+.deleted-item:last-child { border-bottom: 0; }
+.deleted-item .item-main { flex: 1 1 200px; cursor: default; }
+.deleted-actions { gap: 8px; flex-wrap: wrap; margin: 0; padding: 0 12px; }
+.btn.danger-text { color: var(--danger); border-color: var(--danger); }
+.undo-bar { position: fixed; z-index: 45; left: 12px; right: 12px; bottom: calc(68px + env(safe-area-inset-bottom, 0px));
+  display: flex; align-items: center; gap: 8px; max-width: 440px; margin: 0 auto; padding: 8px 8px 8px 14px;
+  background: var(--card); color: var(--text); border: 1px solid var(--accent); border-radius: 12px; box-shadow: 0 4px 16px rgba(0, 0, 0, .25); }
+.undo-text { flex: 1; min-width: 0; }
+.undo-bar .btn { min-height: 44px; border-color: var(--accent); color: var(--accent); font-weight: 600; }
+body.has-undo main { padding-bottom: 96px; }  /* room to scroll the last rows above the Undo notice */

@@ -9,6 +9,8 @@ import { recipeListSub, notCounted, notCountedText, matchState, servingsText, pe
 import { servingSizeEditor } from './servingsize.js';
 import { chips, renameRecipe, deleteRecipe } from './saved.js';
 import { stepsList, stepsEditor } from './steps.js';
+import { deletedHint, deletedTitle, daysLeftText, deleteForeverConfirm, restoredText, purgedText, sortDeleted, withoutDeleted } from './trash.js';
+import { closeUndo } from './undo.js';
 
 // The recipe's ingredients as a read only list: "Wheat flour" over "1 1/2 cup, 188 g". Skipped lines keep their own text.
 function ingredientList(meal) {
@@ -52,12 +54,13 @@ function stepsSection(meal) {
 }
 
 // The chosen meal filter and sort stay for the session (this module lives as long as the page); the search text does not.
-const listView = { meal: 'all', sort: 'name' };
+const listView = { meal: 'all', sort: 'name', deletedOpen: false };
 
 // ctx: { go, back, newRecipe(), importRecipe(), defaultMeal(), display, saveDisplay(patch) }
 // The owner filter (Mine, Shared With Me, All) is the Display setting recipe_owner, saved when it changes.
 export async function renderRecipes(root, ctx) {
-  const all = (await api.meals('all')).meals;
+  const [list, trash] = await Promise.all([api.meals('all'), api.deletedMeals().catch(() => ({ meals: [] }))]);
+  let all = list.meals;
   let owner = recipeOwner(ctx.display && ctx.display.recipe_owner);
   const listBox = h('div');
   let shown = PAGE_SIZE;
@@ -106,13 +109,75 @@ export async function renderRecipes(root, ctx) {
     if (more) listBox.appendChild(h('button', { class: 'btn', type: 'button', onclick: () => { shown += PAGE_SIZE; paint(); } }, 'Show More'));
   }
   paint();
+  const deleted = recentlyDeleted(trash, async () => { all = (await api.meals('all')).meals; paint(); });
   root.appendChild(h('section', { class: 'screen recipes' }, h('h1', null, 'Recipes'),
     h('div', { class: 'row wrap recipes-actions' },
       h('button', { class: 'btn primary', type: 'button', onclick: ctx.newRecipe }, 'New Recipe'),
       h('button', { class: 'btn', type: 'button', onclick: ctx.importRecipe }, 'Import Recipe')),
     h('p', { class: 'sub' }, 'Tap a recipe to log or edit it. Ingredients that are not matched are not counted.'),
     h('div', { class: 'saved-filter', role: 'search' }, q, ownerBox, filterBox, h('label', { class: 'meal-pick' }, h('span', null, 'Sort'), sortSel)),
-    listBox));
+    listBox, deleted));
+}
+
+// Recently Deleted at the bottom of the Recipes tab: my deleted recipes, newest first, with days left, Restore and Delete
+// Forever (asks first). A collapsible section shown only when something is there. restored() repaints the recipe list.
+function recentlyDeleted(trash, restored) {
+  let items = sortDeleted(trash.meals);
+  const days = trash.purge_days;
+  const status = h('div', { 'aria-live': 'polite' });
+  const listEl = h('ul', { class: 'list deleted-list' });
+  const summary = h('summary', null, '');
+  const box = h('details', { class: 'more recently-deleted', id: 'recently-deleted' }, summary,
+    h('p', { class: 'sub' }, deletedHint(days)), listEl, status);
+  box.open = listView.deletedOpen;
+  box.addEventListener('toggle', () => { listView.deletedOpen = box.open; });
+  const wrap = h('div', null, box);
+  // After a row leaves, focus goes to the same place in the list, else the summary, else main.
+  function refocus(index) {
+    const btns = listEl.querySelectorAll('.deleted-restore');
+    const next = btns[Math.min(index, btns.length - 1)];
+    if (next) next.focus(); else if (!box.hidden) summary.focus(); else document.getElementById('main').focus({ preventScroll: true });
+  }
+  function drop(id) {
+    const index = items.findIndex((m) => m.id === id);
+    items = withoutDeleted(items, id);
+    paintList();
+    refocus(index);
+  }
+  const row = (m) => {
+    const restore = h('button', { class: 'btn deleted-restore', type: 'button', 'aria-label': 'Restore ' + m.name, onclick: async () => {
+      restore.disabled = true;
+      try {
+        await api.restoreMeal(m.id);
+        closeUndo();
+        show(status, message(restoredText(m.name)));
+        await restored();
+        drop(m.id);
+      } catch (e) { restore.disabled = false; show(status, message(e.message, 'error')); }
+    } }, 'Restore');
+    const forever = h('button', { class: 'btn danger-text', type: 'button', 'aria-label': 'Delete ' + m.name + ' Forever', onclick: async () => {
+      if (!window.confirm(deleteForeverConfirm(m.name))) return;
+      forever.disabled = true;
+      try {
+        await api.purgeMeal(m.id);
+        closeUndo();
+        show(status, message(purgedText(m.name)));
+        drop(m.id);
+      } catch (e) { forever.disabled = false; show(status, message(e.message, 'error')); }
+    } }, 'Delete Forever');
+    return h('li', { class: 'item deleted-item' },
+      h('div', { class: 'item-main' }, h('span', { class: 'item-title' }, m.name),
+        h('span', { class: 'item-sub' }, daysLeftText(m.days_left) + ' · ' + recipeListSub(m, fmtNum(m.kcal, 0)))),
+      h('div', { class: 'row deleted-actions' }, restore, forever));
+  };
+  function paintList() {
+    summary.textContent = deletedTitle(items.length);
+    clear(listEl);
+    items.forEach((m) => listEl.appendChild(row(m)));
+    box.hidden = !items.length;
+  }
+  paintList();
+  return wrap;
 }
 
 // params: { mealId }. Log (meal and how much: servings, % of the recipe or a yield unit, worked out by the server); the
@@ -162,7 +227,7 @@ export async function renderRecipeView(root, params, ctx) {
   } }, 'Log');
   const deleteStatus = h('div', { 'aria-live': 'polite' });
   async function removeRecipe() {  // back to the Recipes tab list, which sits just below this screen
-    try { if (await deleteRecipe(meal)) await ctx.back(); } catch (e) { show(deleteStatus, message(e.message, 'error')); }
+    try { if (await deleteRecipe(meal, () => ctx.repaint())) await ctx.back(); } catch (e) { show(deleteStatus, message(e.message, 'error')); }
   }
   const again = () => ctx.go('recipeview', { mealId: meal.id }, true);  // rename and tags repaint from fresh data
   const edit = meal.can_edit !== false;  // the owner, or an admin for a shared recipe; the server checks every write again
