@@ -64,14 +64,14 @@ def test_bread_volume_is_estimated_via_one_g_per_ml():
 
 
 def test_bread_other_count_word_unreachable():
-    with pytest.raises(ValueError):
-        servings_for(BREAD, 1, "piece")
-    assert "piece" not in by_unit(BREAD)
+    assert "piece" not in by_unit(BREAD)  # not offered, but a typed word counts like count
+    assert servings_for(BREAD, 2, "piece") == {"servings": 2, "estimated": False}
+    assert units.grams(BREAD, 2, "piece") is None
 
 
 def test_count_label_without_grams_is_count_only():
     f = food(1, "cookie")
-    assert [u["unit"] for u in available_units(f)] == ["cookie", "serving", "pct", "count", ""]
+    assert [u["unit"] for u in available_units(f)] == ["cookie", "serving", "pct", "count"]
     assert servings_for(f, 3, "cookies")["servings"] == 3
     for u in ("g", "oz", "ml", "cup"):
         with pytest.raises(ValueError):
@@ -243,7 +243,7 @@ def test_bad_serving_amount():
 
 def test_zero_serving_g_or_ml_treated_as_missing():
     f = food(1, "slice", g=0, ml=0)
-    assert [u["unit"] for u in available_units(f)] == ["slice", "serving", "pct", "count", ""]
+    assert [u["unit"] for u in available_units(f)] == ["slice", "serving", "pct", "count"]
     f = food(1, "cup", g=0)
     assert by_unit(f)["g"]["estimated"] is True
 
@@ -311,7 +311,7 @@ def test_no_duplicates_when_label_unit_is_serving():
     assert len(us) == len(set(us))
     assert servings_for(f, 0.5, "serving")["servings"] == 0.5
     f2 = food(2, "servings")
-    assert [u["unit"] for u in available_units(f2)] == ["serving", "pct", "count", ""]
+    assert [u["unit"] for u in available_units(f2)] == ["serving", "pct", "count"]
     assert servings_for(f2, 1, "serving")["servings"] == 0.5  # label says 2 servings
 
 
@@ -356,8 +356,12 @@ def test_match_amount_uses_an_estimated_unit_and_says_so():
 
 
 def test_match_amount_needs_a_check_when_the_unit_is_unreachable():
-    assert units.match_amount(FLOUR_CUP, 1, "can") == {"amount": 1, "unit": "cup", "check": True}
-    assert units.match_amount(BUTTER, 1, "pinch") == {"amount": 1, "unit": "tbsp", "check": True}
+    slice_only = food(2, "slice")  # no weight, no volume
+    assert units.match_amount(slice_only, 1, "cup") == {"amount": 2, "unit": "slice", "check": True}
+    assert units.match_amount(slice_only, 1, "g") == {"amount": 2, "unit": "slice", "check": True}
+    # a typed unit is never unreachable, it counts like count and keeps its word
+    assert units.match_amount(FLOUR_CUP, 1, "can") == {"amount": 1, "unit": "can", "check": False}
+    assert units.match_amount(BUTTER, 3, "Pinch") == {"amount": 3, "unit": "Pinch", "check": False}
 
 
 @pytest.mark.parametrize("amount", [None, 0, -1, "x", float("nan")])

@@ -52,7 +52,7 @@ def test_match_skip_totals_and_partial_logging(a, b):
     assert (r["matched"], r["needed"], r["kcal"]) == (1, 3, 180)
     assert r["items"][0]["food"]["name"] == "Bread" and r["items"][0]["src"]["text"] == "2 slices bread"
     # bad unit for the food, other user's recipe, unknown item, partial bodies
-    assert a.patch(f"{url}/items/{ids[1]}", json={"food_id": pb["id"], "amount": 4, "unit": "slice"}).status_code == 400
+    assert a.patch(f"{url}/items/{ids[1]}", json={"food_id": pb["id"], "amount": 4, "unit": "x" * 31}).status_code == 400
     assert b.patch(f"{url}/items/{ids[1]}", json={"skipped": True}).status_code == 404
     assert a.patch(f"{url}/items/999", json={"skipped": True}).status_code == 404
     assert a.patch(f"{url}/items/{ids[1]}", json={"amount": 1}).status_code == 400
@@ -277,7 +277,7 @@ def test_add_a_line_a_matched_row_and_position(a, b):
 @pytest.mark.parametrize("body", [{}, {"amount": 1}, {"src": {}}, {"src": {"name": ""}}, {"src": {"name": "x", "evil": 1}}, {"src": "x"},
                                   {"src": {"name": "x"}, "position": -1}, {"src": {"name": "x"}, "position": "a"}, {"src": {"name": "x"}, "skipped": "y"},
                                   {"src": {"name": "x"}, "check": True}, {"src": {"name": "x"}, "amount": 1}, {"food_id": 999, "amount": 1, "unit": "slice"},
-                                  {"food_id": 1, "amount": 1, "unit": "banana"}, {"src": {"name": "x"}, "extra": 1}])
+                                  {"food_id": 1, "amount": 1, "unit": "banana" * 6}, {"src": {"name": "x"}, "extra": 1}])
 def test_add_item_validation(a, body):
     m, bread, pb = finished(a)
     assert a.post(f"/api/meals/{m['id']}/items", json=body).status_code in (400, 404)

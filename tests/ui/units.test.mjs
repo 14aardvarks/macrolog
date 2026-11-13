@@ -1,18 +1,49 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { matchAmount, amountText, matchedAmountText, cookIngredient, cookIngredients, qtyText } from '../../app/static/js/util.js';
+import { cleanUnitText, unitToSave, unitChoices, isCustomUnit, unitLabel, initialPick, CUSTOM_UNIT_MAX, matchAmount, amountText, matchedAmountText, cookIngredient, cookIngredients, qtyText } from '../../app/static/js/util.js';
 import { reviewBody, reviewDraft, rowText, importUnitOptions, IMPORT_UNITS, blankRow } from '../../app/static/js/recipeimport.js';
 
 const EGG = [{ unit: 'egg', default_amount: 1 }, { unit: 'serving', default_amount: 1 }, { unit: 'count', default_amount: 1 }, { unit: '', default_amount: 1 }];
 const FLOUR = [{ unit: 'g', default_amount: 30 }, { unit: 'cup', default_amount: 0.25, estimated: true }, { unit: 'count', default_amount: 1 }, { unit: '', default_amount: 1 }];
 
-test('review unit choices start with None and Count and keep a recipe word', () => {
-  assert.deepEqual(IMPORT_UNITS.slice(0, 2), [['', 'None'], ['count', 'Count']]);
-  assert.equal(importUnitOptions('').length, IMPORT_UNITS.length);
-  assert.equal(importUnitOptions(null)[0].value, '');
-  const odd = importUnitOptions('pinch');
-  assert.deepEqual(odd[odd.length - 1], { value: 'pinch', label: 'pinch' });
-  assert.equal(importUnitOptions('count').length, IMPORT_UNITS.length);
+test('review unit choices start with lowercase count and have no None choice', () => {
+  assert.deepEqual(IMPORT_UNITS[0], ['count', 'count']);
+  assert.ok(!IMPORT_UNITS.some(([v, l]) => v === '' || l === 'None' || l === 'Count'));
+  assert.deepEqual(importUnitOptions()[0], { value: 'count', label: 'count' });
+});
+
+test('custom unit text is trimmed, capped, stripped of control characters and kept as typed', () => {
+  assert.equal(cleanUnitText('  to \n taste\u0000 '), 'to taste');
+  assert.equal(cleanUnitText('x'.repeat(50)).length, CUSTOM_UNIT_MAX);
+  assert.equal(cleanUnitText(null), '');
+  assert.equal(unitToSave('Pinch'), 'Pinch');
+  assert.equal(unitToSave('Cups'), 'cup');
+  assert.equal(unitToSave('Count'), 'count');
+  for (const blank of ['', '  ', '-', 'None', null, undefined]) assert.equal(unitToSave(blank), '');
+});
+
+test('unit choices drop the blank unit, show count lowercase and spot a typed unit', () => {
+  const ch = unitChoices([{ unit: 'g', label: 'g' }, { unit: 'count', label: 'Count' }, { unit: '', label: 'None' }, { unit: 'cup', label: 'cup', estimated: true }]);
+  assert.deepEqual(ch.map((c) => [c.value, c.label]), [['g', 'g'], ['count', 'count'], ['cup', 'cup']]);
+  assert.equal(isCustomUnit('pinch', ch), true);
+  assert.equal(isCustomUnit('g', ch), false);
+  assert.equal(isCustomUnit('', ch), false);
+  assert.equal(unitLabel('count'), 'count');
+});
+
+test('a typed unit starts the picker on Custom with its word, blank starts on Custom empty', () => {
+  const us = [{ unit: 'g', default_amount: 30 }, { unit: 'count', default_amount: 1 }, { unit: '', default_amount: 1 }];
+  assert.deepEqual(initialPick(us, { unit: 'pinch', amount: 2 }, null), { unit: '', amount: 2, word: 'pinch' });
+  assert.deepEqual(initialPick(us, { unit: '', amount: 2 }, null), { unit: '', amount: 2 });
+  assert.deepEqual(initialPick(us, { unit: 'count', amount: 2 }, null), { unit: 'count', amount: 2 });
+});
+
+test('a typed unit reaches the saved line unchanged and a blank one is null', () => {
+  const d = reviewDraft({ name: 'Soup', ingredients: [] });
+  const body = (unit) => reviewBody({ ...d, rows: [{ ...blankRow(), name: 'salt', amount: '1', unit }] }).body.ingredients[0];
+  assert.deepEqual([body('pinch').unit, body('pinch').text], ['pinch', '1 pinch salt']);
+  assert.equal(body('to taste').unit, 'to taste');
+  assert.equal(body('').unit, null);
 });
 
 test('a review line needs neither amount nor unit', () => {

@@ -85,8 +85,8 @@ food reaches it at all, as the picker offers it: same unit, weight to weight, vo
 serving_g and serving_ml, or the label's count word. A unit reachable only through the 1 g per ml estimate (a cup of a food known only by
 weight) is used too and the result adds "estimated": true; the row shows a muted "Estimated Conversion" tag (item.estimated from the server)
 and counts in the totals, with the same math as the picker. A plain count (no unit, piece, each, whole, large...) uses the label's count word,
-else label servings. Only a unit the food cannot reach at all (a can, a pinch of a food sold by the tablespoon) gives one label serving
-with check true.
+else label servings. A typed unit that is not a known measure (can, clove, pinch, to taste) keeps its word, counts like count and never needs a check. Only a
+known measure the food cannot reach at all (a cup of a food with no weight and no volume) gives one label serving with check true.
 Conversion rules: same-family conversions are exact (US customary: 1 cup = 236.588 ml, 1 tbsp = 14.7868 ml, 1 tsp = 4.92892 ml,
 1 floz = 29.5735 ml, 1 oz = 28.3495 g, 1 lb = 453.592 g). Mass to volume uses density derived from the food's own
 serving_g and serving_ml when both exist. If the label has only one of them, the missing family is reachable only as an
@@ -731,18 +731,31 @@ POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log i
   The issue's older figures (0.3 to 2 cents per action, about 1 USD a month) assumed 1 and 5 USD per million tokens; at those prices the
   same heavy month is about 0.41 USD.
 
-## Count and a Blank Unit (v61, issue #34)
+## Count, a Blank Unit and Typed Units (v61 issue #34, v62 issue #36)
 
-- units.py: `count` (label "Count") and the blank unit `""` (label "None", also accepted as None, "-" or "none" through `units.unit_or_blank`)
-  are offered by `available_units` for every food (after the other units) and by every unit selector built from it (picker, Match
+- Issue #36 (v62): the Count unit shows lowercase, "count", in every unit selector and everywhere it is displayed (units.LABELS, util.js
+  unitChoices, IMPORT_UNITS). The None choice is gone: every unit control (import review row, Match Ingredients amount editor, picker) ends
+  with Custom, which reveals a text box ("Your Unit", placeholder "pinch, can, clove") for the user's own unit; empty stays blank. dom.js
+  `unitControl` is a select plus that box and reads like a select (.value, change event); the picker wheel has a Custom row and a "Your Unit"
+  box under it. Typed units are saved as typed (`units.unit_or_blank`, util.js `unitToSave`): trimmed, spaces tidied, control characters
+  dropped, at most 30 characters (units.MAX_UNIT; the server answers 400 past it), known words and aliases still become their canonical
+  unit ("Cups" is cup, "Count" is count), anything else keeps its case ("Pinch"). A typed unit is any unit the server does not know
+  (`units.is_custom`): it converts like count (the label's count word when the label is one, matching case and plural, else one serving per
+  1), `grams` is None for it, and `core.check_amount_unit` accepts it for entries, previews, recipe rows and matches (available_units does
+  not list it). It is shown as typed. match_amount and `matchAmount` keep the typed word and give no Check Amount. `available_units` no longer
+  lists the blank unit, but "" still saves (a plain count), and an entry or recipe row with a typed or blank unit reopens in the picker on
+  Custom with the word. Typed units are not collected into later selectors; the user types them again (the issue's "if simple" option was not
+  taken).
+- Issue #34 (v61): units.py `count` and the blank unit `""` (also accepted as None, "-" or "none" through `units.unit_or_blank`)
+  are offered for every food (after the other units) and by every unit selector built from it (picker, Match
   Ingredients amount editor, recipe log). Both are a plain count: `servings_for` gives the label's own count word when the label is one
   ("3 count" on a "2 slice" label is 1.5 servings), else one label serving per 1. `core.check_amount_unit` accepts them, so entries,
   previews, recipe rows and matches may use them (an entry unit may be ""). A last used blank unit is kept by the quick lists.
 - `match_amount` (and util.js `matchAmount`): no amount (None, 0, empty) gives None for any unit. Blank, Count and the other PLAIN_COUNTS
   use the label's count word, else servings, the same as before for piece or each. Nothing is guessed.
 - Recipe lines (meal_items src_*): amount and unit are optional everywhere. POST /api/meals/import and the review screen save a line with
-  neither as plain text ("salt, to taste"); the review unit box is a select (None, Count, weights and volumes, plus any word the recipe
-  used). Claude's import leaves a missing unit null (`recipe_ai.clean_unit`, the tool text says never to guess). The Cooking view and
+  neither as plain text ("salt, to taste"); the review unit box is a unit control (count, weights and volumes, and Custom for any word the recipe
+  used or the user types). Claude's import leaves a missing unit null (`recipe_ai.clean_unit`, the tool text says never to guess). The Cooking view and
   logs show them as text (cookIngredient keeps a line without an amount unchanged when scaling; a blank unit shows the bare amount).
 - Match Ingredients Edit Amount: an empty amount keeps the line as plain text (skips the row) instead of an error.
 - Not changed: the food form serving unit stays free text (count works typed), and the recipe total yield stays weight or volume only.

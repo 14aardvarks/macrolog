@@ -107,7 +107,7 @@ def test_create_food_normalizes_barcode_and_accepts_ai_source(a):
 
 def test_unit_must_be_available(a):
     f = food(a, BREAD | {"serving_g": None, "name": "Slice only"})
-    assert [u["unit"] for u in a.get(f"/api/foods/{f['id']}").json()["units"]] == ["slice", "serving", "pct", "count", ""]
+    assert [u["unit"] for u in a.get(f"/api/foods/{f['id']}").json()["units"]] == ["slice", "serving", "pct", "count"]
     r = a.post("/api/entries", json={"food_id": f["id"], "amount": 10, "unit": "g"})
     assert r.status_code == 400 and "not available" in r.json()["detail"]
     assert a.get("/api/preview", params={"food_id": f["id"], "amount": 10, "unit": "g"}).status_code == 400
@@ -350,8 +350,8 @@ def test_day_over_goal_has_negative_remaining(a):
     assert d["percent"]["kcal"] == 180 and d["remaining"]["kcal"] == -80
 
 
-@pytest.mark.parametrize("body", [{"amount": 0}, {"amount": -2}, {"amount": "abc"}, {"amount": None}, {"unit": "cookie"},
-                                  {"unit": "furlong"}, {"meal": "brunch"}, {"day": "2025/01/01"}, {"food_id": "x"},
+@pytest.mark.parametrize("body", [{"amount": 0}, {"amount": -2}, {"amount": "abc"}, {"amount": None}, {"unit": "x" * 31},
+                                  {"unit": "y" * 40}, {"meal": "brunch"}, {"day": "2025/01/01"}, {"food_id": "x"},
                                   {"food_id": True}])
 def test_entry_validation(a, body):
     f = food(a, BREAD)
@@ -374,7 +374,7 @@ def test_patch_and_delete_entry(a):
     assert r["amount"] == 2 and r["meal"] is None and r["kcal"] == 180 and r["servings"] == 2
     r = a.patch(f"/api/entries/{e['id']}", json={"unit": "g", "amount": 34}).json()
     assert r["unit"] == "g" and r["kcal"] == 90
-    assert a.patch(f"/api/entries/{e['id']}", json={"unit": "cookie"}).status_code == 400
+    assert a.patch(f"/api/entries/{e['id']}", json={"unit": "x" * 31}).status_code == 400
     assert a.patch(f"/api/entries/{e['id']}", json={"meal": "x"}).status_code == 400
     assert a.patch(f"/api/entries/{e['id']}", json={}).status_code == 400
     assert a.delete(f"/api/entries/{e['id']}").status_code == 200
@@ -451,7 +451,7 @@ def test_meal_log_items_accept_any_supported_unit(a):
     for unit, amount in (("g", 16), ("cup", 0.25), ("oz", 1)):
         e = a.post(f"/api/meals/{m['id']}/log", json={"items": [{"food_id": pb["id"], "amount": amount, "unit": unit}]}).json()["entries"][0]
         assert (e["unit"], e["amount"]) == (unit, amount) and e["kcal"] > 0
-    assert a.post(f"/api/meals/{m['id']}/log", json={"items": [{"food_id": pb["id"], "amount": 1, "unit": "slice"}]}).status_code == 400
+    assert a.post(f"/api/meals/{m['id']}/log", json={"items": [{"food_id": pb["id"], "amount": 1, "unit": "slice"}]}).status_code == 200  # a typed unit counts like count
     assert a.get("/api/meals").json()["meals"][0]["items"][0]["unit"] == "tbsp"  # the saved recipe is untouched
 
 
@@ -491,7 +491,7 @@ def test_meal_validation(a):
     assert a.post("/api/meals", json={"name": "", "items": [ok]}).status_code == 400
     assert a.post("/api/meals", json={"name": "x", "items": []}).status_code == 400
     assert a.post("/api/meals", json={"name": "x", "items": [ok | {"amount": 0}]}).status_code == 400
-    assert a.post("/api/meals", json={"name": "x", "items": [ok | {"unit": "cookie"}]}).status_code == 400
+    assert a.post("/api/meals", json={"name": "x", "items": [ok | {"unit": "x" * 31}]}).status_code == 400
     assert a.post("/api/meals", json={"name": "x", "items": [ok | {"food_id": 99}]}).status_code == 404
     assert a.post("/api/meals", json={"name": "x", "items": ["nope"]}).status_code == 400
     m = a.post("/api/meals", json={"name": "x", "items": [ok]}).json()

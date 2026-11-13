@@ -12,10 +12,9 @@ SALT_LINE = {"name": "salt", "note": "to taste"}
 def test_every_food_offers_count_and_none_last():
     for f in (FLOUR_G, FLOUR_CUP, EGG, unit_food(2, "serving")):
         us = [u["unit"] for u in units.available_units(f)]
-        assert us[-2:] == ["count", ""] or us[-1] == ""  # a label of count word keeps its own word first
-        assert "count" in us and "" in us
+        assert us[-1] == "count" and "" not in us  # the blank choice is now the Custom fill-in, made by the client
     labels = {u["unit"]: u["label"] for u in units.available_units(FLOUR_G)}
-    assert labels["count"] == "Count" and labels[""] == "None"
+    assert labels["count"] == "count"  # lowercase everywhere
 
 
 def test_count_and_blank_scale_like_a_plain_count():
@@ -55,7 +54,7 @@ def test_log_entries_in_count_and_blank_unit(a):
     assert p.status_code == 200 and p.json()["kcal"] == 270
     assert a.post("/api/entries", json={"food_id": f["id"], "amount": 2}).status_code == 200  # no unit sent at all
     assert a.post("/api/entries", json={"food_id": f["id"], "amount": 0, "unit": ""}).status_code == 400
-    assert a.post("/api/entries", json={"food_id": f["id"], "amount": 1, "unit": "furlong"}).status_code == 400
+    assert a.post("/api/entries", json={"food_id": f["id"], "amount": 1, "unit": "x" * 31}).status_code == 400
 
 
 def test_import_keeps_blank_amount_and_unit_as_plain_text(a):
@@ -99,3 +98,53 @@ def test_claude_import_keeps_missing_units_blank():
     assert recipe_ai.clean_unit("Count") == "count" and recipe_ai.clean_unit("Tbsp.") == "tbsp"
     draft, _ = recipe_ai.clean_recipe({"name": "R", "ingredients": [{"text": "salt to taste", "amount": None, "unit": None, "name": "salt", "note": "to taste"}]})
     assert draft["ingredients"][0]["amount"] is None and draft["ingredients"][0]["unit"] is None
+
+
+# ---------- typed units (issue #36) ----------
+
+def test_unit_or_blank_keeps_a_typed_unit_as_typed():
+    assert units.unit_or_blank("Pinch") == "Pinch"
+    assert units.unit_or_blank("  to   taste ") == "to taste"
+    assert units.unit_or_blank("pi\x00nch\x07") == "pinch"
+    assert units.unit_or_blank("Cups") == "cup" and units.unit_or_blank("Count") == "count"
+    with pytest.raises(ValueError):
+        units.unit_or_blank("x" * (units.MAX_UNIT + 1))
+    assert units.unit_or_blank("x" * units.MAX_UNIT) == "x" * units.MAX_UNIT
+
+
+def test_typed_units_scale_like_count_and_know_no_weight():
+    assert units.servings_for(FLOUR_G, 3, "pinch") == {"servings": 3, "estimated": False}
+    assert units.servings_for(unit_food(2, "slice"), 3, "Slices")["servings"] == 1.5  # the label's own word, any case or plural
+    assert units.servings_for(unit_food(2, "slice"), 3, "clove")["servings"] == 1.5
+    assert units.grams(FLOUR_G, 1, "pinch") is None
+    assert "pinch" not in [u["unit"] for u in units.available_units(FLOUR_G)]
+
+
+def test_match_amount_keeps_a_typed_unit_without_a_check():
+    for unit in ("pinch", "can", "to taste", "Clove"):
+        assert units.match_amount(FLOUR_G, 2, unit) == {"amount": 2, "unit": unit, "check": False}
+        assert units.match_amount(EGG, 2, unit) == {"amount": 2, "unit": unit, "check": False}
+    assert units.match_amount(EGG, 2, "large") == {"amount": 2, "unit": "egg", "check": False}  # still a plain count
+    assert units.match_amount(FLOUR_G, None, "pinch") is None
+
+
+def test_entries_save_and_show_a_typed_unit(a):
+    f = food(a, BREAD)
+    r = a.post("/api/entries", json={"food_id": f["id"], "amount": 2, "unit": "  Pinch of  "})
+    assert r.status_code == 200, r.text
+    assert (r.json()["unit"], r.json()["kcal"]) == ("Pinch of", 180)
+    p = a.patch(f"/api/entries/{r.json()['id']}", json={"unit": "can", "amount": 1})
+    assert p.status_code == 200 and (p.json()["unit"], p.json()["kcal"]) == ("can", 90)
+    assert a.post("/api/entries", json={"food_id": f["id"], "amount": 1, "unit": "x" * 31}).status_code == 400
+    assert a.get("/api/preview", params={"food_id": f["id"], "amount": 3, "unit": "clove"}).json()["kcal"] == 270
+
+
+def test_imported_line_with_a_typed_unit_matches_without_check_amount(a):
+    f = food(a, BREAD)
+    m = imported(a)
+    item = m["items"][0]
+    r = a.patch(f"/api/meals/{m['id']}/items/{item['id']}", json={"food_id": f["id"], "amount": 3, "unit": "pinch"})
+    assert r.status_code == 200, r.text
+    it = r.json()["items"][0]
+    assert (it["unit"], it["amount"], it["check"]) == ("pinch", 3, False)
+    assert r.json()["checks"] == 0

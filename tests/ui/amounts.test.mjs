@@ -96,8 +96,14 @@ test('matchAmount uses an estimated unit and flags it, as the picker offers it',
 });
 
 test('matchAmount flags what is unreachable and skips lines without an amount', () => {
-  assert.deepEqual(matchAmount(BUTTER, 1, 'stick'), { amount: 1, unit: 'tbsp', check: true });
-  assert.deepEqual(matchAmount(MILK, 1, 'can'), { amount: 240, unit: 'ml', check: true });
+  const SLICE = [{ unit: 'slice', default_amount: 2 }, { unit: 'serving', default_amount: 1 }, { unit: 'count', default_amount: 1 }];
+  assert.deepEqual(matchAmount(SLICE, 1, 'cup'), { amount: 2, unit: 'slice', check: true });
+  assert.deepEqual(matchAmount(SLICE, 3, 'g'), { amount: 2, unit: 'slice', check: true });
+  // a typed unit is never unreachable: it keeps its word and counts like count
+  assert.deepEqual(matchAmount(BUTTER, 1, 'stick'), { amount: 1, unit: 'stick', check: false });
+  assert.deepEqual(matchAmount(MILK, 1, 'can'), { amount: 1, unit: 'can', check: false });
+  assert.deepEqual(matchAmount(MILK, 2, '  To   Taste '), { amount: 2, unit: 'To Taste', check: false });
+  assert.deepEqual(matchAmount(SLICE, 2, 'Slices'), { amount: 2, unit: 'slice', check: false });  // the label's own word
   assert.equal(matchAmount(MILK, null, 'cup'), null);
   assert.equal(matchAmount(MILK, 0, 'cup'), null);
   assert.equal(matchAmount(MILK, 'some', 'cup'), null);

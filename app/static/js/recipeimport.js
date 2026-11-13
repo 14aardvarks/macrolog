@@ -1,5 +1,5 @@
 // Pure helpers for Import Recipe and Match Ingredients. No DOM access, safe to import from node.
-import { plural, parseAmount, amountBoxValue, fmtAmount, qtyText, servingText, amountText, roundTo, matchedAmountText, sentence, stepsCheck, MEALS, MEAL_LABELS, MICROS, autoMatch } from './util.js';
+import { cleanUnitText, plural, parseAmount, amountBoxValue, fmtAmount, qtyText, servingText, amountText, roundTo, matchedAmountText, sentence, stepsCheck, MEALS, MEAL_LABELS, MICROS, autoMatch } from './util.js';
 
 // Unit words found at the start of an ingredient line, mapped to the server's canonical units or a count word.
 const UNIT_WORDS = {
@@ -10,7 +10,7 @@ const UNIT_WORDS = {
   oz: 'oz', ounce: 'oz', ounces: 'oz', lb: 'lb', lbs: 'lb', pound: 'lb', pounds: 'lb',
   ml: 'ml', milliliter: 'ml', milliliters: 'ml', millilitre: 'ml', millilitres: 'ml',
   l: 'l', liter: 'l', liters: 'l', litre: 'l', litres: 'l',
-  clove: 'clove', cloves: 'clove', can: 'can', cans: 'can', slice: 'slice', slices: 'slice',
+  count: 'count', counts: 'count', clove: 'clove', cloves: 'clove', can: 'can', cans: 'can', slice: 'slice', slices: 'slice',
   pinch: 'pinch', pinches: 'pinch', dash: 'dash', dashes: 'dash', stick: 'stick', sticks: 'stick',
   piece: 'piece', pieces: 'piece', package: 'package', packages: 'package', pkg: 'package', bunch: 'bunch',
   sprig: 'sprig', sprigs: 'sprig', handful: 'handful', jar: 'jar', jars: 'jar', bottle: 'bottle',
@@ -100,14 +100,12 @@ export function reviewDraft(recipe, extra) {
   };
 }
 
-// The unit choices of a review row: None (blank) and Count first, then the measures. A word the recipe used (clove, pinch) stays
-// selectable as its own choice so nothing is guessed or lost.
-export const IMPORT_UNITS = [['', 'None'], ['count', 'Count'], ['g', 'g'], ['kg', 'kg'], ['oz', 'oz'], ['lb', 'lb'], ['ml', 'ml'], ['l', 'l'],
+// The unit choices of a review row: count first, then the measures, then Custom (made by dom.js unitControl) for any word of the
+// recipe's own (clove, pinch) or the user's. Blank is Custom left empty, so nothing is guessed or lost.
+export const IMPORT_UNITS = [['count', 'count'], ['g', 'g'], ['kg', 'kg'], ['oz', 'oz'], ['lb', 'lb'], ['ml', 'ml'], ['l', 'l'],
   ['floz', 'fl oz'], ['cup', 'cup'], ['tbsp', 'tbsp'], ['tsp', 'tsp']];
-export function importUnitOptions(unit) {
-  const cur = String(unit == null ? '' : unit).trim();
-  const known = IMPORT_UNITS.some(([v]) => v === cur);
-  return [...IMPORT_UNITS.map(([value, label]) => ({ value, label })), ...(known ? [] : [{ value: cur, label: cur }])];
+export function importUnitOptions() {
+  return IMPORT_UNITS.map(([value, label]) => ({ value, label }));
 }
 
 export const blankRow = () => ({ amount: '', unit: '', name: '', note: '', text: '' });
@@ -119,7 +117,7 @@ function rowAmount(row) { return amountBoxValue(row.amount, row.shown, row.exact
 // The line as shown and stored. An edited row is rebuilt from its parts, so the stored text never disagrees with them.
 export function rowText(row) {
   const a = rowAmount(row);
-  const unit = String(row.unit || '').trim();
+  const unit = cleanUnitText(row.unit);
   const head = [a == null ? '' : qtyText(a, row.unit), unit === 'floz' ? 'fl oz' : unit, String(row.name || '').trim()].filter(Boolean).join(' ');
   return head + (String(row.note || '').trim() ? ', ' + row.note.trim() : '');
 }
@@ -143,7 +141,7 @@ export function reviewBody(draft) {
     const raw = String(r.amount || '').trim();
     const amount = raw ? rowAmount(r) : null;
     if (raw && amount == null) return { error: 'Check the amount of ' + nm + '.' };
-    const unit = String(r.unit || '').trim() || null;
+    const unit = cleanUnitText(r.unit) || null;
     const note = String(r.note || '').trim() || null;
     ingredients.push({ text: rowText(r).slice(0, 300), amount, unit, name: nm, note });
   }

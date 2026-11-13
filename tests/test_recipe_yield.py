@@ -116,7 +116,7 @@ def test_bulk_rows_are_all_or_nothing(a):
     bread = food(a, BREAD)
     ids = [i["id"] for i in m["items"]]
     url = f"/api/meals/{m['id']}/items"
-    r = a.patch(url, json={"items": [{"id": ids[0], "skipped": True}, {"id": ids[1], "food_id": bread["id"], "amount": 2, "unit": "can"}]})
+    r = a.patch(url, json={"items": [{"id": ids[0], "skipped": True}, {"id": ids[1], "food_id": bread["id"], "amount": 2, "unit": "can" * 11}]})
     assert r.status_code == 400 and "row 2" in r.json()["detail"]
     assert a.get(f"/api/meals/{m['id']}").json()["skipped"] == 0
     assert a.patch(url, json={"items": [{"id": ids[0], "skipped": True}, {"id": ids[0], "skipped": False}]}).status_code == 400

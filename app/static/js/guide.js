@@ -31,6 +31,8 @@ export const GUIDE = [
     'Servings count in quarters, like 1/4 or 1 1/2, or 0.25 and 1.5.',
     'Choose fractions or decimals in Settings, under Show amounts as.',
     'Fractions cover servings, cups, spoons and counts. Grams and ounces stay decimal.',
+    'The last unit is Custom. Type your own, like pinch or clove.',
+    'A unit you type counts like count, with no conversion. Empty stays blank.',
     '% of serving is for partial servings.',
     'Macros update live and always convert back to the label\'s grams and calories.',
     'Cups of a food sold by weight use a typical density, marked Estimated Conversion.',

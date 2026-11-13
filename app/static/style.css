@@ -402,7 +402,7 @@ textarea { font: inherit; color: inherit; width: 100%; min-height: 160px; paddin
 .import-rows { padding: 0; }
 .import-row { display: flex; align-items: flex-start; gap: 4px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .import-row:last-child { border-bottom: 0; }
-.import-fields { flex: 1; min-width: 0; display: grid; gap: 0 6px; grid-template-columns: 4.5em 6.5em minmax(0, 1fr); }
+.import-fields { flex: 1; min-width: 0; display: grid; gap: 0 6px; grid-template-columns: 4.5em 7.5em minmax(0, 1fr); }
 .import-fields select { width: 100%; min-height: 36px; }
 .import-fields .field { margin: 0 0 4px; }
 .import-fields .field > span { font-size: .75rem; margin-bottom: 2px; }
@@ -525,3 +525,8 @@ textarea { font: inherit; color: inherit; width: 100%; min-height: 160px; paddin
 .full-claude .sub { margin-bottom: 4px; }
 .describe { margin-top: 16px; }
 .full-claude-warning { display: block; border-radius: 10px; padding: 6px 10px; }
+.unit-control { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.unit-control > select, .unit-control > input { width: 100%; }
+.unit-control > input[hidden] { display: none; }
+.pick-custom { margin: 8px 0 0; }
+.pick-custom[hidden] { display: none; }

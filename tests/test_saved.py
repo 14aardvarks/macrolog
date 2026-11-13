@@ -71,7 +71,7 @@ def test_recipe_items_edit_and_remove(a):
     r = a.patch(f"/api/meals/{m['id']}", json={"items": [{"food_id": f2["id"], "amount": 4, "unit": "tbsp"}]}).json()
     assert [(i["food_id"], i["amount"]) for i in r["items"]] == [(f2["id"], 4)]
     assert a.patch(f"/api/meals/{m['id']}", json={"items": []}).status_code == 400
-    assert a.patch(f"/api/meals/{m['id']}", json={"items": [{"food_id": f2["id"], "amount": 1, "unit": "slice"}]}).status_code == 400
+    assert a.patch(f"/api/meals/{m['id']}", json={"items": [{"food_id": f2["id"], "amount": 1, "unit": "x" * 31}]}).status_code == 400
     assert len(a.get("/api/meals").json()["meals"][0]["items"]) == 1
 
 

@@ -5,6 +5,7 @@ Nutrients on a food are per label serving. Every conversion goes through
 """
 import math
 import re
+import unicodedata
 
 MASS = {"g": 1.0, "kg": 1000.0, "oz": 28.3495, "lb": 453.592}
 VOLUME = {"ml": 1.0, "l": 1000.0, "floz": 29.5735, "cup": 236.588, "tbsp": 14.7868, "tsp": 4.92892}
@@ -16,12 +17,16 @@ SERVING, PCT = "serving", "pct"
 PSEUDO = (SERVING, PCT)
 STEPS.update({SERVING: 0.25, PCT: 5})
 # Count is a plain "this many of the thing" unit and BLANK is no unit at all (stored as ""). Both mean one label serving per 1 when the label
-# is not a count word, else one of the label's count word (2 slice per serving on a "2 slice" label). Offered for every food.
+# is not a count word, else one of the label's count word (2 slice per serving on a "2 slice" label). Count is offered for every food, shown
+# lowercase. A custom unit is any other typed word (pinch, can, clove, to taste): kept as typed (MAX_UNIT characters, no control characters)
+# and treated like Count, never converted.
 COUNT, BLANK = "count", ""
-LABELS = {"floz": "fl oz", SERVING: "serving", PCT: "% of serving", COUNT: "Count", BLANK: "None"}
+MAX_UNIT = 30
+LABELS = {"floz": "fl oz", SERVING: "serving", PCT: "% of serving", COUNT: "count"}
 PSEUDO_DEFAULT = {SERVING: 1.0, PCT: 100.0}
 # Display order for the non-label units offered in the picker.
 ORDER = ["g", "oz", "lb", "kg", "ml", "floz", "cup", "tbsp", "tsp", "l"]
+KNOWN = {*MASS, *VOLUME, *PSEUDO, COUNT}
 
 _ALIASES = {
     "g": "g", "gm": "g", "gram": "g", "gramme": "g",
@@ -67,11 +72,32 @@ def parse_unit(text):
     return s
 
 
+def clean_unit_text(text):
+    """A typed unit with control characters dropped and spaces tidied. Raises ValueError past MAX_UNIT characters."""
+    t = " ".join("".join(ch for ch in str(text or "") if unicodedata.category(ch)[0] != "C" or ch.isspace()).split())
+    if len(t) > MAX_UNIT:
+        raise ValueError(f"Unit must be {MAX_UNIT} characters or fewer")
+    return t
+
+
+def is_custom(unit):
+    """True for a typed unit that is neither blank, count nor a measure the server knows (pinch, can, clove)."""
+    return bool(unit) and unit not in KNOWN
+
+
 def unit_or_blank(text):
-    """Like parse_unit, but no unit at all ("", None, "-", "none") is allowed and comes back as BLANK ("")."""
-    if text is None or str(text).strip().lower() in ("", "-", "none"):
+    """The unit to store: no unit at all ("", None, "-", "none") is BLANK (""), a known unit or alias is its canonical name
+    ("Cups" -> cup, "Count" -> count) and anything else is a custom unit kept as typed (trimmed, "Pinch" stays "Pinch")."""
+    t = clean_unit_text(text)
+    if t.lower() in ("", "-", "none"):
         return BLANK
-    return parse_unit(text)
+    p = parse_unit(t)
+    return p if p in KNOWN else t
+
+
+def same_word(unit, label_unit):
+    """A typed count word against the label's own (lowercase singular): "Slices" is the label's slice."""
+    return bool(unit) and parse_unit(unit) == label_unit
 
 
 def _pos(x):
@@ -178,9 +204,9 @@ def _convert(food, amount, unit):
         raise ValueError("Amount must be greater than zero")
     unit = unit_or_blank(unit)
     label_unit, label_amount, g, ge, ml, mle = _profile(food)
-    if unit == label_unit:
+    if unit == label_unit or same_word(unit, label_unit):
         return amount / label_amount, False
-    if unit in (COUNT, BLANK):  # a plain count: the label's own count word when it has one, else label servings
+    if unit in (COUNT, BLANK) or is_custom(unit):  # a plain count: the label's own count word when it has one, else label servings
         return (amount, False) if _is_measure(label_unit) else (amount / label_amount, False)
     if unit == SERVING:
         return amount, False
@@ -218,9 +244,8 @@ def available_units(food):
             table = MASS if unit in MASS else VOLUME
             x = per / table[unit]
             out.append(entry(unit, round(x, 2) or float(f"{x:.2g}"), est))
-    for unit in (COUNT, BLANK):
-        if unit != label_unit:
-            out.append(entry(unit, 1.0, False))
+    if label_unit != COUNT:
+        out.append(entry(COUNT, 1.0, False))
     return out
 
 
@@ -261,6 +286,8 @@ def grams(food, amount, unit):
         g, ge = _profile(food)[2:4]
     except ValueError:
         return None
+    if is_custom(u) and not same_word(u, _profile(food)[0]):  # a typed unit is only counted like Count, so its weight is not known
+        return None
     if u == "g" or not g or ge or estimated:
         return None
     return round(servings * g, 1)
@@ -278,8 +305,10 @@ def match_amount(food, amount, unit):
     - The line's own unit when the food reaches it at all, as the picker offers it: same unit, weight to weight, volume to
       volume, and weight to volume through the food's own density (serving_g and serving_ml) or label count word. A unit
       reachable only through the 1 g per ml guess is used too, with "estimated": True (the same math the picker uses).
-    - A plain count (no unit, piece, each) uses the label's count word when it has one, else label servings.
-    - Anything else (a can of something sold by the cup, a pinch of a food sold by the tablespoon) is unreachable:
+    - A plain count (no unit, count, piece, each) uses the label's count word when it has one, else label servings.
+    - A typed unit the server does not know (can, clove, pinch) keeps its word, counts like Count (no conversion) and never
+      asks for a check, unless it is the label's own count word.
+    - A known measure that cannot be reached (a cup of a food with no volume, no weight) is unreachable:
       one label serving with check True, so the user confirms the amount."""
     a = _pos(amount)
     if a is None:
@@ -289,6 +318,10 @@ def match_amount(food, amount, unit):
         u = unit_or_blank(unit) or None
     except ValueError:
         u = None
+    if u is not None and is_custom(u) and parse_unit(u) not in PLAIN_COUNTS:
+        if same_word(u, label_unit):
+            return {"amount": a, "unit": label_unit, "check": False}
+        return {"amount": a, "unit": u, "check": False}
     if u is not None and u not in PLAIN_COUNTS:
         for entry in available_units(food):
             if entry["unit"] == u:

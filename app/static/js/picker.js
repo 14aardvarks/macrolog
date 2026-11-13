@@ -5,7 +5,7 @@ import { microGrid } from './micros.js';
 import { refreshControl } from './refresh.js';
 import {
   MEALS, MEAL_LABELS, canRefresh, parseAmount, fmtNum, fmtAmount, indexFromScroll, debounce, guessMeal,
-  initialPick, startPreset, convertAmount, gramsFor, SERVING, PCT, amountText, amountLabel, amountValues, withValue, rowAmountText, qtyText, amountMemo, roundTo, aiMicrosText,
+  CUSTOM_UNIT_LABEL, CUSTOM_UNIT_MAX, CUSTOM_UNIT_HINT, cleanUnitText, unitToSave, unitChoices, initialPick, startPreset, convertAmount, gramsFor, SERVING, PCT, amountText, amountLabel, amountValues, withValue, rowAmountText, qtyText, amountMemo, roundTo, aiMicrosText,
 } from './util.js';
 
 const ROW = 44;
@@ -78,8 +78,9 @@ export async function renderPicker(root, params, ctx) {
   const food = await api.food(params.foodId);
   const edit = params.entryId != null;
   const adjust = params.adjust && params.adjust.index != null ? params.adjust.index : null;  // picking for a recipe row
-  const units = food.units;
-  const st = { amount: 1, unit: '', idx: 0, seq: 0, ref: null, fav: !!food.favorite };
+  // The food's units, with Custom (unit '') in place of the blank unit: its row takes a typed word (pinch, can), saved as typed.
+  const units = [...food.units.filter((u) => u.unit !== ''), { unit: '', label: CUSTOM_UNIT_LABEL, step: 0.5, default_amount: 1, estimated: false }];
+  const st = { amount: 1, unit: '', word: '', idx: 0, seq: 0, ref: null, fav: !!food.favorite };
   Object.assign(st, initialPick(units, startPreset(edit || adjust != null, params, food, ctx.settings && ctx.settings.use_last), food.default));
   st.ref = { amount: st.amount, unit: st.unit };  // last amount the user chose; unit changes convert from here so rounding never piles up
   st.idx = Math.max(0, units.findIndex((u) => u.unit === st.unit));
@@ -93,6 +94,9 @@ export async function renderPicker(root, params, ctx) {
   const amountIn = h('input', { type: 'text', inputmode: 'decimal', class: 'amount-input', 'aria-label': 'Amount', autocomplete: 'off',
     enterkeyhint: 'done', oninput: onType, onblur: () => finishTyping(false), onkeydown: onAmountKey });
   const typeBox = h('div', { class: 'type-box', hidden: '', style: 'height:' + (ROW * (2 * PAD + 1) + 2) + 'px' }, amountIn);
+  const wordIn = h('input', { type: 'text', class: 'unit-custom', maxlength: CUSTOM_UNIT_MAX, placeholder: CUSTOM_UNIT_HINT, autocomplete: 'off', autocapitalize: 'none',
+    enterkeyhint: 'done', 'aria-label': 'Your own unit', value: st.word, oninput: onWord });
+  const wordBox = h('label', { class: 'field pick-custom', hidden: '' }, h('span', null, 'Your Unit'), wordIn);
   const typeBtn = h('button', { class: 'type-btn', type: 'button', onclick: startTyping }, '\u270E Type');
   let amtValues = [];
   let typing = false;
@@ -117,6 +121,7 @@ export async function renderPicker(root, params, ctx) {
     h('div', { class: 'pick-row' },
       h('div', { class: 'pick-col' }, h('span', { class: 'pick-cap' }, 'Amount'), amtWheel.wrap, typeBox, typeBtn),
       h('div', { class: 'pick-col' }, h('span', { class: 'pick-cap' }, 'Unit'), unitWheel.wrap)),
+    wordBox,
     gramLine,
     h('div', { class: 'kcal-big' }, kcal, ' kcal'),
     h('div', { class: 'macros' }, macroCell('Carbs g', 'pv-carbs'), macroCell('Protein g', 'pv-protein'),
@@ -128,11 +133,16 @@ export async function renderPicker(root, params, ctx) {
 
   const preview = debounce(runPreview, 180);
   paintStar();
+  paintWord();
   unitWheel.set(units.map((u) => ({ text: u.label, est: u.estimated })), st.idx);
   buildAmounts();
   paintGrams();
   runPreview();
 
+  // The unit to send: the chosen one, or the typed word on the Custom row (empty stays blank).
+  function sendUnit() { return st.unit === '' ? unitToSave(st.word) : st.unit; }
+  function onWord() { st.word = cleanUnitText(wordIn.value); preview(); }
+  function paintWord() { wordBox.hidden = st.unit !== ''; }
   function curUnit() { return units.find((u) => u.unit === st.unit) || units[0]; }
 
   // Rows for the current unit. The chosen amount is always one of them, even when it is off the step grid.
@@ -148,6 +158,7 @@ export async function renderPicker(root, params, ctx) {
     st.amount = convertAmount(units, st.ref.amount, st.ref.unit, next.unit);
     st.unit = next.unit;
     st.idx = idx;
+    paintWord();
     buildAmounts();
     paintGrams();
     preview();
@@ -203,19 +214,19 @@ export async function renderPicker(root, params, ctx) {
   // One label serving expressed in the selected unit, shown under the label text (hidden for the label unit, serving and %).
   function paintBase() {
     const u = units.find((x) => x.unit === st.unit);
-    const show = u && st.unit !== units[0].unit && st.unit !== SERVING && st.unit !== PCT && u.default_amount > 0;
+    const show = u && st.unit !== '' && st.unit !== units[0].unit && st.unit !== SERVING && st.unit !== PCT && u.default_amount > 0;
     baseLine.textContent = show ? '1 serving = ' + qtyText(roundTo(u.default_amount, u.default_amount >= 10 ? 0 : 2), u.unit) + ' ' + u.label + (u.estimated ? ' (estimated)' : '') : '';
   }
   function paintGrams() {
     paintSub();
-    const g = gramsFor(units, st.amount, st.unit);
+    const g = st.unit === '' ? null : gramsFor(units, st.amount, st.unit);  // a typed unit has no known weight
     gramLine.textContent = g == null ? '' : '= ' + fmtNum(g, g >= 10 ? 0 : 1) + ' g';
   }
 
   async function runPreview() {
     const seq = ++st.seq;
     try {
-      const p = await api.preview(food.id, st.amount, st.unit);
+      const p = await api.preview(food.id, st.amount, sendUnit());
       if (seq !== st.seq) return;
       root.querySelector('#pv-kcal').textContent = fmtNum(p.kcal, 0);
       root.querySelector('#pv-carbs').textContent = fmtNum(p.carbs, 1);
@@ -251,13 +262,13 @@ export async function renderPicker(root, params, ctx) {
     finishTyping(false);
     if (adjust != null) {  // hands the pick back, logs nothing (a recipe match saves the match and may fail)
       logBtn.disabled = true;
-      try { await ctx.finishAdjust(adjust, st.amount, st.unit, food); } catch (e) { logBtn.disabled = false; show(status, message(e.message, 'error')); }
+      try { await ctx.finishAdjust(adjust, st.amount, sendUnit(), food); } catch (e) { logBtn.disabled = false; show(status, message(e.message, 'error')); }
       return;
     }
     logBtn.disabled = true;
     try {
-      if (edit) await api.patchEntry(params.entryId, { amount: st.amount, unit: st.unit, meal: m });
-      else await api.logEntry({ food_id: food.id, amount: st.amount, unit: st.unit, meal: m });
+      if (edit) await api.patchEntry(params.entryId, { amount: st.amount, unit: sendUnit(), meal: m });
+      else await api.logEntry({ food_id: food.id, amount: st.amount, unit: sendUnit(), meal: m });
       ctx.go('today', {}, true);
     } catch (e) {
       logBtn.disabled = false;

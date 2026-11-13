@@ -331,8 +331,8 @@ def check_amount_unit(food: dict, amount, unit) -> tuple[float, str]:
     except ValueError as e:
         raise bad(f"unit: {e}")
     allowed = [u["unit"] for u in units.available_units(food)]
-    if unit not in allowed:
-        raise bad(f"Unit '{unit}' is not available for this food. Choose one of: {', '.join(u or 'none' for u in allowed)}")
+    if unit not in allowed and not units.is_custom(unit) and unit != units.BLANK:  # a typed unit counts like Count
+        raise bad(f"Unit '{unit}' is not available for this food. Choose one of: {', '.join(allowed)}, or type your own")
     return amount, unit
 
 

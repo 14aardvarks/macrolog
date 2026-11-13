@@ -3,12 +3,12 @@
 // but only Save makes it count as saved: Back writes the state of the last save back after asking Discard Changes?.
 // Matching is optional: Save always saves. Rows still not matched are kept (to finish later) or removed, the user's choice.
 import { api } from './api.js';
-import { h, clear, field, message, show, select, sourceBadge } from './dom.js';
+import { h, clear, field, message, show, select, sourceBadge, unitControl } from './dom.js';
 import { toJpeg } from './ai.js';
 import { confirmClaude } from './notice.js';
 import { chips } from './saved.js';
 import { stepsEditor } from './steps.js';
-import { fmtNum, fmtAmount, servingText, centsText, sentence, amountMemo, rowAmountText, matchedAmountText, MICROS, microValue, aiFeature, aiFeatureOff, effectiveAutoMatch, CLAUDE_CAP_NOTE, recipeTextCostLine } from './util.js';
+import { unitChoices, fmtNum, fmtAmount, servingText, centsText, sentence, amountMemo, rowAmountText, matchedAmountText, MICROS, microValue, aiFeature, aiFeatureOff, effectiveAutoMatch, CLAUDE_CAP_NOTE, recipeTextCostLine } from './util.js';
 import {
   parseIngredientText, parseIngredientLine, reviewDraft, reviewBody, blankRow, matchState, matchCountText, toggleAll, toggleId,
   proposalText, matchWhat, importWhat, matchSnapshot, restoreBody, changedSince, nextUnmatched, pendingProposals,
@@ -134,7 +134,7 @@ export function renderReview(root, ctx) {
       f.classList.add('import-' + key);
       return f;
     };
-    const unitSel = select(importUnitOptions(r.unit), String(r.unit == null ? '' : r.unit).trim(), { 'aria-label': 'Unit of ingredient ' + (i + 1) });
+    const unitSel = unitControl(importUnitOptions(), String(r.unit == null ? '' : r.unit).trim(), { 'aria-label': 'Unit of ingredient ' + (i + 1) });
     unitSel.addEventListener('change', () => { r.unit = unitSel.value; });
     const unitBox = h('label', { class: 'field import-unit' }, h('span', null, 'Unit'), unitSel);
     return h('li', { class: 'import-row' },
@@ -498,7 +498,7 @@ export async function renderMatch(root, params, ctx) {
     const save = h('button', { class: 'btn small primary', type: 'button', disabled: true }, item.check ? 'Confirm Amount' : 'Save Amount');
     let unitSel = null;
     unitsOf(item.food_id).then((units) => {
-      unitSel = select(units.map((u) => ({ value: u.unit, label: u.label + (u.estimated ? ' (estimated)' : '') })), item.unit, { 'aria-label': 'Unit of ' + name });
+      unitSel = unitControl(unitChoices(units).map((u) => ({ value: u.value, label: u.label + (u.estimated ? ' (estimated)' : '') })), item.unit, { 'aria-label': 'Unit of ' + name });
       unitBox.replaceChild(unitSel, unitBox.lastChild);
       save.disabled = false;
     }, fail);

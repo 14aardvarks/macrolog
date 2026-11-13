@@ -122,6 +122,34 @@ export function canonUnit(unit) {
   return UNIT_ALIASES[one] || UNIT_ALIASES[t.replace(/ /g, '')] || one;
 }
 
+// ---------- custom units ----------
+// A unit control offers the known units and Custom, which reveals a text box for the user's own word (pinch, can, clove, to taste).
+// Empty stays blank. Typed units are kept as typed.
+export const CUSTOM_UNIT = '__custom__';
+export const CUSTOM_UNIT_LABEL = 'Custom';
+export const CUSTOM_UNIT_MAX = 30;
+export const CUSTOM_UNIT_HINT = 'pinch, can, clove';
+// A typed unit as it is saved: control characters dropped, spaces tidied, at most CUSTOM_UNIT_MAX characters.
+export function cleanUnitText(text) {
+  return String(text == null ? '' : text).replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, CUSTOM_UNIT_MAX).trim();
+}
+// "Cups" -> cup, "Count" -> count and a typed word as typed ("Pinch" stays Pinch). Blank, "-" and "none" give ''.
+export function unitToSave(text) {
+  const t = cleanUnitText(text);
+  if (!t || t === '-' || t.toLowerCase() === 'none') return '';
+  const c = canonUnit(t);
+  return KNOWN_UNITS.indexOf(c) >= 0 ? c : t;
+}
+const KNOWN_UNITS = ['g', 'kg', 'oz', 'lb', 'ml', 'l', 'floz', 'cup', 'tbsp', 'tsp', SERVING_UNIT, PCT_UNIT, 'count'];
+// The choices of a unit select from food.units: the blank unit is left out (Custom replaces it) and count shows lowercase.
+export function unitChoices(units) {
+  return (units || []).filter((u) => u.unit !== '').map((u) => ({ value: u.unit, label: u.unit === 'count' ? 'count' : u.label, estimated: !!u.estimated }));
+}
+// True for a typed unit (not blank, not one of the choices).
+export function isCustomUnit(unit, choices) {
+  return !!unit && !(choices || []).some((c) => c.value === unit);
+}
+
 // Units that always show decimals: metric, weights (oz is a weight) and percent. Everything else, servings, cups, spoons,
 // fl oz and counts (slice, clove, no unit at all) reads as a tidy fraction in fraction mode.
 export const DECIMAL_UNITS = ['g', 'kg', 'mg', 'mcg', 'ml', 'l', 'oz', 'lb', PCT_UNIT];
@@ -144,7 +172,7 @@ export function qtyText(n, unit, format = amountFormat) {
 export function servingText(n, format = amountFormat) { return qtyText(n, SERVING_UNIT, format); }
 
 // Short unit name for lists: "pct" shows as "% of serving".
-export function unitLabel(unit) { return unit === PCT ? '% of serving' : unit; }
+export function unitLabel(unit) { return unit === PCT ? '% of serving' : unit === 'count' ? 'count' : unit == null ? '' : unit; }
 
 // "1/2 serving", "1 serving", "1 1/2 servings", "25% of a serving", "30 g", "1 1/2 cup", "2 slice".
 export function amountText(amount, unit, format) {
@@ -515,11 +543,15 @@ function unitOf(units, name) { return (units || []).find((u) => u.unit === name)
 // Starting unit and amount. A usable preset (quick item, edit, last used) wins, else the package's own serving: def is
 // food.default from GET /api/foods/{id} ({amount, unit}, for example 30 g, 1 cup or 2 slice), else the label unit and amount.
 // It is never "1 serving" unless the package gives nothing else. serving stays in the unit list.
+// A typed unit (pinch, can) that no choice has comes back as unit '' (the Custom choice) with the word.
 export function initialPick(units, preset, def) {
   const own = units[0];
   const u = (preset && unitOf(units, preset.unit)) || own;
   const ok = preset && preset.unit === u.unit && Number(preset.amount) > 0;
   if (ok) return { unit: u.unit, amount: Number(preset.amount) };
+  const word = preset && preset.unit ? cleanUnitText(preset.unit) : '';
+  const custom = word && Number(preset.amount) > 0 && unitOf(units, '');
+  if (custom) return { unit: '', amount: Number(preset.amount), word };
   const d = def && unitOf(units, def.unit);
   if (d && Number(def.amount) > 0) return { unit: d.unit, amount: Number(def.amount) };
   return { unit: u.unit, amount: u.default_amount };
@@ -566,12 +598,16 @@ const PLAIN_COUNTS = ['count', 'piece', 'each', 'whole', 'unit', 'item', 'large'
 // - The line's own unit when the food reaches it at all, as the picker offers it (an estimated one is flagged estimated): same unit, weight to weight (g, oz, lb, kg),
 //   volume to volume (ml, l, tsp, tbsp, cup, fl oz), and between the two through the food's own density or the 1 g per ml guess.
 // - A plain count (no unit, piece, each) uses the label's count word when it has one ("2 eggs" -> 2 egg), else servings.
-// - Otherwise the unit is unreachable: one label serving with check true, so the row asks the user to confirm.
+// - A typed unit that is not a known measure (can, clove, pinch) keeps its word, counts like count, and needs no check.
+// - A known measure the food cannot reach: one label serving with check true, so the row asks the user to confirm.
 export function matchAmount(units, amount, unit) {
   const a = typeof amount === 'number' ? amount : parseAmount(amount);
   if (a == null || !(a > 0) || !units || !units.length) return null;
   const label = units[0];
-  const u = canonUnit(unit);
+  const typed = cleanUnitText(unit);
+  const u = canonUnit(typed);
+  // A typed unit no measure knows (can, clove, pinch) keeps its word and counts like count: no conversion, no Check Amount.
+  if (u && PLAIN_COUNTS.indexOf(u) < 0 && KNOWN_UNITS.indexOf(u) < 0 && label.unit !== u) return { amount: a, unit: typed, check: false };
   if (u && PLAIN_COUNTS.indexOf(u) < 0) {
     const hit = units.find((x) => x.unit === u);
     return hit ? { amount: a, unit: u, check: false, ...(hit.estimated ? { estimated: true } : {}) } : { amount: label.default_amount, unit: label.unit, check: true };

@@ -1,4 +1,4 @@
-import { sentence, sourceLabel, isEstimate, sourceNote } from './util.js';
+import { sentence, sourceLabel, isEstimate, sourceNote, CUSTOM_UNIT, CUSTOM_UNIT_LABEL, CUSTOM_UNIT_MAX, CUSTOM_UNIT_HINT, cleanUnitText, unitToSave } from './util.js';
 
 // Tiny DOM helpers. Text always goes through textContent / text nodes, never innerHTML.
 
@@ -30,6 +30,31 @@ export function select(options, value, attrs) {
   for (const o of options) sel.appendChild(h('option', { value: o.value, selected: o.value === value }, o.label));
   sel.value = value;
   return sel;
+}
+
+// A unit select with a Custom choice that reveals a text box for the user's own unit. choices: [{value, label}] (no blank choice).
+// Returns a wrapper that works like a select: .value reads the unit to save ('' when Custom is empty) and can be set, 'change'
+// fires on the wrapper when the choice or the typed text changes, .focus() focuses the select.
+export function unitControl(choices, value, attrs) {
+  const sel = h('select', attrs || {});
+  for (const o of choices) sel.appendChild(h('option', { value: o.value }, o.label));
+  sel.appendChild(h('option', { value: CUSTOM_UNIT }, CUSTOM_UNIT_LABEL));
+  const label = (attrs && attrs['aria-label']) || 'Unit';
+  const box = h('input', { type: 'text', class: 'unit-custom', maxlength: CUSTOM_UNIT_MAX, placeholder: CUSTOM_UNIT_HINT, autocomplete: 'off',
+    autocapitalize: 'none', enterkeyhint: 'done', 'aria-label': label + ', your own', hidden: '' });
+  const wrap = h('div', { class: 'unit-control' }, sel, box);
+  const known = (v) => choices.some((o) => o.value === v);
+  function put(v) {
+    const unit = v == null ? '' : String(v);
+    if (known(unit)) { sel.value = unit; box.value = ''; } else { sel.value = CUSTOM_UNIT; box.value = cleanUnitText(unit); }
+    box.hidden = sel.value !== CUSTOM_UNIT;
+  }
+  sel.addEventListener('change', () => { box.hidden = sel.value !== CUSTOM_UNIT; if (!box.hidden) box.focus(); });
+  box.addEventListener('input', () => wrap.dispatchEvent(new Event('change', { bubbles: true })));
+  Object.defineProperty(wrap, 'value', { get: () => (sel.value === CUSTOM_UNIT ? unitToSave(box.value) : sel.value), set: put });
+  wrap.focus = () => sel.focus();
+  put(value);
+  return wrap;
 }
 
 // A labelled text input. Returns the wrapper; wrapper.input is the input element.
