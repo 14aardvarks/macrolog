@@ -1,6 +1,6 @@
 // Saved screen: favorites, recipes and the foods I made, with meal tags, rename, delete and edit.
 import { api } from './api.js';
-import { h, clear, field, message, show, select, sourceBadge } from './dom.js';
+import { h, clear, field, message, show, select, sourceBadge, kcalCue } from './dom.js';
 import { refreshAllControl } from './refresh.js';
 import { recipeSubText } from './recipeimport.js';
 import { DELETE_FOOD_CONFIRM, MEALS, MEAL_LABELS, toggleMeal, fmtNum, amountText, SAVED_FILTERS, SAVED_FILTER_LABELS, filterSavedItems, pageOf, PAGE_SIZE } from './util.js';
@@ -86,7 +86,7 @@ function foodRowMine(food, ctx, again) {
     try { await api.deleteFood(food.id); await again(); } catch (e) { show(status, message(e.message, 'error')); }
   };
   return h('li', { class: 'saved-item' }, h('span', { class: 'item-title' }, title(food)),
-    h('span', { class: 'item-sub' }, amountText(food.serving_amount, food.serving_unit) + ' - ' + fmtNum(food.kcal, 0) + ' kcal', ' ', sourceBadge(food.source, true)),
+    h('span', { class: 'item-sub' }, amountText(food.serving_amount, food.serving_unit) + ' - ' + fmtNum(food.kcal, 0) + ' kcal', ' ', sourceBadge(food.source, true), kcalCue(food)),
     h('div', { class: 'row wrap' }, h('button', { class: 'btn', type: 'button', onclick: () => ctx.go('editfood', { food }) }, 'Edit'),
       h('button', { class: 'btn', type: 'button', onclick: del }, 'Delete')), status);
 }

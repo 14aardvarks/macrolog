@@ -35,9 +35,11 @@ MICRO_INFO = {
 MICROS = tuple(MICRO_INFO)
 NEW_MICROS = MICROS[1:]
 FOOD_COLS = ("id", "source", "source_id", "barcode", "name", "brand", "serving_amount", "serving_unit",
-             "serving_g", "serving_ml", "label_text", "kcal", "carbs", "protein", "fat", *MICROS)
+             "serving_g", "serving_ml", "label_text", "kcal", "carbs", "protein", "fat", *MICROS, "kcal_estimated")
 ENTRY_COLS = ("id", "day", "meal", "food_id", "name", "brand", "amount", "unit", "servings",
-              "kcal", "carbs", "protein", "fat", *MICROS, "group_id")
+              "kcal", "carbs", "protein", "fat", *MICROS, "kcal_estimated", "group_id")
+# Foods from these sources come from parsers that can miss energy, so a stored 0 beside real macros reads as missing (see units.resolve_kcal).
+PARSED_SOURCES = ("off", "fdc")
 DEFAULT_GOALS = {"kcal": 3000, "carb_pct": 50, "protein_pct": 30, "fat_pct": 20}
 GOAL_KEYS = {"carbs": ("carb_pct", 4), "protein": ("protein_pct", 4), "fat": ("fat_pct", 9)}  # pct key, kcal per g
 
@@ -56,14 +58,14 @@ CREATE TABLE IF NOT EXISTS foods(
   id INTEGER PRIMARY KEY, source TEXT NOT NULL, source_id TEXT, barcode TEXT,
   name TEXT NOT NULL, brand TEXT, serving_amount REAL NOT NULL, serving_unit TEXT NOT NULL,
   serving_g REAL, serving_ml REAL, label_text TEXT NOT NULL DEFAULT '',
-  kcal REAL NOT NULL, carbs REAL NOT NULL, protein REAL NOT NULL, fat REAL NOT NULL, fiber REAL,
+  kcal REAL NOT NULL, carbs REAL NOT NULL, protein REAL NOT NULL, fat REAL NOT NULL, fiber REAL, kcal_estimated INTEGER NOT NULL DEFAULT 0,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP, created_by INTEGER, deleted INTEGER NOT NULL DEFAULT 0, UNIQUE(source, source_id));
 CREATE INDEX IF NOT EXISTS foods_barcode ON foods(barcode);
 CREATE TABLE IF NOT EXISTS entries(
   id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), day TEXT NOT NULL, meal TEXT,
   food_id INTEGER REFERENCES foods(id) ON DELETE SET NULL, name TEXT NOT NULL, brand TEXT,
   amount REAL NOT NULL, unit TEXT NOT NULL, servings REAL NOT NULL,
-  kcal REAL NOT NULL, carbs REAL NOT NULL, protein REAL NOT NULL, fat REAL NOT NULL, fiber REAL,
+  kcal REAL NOT NULL, carbs REAL NOT NULL, protein REAL NOT NULL, fat REAL NOT NULL, fiber REAL, kcal_estimated INTEGER NOT NULL DEFAULT 0,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE INDEX IF NOT EXISTS entries_user_day ON entries(user_id, day);
 CREATE TABLE IF NOT EXISTS favorites(
@@ -177,6 +179,9 @@ def init(c: sqlite3.Connection) -> None:
         c.execute("ALTER TABLE settings ADD COLUMN auto_match TEXT NOT NULL DEFAULT 'search'")
     if "recipe_owner" not in cols:  # databases made before the Recipes owner filter
         c.execute("ALTER TABLE settings ADD COLUMN recipe_owner TEXT NOT NULL DEFAULT 'mine'")
+    for table in ("foods", "entries"):  # databases made before estimated calories: all stay as stored (0, a real value)
+        if "kcal_estimated" not in {r[1] for r in c.execute(f"PRAGMA table_info({table})")}:
+            c.execute(f"ALTER TABLE {table} ADD COLUMN kcal_estimated INTEGER NOT NULL DEFAULT 0")
     for table in ("foods", "entries"):  # databases made before micronutrients: old rows stay null (unknown)
         have = {r[1] for r in c.execute(f"PRAGMA table_info({table})")}
         for key in NEW_MICROS:
@@ -255,6 +260,9 @@ def now() -> str:
 
 def food_dict(row) -> dict:
     out = {k: row[k] for k in FOOD_COLS}
+    out["kcal_estimated"] = bool(out["kcal_estimated"])
+    if not out["kcal_estimated"] and out["source"] in PARSED_SOURCES:  # saved before estimates: a 0 next to macros is missing energy
+        out["kcal"], out["kcal_estimated"] = units.resolve_kcal(out["kcal"], out["carbs"], out["protein"], out["fat"], out["fiber"])
     if "ai_micros" in row.keys():  # micronutrients Claude estimated on Refresh Nutrients (Full Claude Use)
         out["ai_micros"] = [k for k in (row["ai_micros"] or "").split(",") if k in MICROS]
     return out
@@ -300,8 +308,12 @@ def normalize_food(raw: dict, sources: tuple = SOURCES) -> dict:
             "label_text": " ".join(str(raw.get("label_text") or "").split()) or f"{amount:g} {unit}"}
     for key in MICROS:
         food[key] = number(raw.get(key), key, optional=True)
-    for key in MACROS:
+    for key in MACROS[1:]:
         food[key] = number(raw.get(key), key)
+    food["kcal"] = number(raw.get("kcal"), "kcal", optional=True)
+    food["kcal_estimated"] = bool(raw.get("kcal_estimated")) and food["kcal"] is not None and source in PARSED_SOURCES  # only lookup sets it
+    if food["kcal"] is None:  # blank calories: estimate from the macros (units.resolve_kcal), marked as an estimate
+        food["kcal"], food["kcal_estimated"] = units.resolve_kcal(None, food["carbs"], food["protein"], food["fat"], food.get("fiber"))
     code = re.sub(r"\D", "", str(raw.get("barcode") or ""))
     cands = lookup.normalize_barcode(code)["candidates"]
     food["barcode"] = cands[0] if cands else (code or None)
@@ -316,7 +328,7 @@ def save_food(c, f: dict) -> dict:
     """Insert a normalized food, or return the existing row with the same (source, source_id)."""
     cols = [k for k in FOOD_COLS if k != "id"]
     cur = c.execute(f"INSERT INTO foods({','.join(cols)}) VALUES({','.join('?' * len(cols))}) "
-                    "ON CONFLICT(source, source_id) DO NOTHING", [f[k] for k in cols])
+                    "ON CONFLICT(source, source_id) DO NOTHING", [int(f[k]) if k == "kcal_estimated" else f[k] for k in cols])
     if cur.rowcount:
         return need_food(c, cur.lastrowid)
     row = c.execute("SELECT * FROM foods WHERE source=? AND source_id=?", (f["source"], f["source_id"])).fetchone()
@@ -339,7 +351,7 @@ def check_amount_unit(food: dict, amount, unit) -> tuple[float, str]:
 def macros(food: dict, amount: float, unit: str) -> dict:
     """units.scale with stored rounding: servings 4 places, nutrients 2 places."""
     s = units.scale(food, amount, unit)
-    out = {"servings": round(s["servings"], 4), "estimated": bool(s.get("estimated"))}
+    out = {"servings": round(s["servings"], 4), "estimated": bool(s.get("estimated")), "kcal_estimated": bool(food.get("kcal_estimated"))}
     for key in MACROS:
         out[key] = r2(s[key])
     for key in MICROS:  # scaled like the macros; unknown stays None
@@ -453,9 +465,11 @@ def missing_nutrients(user: CurrentUser, date: str | None = None, claude: bool =
     if date not in (None, ""):
         where, args = where + " AND e.day=?", [*args, day_str(date)]
     blank = " OR ".join(f"f.{k} IS NULL" for k in MICROS)
+    no_kcal = "f.kcal_estimated=1 OR (f.kcal=0 AND f.source IN ('off','fdc'))"  # missing energy counts as missing too (checked again below)
     with db.conn() as c:
-        rows = c.execute(f"SELECT DISTINCT f.* FROM entries e JOIN foods f ON f.id=e.food_id WHERE {where} AND ({blank}) ORDER BY f.id",
+        rows = c.execute(f"SELECT DISTINCT f.* FROM entries e JOIN foods f ON f.id=e.food_id WHERE {where} AND ({blank} OR {no_kcal}) ORDER BY f.id",
                          args).fetchall()
+    rows = [r for r in rows if food_dict(r)["kcal_estimated"] or any(r[k] is None for k in MICROS)]
     ids = [r["id"] for r in rows if (r["source"] not in ("custom", "ai") or r["created_by"] == uid)
            and (by_claude or lookup.refresh_kind(food_dict(r)))]
     return {"ids": ids, "total": len(ids)}
@@ -484,11 +498,16 @@ def preview(user: CurrentUser, food_id: int, amount: str = "", unit: str = ""):
 # ---------- entries ----------
 
 def entry_dict(row) -> dict:
-    return {k: row[k] for k in ENTRY_COLS}
+    out = {k: row[k] for k in ENTRY_COLS}
+    out["kcal_estimated"] = bool(out["kcal_estimated"])
+    if not out["kcal_estimated"] and "source" in row.keys() and row["source"] in PARSED_SOURCES:  # logged before estimates existed
+        out["kcal"], out["kcal_estimated"] = units.resolve_kcal(out["kcal"], out["carbs"], out["protein"], out["fat"], out["fiber"])
+    return out
 
 
 def own_entry(c, uid: int, entry_id: int):
-    row = c.execute("SELECT * FROM entries WHERE id=? AND user_id=?", (entry_id, uid)).fetchone()
+    row = c.execute("SELECT e.*, f.source AS source FROM entries e LEFT JOIN foods f ON f.id=e.food_id WHERE e.id=? AND e.user_id=?",
+                    (entry_id, uid)).fetchone()
     if not row:
         raise HTTPException(404, "Entry not found")
     return row
@@ -498,11 +517,11 @@ def log_entry(c, uid: int, food: dict, amount: float, unit: str, day: str, meal,
     """Insert a snapshot entry and update last_used. Inputs must already be validated. group_id: the recipe log it belongs to.
     revive false (an ingredient of someone else's shared recipe) brings the food back for me only, never for everyone."""
     m = macros(food, amount, unit)
-    nutrients = (*MACROS, *MICROS)
+    nutrients = (*MACROS, *MICROS, "kcal_estimated")
     cur = c.execute(
         f"INSERT INTO entries(user_id,day,meal,food_id,name,brand,amount,unit,servings,group_id,{','.join(nutrients)}) "
         f"VALUES({','.join('?' * (10 + len(nutrients)))})",
-        (uid, day, meal, food["id"], food["name"], food["brand"], amount, unit, m["servings"], group_id, *[m[k] for k in nutrients]))
+        (uid, day, meal, food["id"], food["name"], food["brand"], amount, unit, m["servings"], group_id, *[int(m[k]) if k == "kcal_estimated" else m[k] for k in nutrients]))
     c.execute("INSERT INTO last_used(user_id,food_id,amount,unit,used_at) VALUES(?,?,?,?,?) "
               "ON CONFLICT(user_id,food_id) DO UPDATE SET amount=excluded.amount, unit=excluded.unit, "
               "used_at=excluded.used_at", (uid, food["id"], amount, unit, now()))
@@ -511,7 +530,7 @@ def log_entry(c, uid: int, food: dict, amount: float, unit: str, day: str, meal,
         undelete(c, uid, food["id"])  # logging a deleted food again brings it back
     else:
         c.execute("DELETE FROM deleted_foods WHERE user_id=? AND food_id=?", (uid, food["id"]))
-    return entry_dict(c.execute("SELECT * FROM entries WHERE id=?", (cur.lastrowid,)).fetchone())
+    return entry_dict(c.execute("SELECT e.*, f.source AS source FROM entries e LEFT JOIN foods f ON f.id=e.food_id WHERE e.id=?", (cur.lastrowid,)).fetchone())
 
 
 @router.post("/entries")
@@ -596,6 +615,7 @@ def group_item(g, parts: list) -> dict:
            "fraction": g["fraction"], "servings": None, "portions": group_portions(g), "parts": parts}
     for k in MACROS:
         out[k] = r2(sum(p[k] or 0 for p in parts))
+    out["kcal_estimated"] = any(p["kcal_estimated"] for p in parts)
     for k in MICROS:
         known = [p[k] for p in parts if p[k] is not None]
         out[k] = r2(sum(known)) if known else None
@@ -659,6 +679,7 @@ def scaled_nutrients(c, row, k: float) -> dict:
         except ValueError:
             pass
     return {"amount": amount, "servings": round(row["servings"] * k, 4),
+            "kcal_estimated": row["kcal_estimated"],
             **{key: None if row[key] is None else r2(row[key] * k) for key in (*MACROS, *MICROS)}}
 
 
@@ -932,7 +953,8 @@ def get_day(user: CurrentUser, day: str | None = None):
         goals = read_goals(c, user["id"])
         mtargets = micro_targets(c, user["id"])
         items = day_items(c, user["id"], rows)  # totals and micros below still count every ingredient row once, as before
-    sums = {k: sum(r[k] or 0 for r in rows) for k in (*MACROS, "fiber")}
+    flat = [entry_dict(r) for r in rows]  # kcal as Today shows it (estimated where the source had none)
+    sums = {k: sum(r[k] or 0 for r in flat) for k in (*MACROS, "fiber")}
     targets = {"kcal": float(goals["kcal"])}
     for key, (pct, kcal_g) in GOAL_KEYS.items():
         targets[key] = goals["kcal"] * goals[pct] / 100 / kcal_g
@@ -1143,7 +1165,7 @@ def item_dict(c, it) -> dict:
     base = {"id": it["id"], "food_id": it["food_id"], "amount": it["amount"], "unit": it["unit"], "src": src,
             "skipped": bool(it["skipped"]), "matched": it["food_id"] is not None and not check, "check": check}
     if it["food_id"] is None:
-        return {**base, "food": None, "servings": None, "estimated": False, "grams": None, **{k: None for k in (*MACROS, *MICROS)}}
+        return {**base, "food": None, "servings": None, "estimated": False, "kcal_estimated": False, "grams": None, **{k: None for k in (*MACROS, *MICROS)}}
     food = need_food(c, it["food_id"])
     return {**base, "food": food, "grams": units.grams(food, it["amount"], it["unit"]), **macros(food, it["amount"], it["unit"])}
 
@@ -1252,7 +1274,8 @@ def meal_dict(c, row, user: dict | None = None) -> dict:
     matched = sum(1 for i in needed if i["matched"])
     complete = bool(needed) and matched == len(needed)
     yld = row_yield(row)
-    return {"id": row["id"], "name": row["name"], "meal": tags[0] if tags else None, "meals": tags, "counts": counts,
+    counted_est = any(i["kcal_estimated"] for i in items if i["matched"] and not i["skipped"])
+    return {"id": row["id"], "name": row["name"], "meal": tags[0] if tags else None, "kcal_estimated": counted_est, "meals": tags, "counts": counts,
             "items": items, "kcal": r1(totals["kcal"]), "servings": servings, "totals": totals,
             "per_serving": {k: None if v is None else r2(v / servings) for k, v in totals.items()},
             "matched": matched, "needed": len(needed), "skipped": len(items) - len(needed),
@@ -1740,8 +1763,9 @@ def log_meal(meal_id: int, user: CurrentUser, body: dict | None = Body(None)):
 
 # ---------- saved screen: favorites, recipes and my foods ----------
 
-NUTRITION = ("serving_amount", "serving_unit", "serving_g", "serving_ml", "kcal", "carbs", "protein", "fat", *MICROS)
+NUTRITION = ("serving_amount", "serving_unit", "serving_g", "serving_ml", "kcal", "carbs", "protein", "fat", *MICROS, "kcal_estimated")
 FOOD_EDITABLE = ("name", "brand", "barcode", "label_text", *NUTRITION)
+BODY_EDITABLE = tuple(k for k in FOOD_EDITABLE if k != "kcal_estimated")  # the flag is worked out here, never sent
 IN_USE = "(EXISTS(SELECT 1 FROM entries WHERE food_id=f.id) OR EXISTS(SELECT 1 FROM meal_items WHERE food_id=f.id))"
 
 
@@ -1773,17 +1797,20 @@ def own_food(c, uid: int, food_id: int):
 def patch_food(food_id: int, user: CurrentUser, body: dict = Body(...)):
     """Edit my own custom food. Entries and recipes use the food live, so once it is used only the name,
     brand, barcode and label text can change; nutrition and serving stay as they were logged."""
-    if not set(FOOD_EDITABLE) & body.keys():
+    if not set(BODY_EDITABLE) & body.keys():
         raise bad("Nothing to update")
     with db.conn() as c:
         row = own_food(c, user["id"], food_id)
         old = food_dict(row)
-        new = normalize_food({**old, **{k: body[k] for k in FOOD_EDITABLE if k in body}}, (row["source"],))
+        merged = {**old, **{k: body[k] for k in BODY_EDITABLE if k in body}, "kcal_estimated": False}
+        if old["kcal_estimated"] and "kcal" in body and merged["kcal"] not in (None, "") and number(merged["kcal"], "kcal") == old["kcal"]:
+            merged["kcal"] = None  # the shown estimate was left alone: keep it an estimate, worked out again from the macros
+        new = normalize_food(merged, (row["source"],))  # a typed calorie value (even 0) clears the estimate flag
         if row["in_use"] and any(new[k] != old[k] for k in NUTRITION):
             raise HTTPException(409, "This food is already in your log or a recipe, so its serving and nutrition can no longer change. "
                                      "You can still rename it.")
         cols = [k for k in FOOD_EDITABLE]
-        c.execute(f"UPDATE foods SET {', '.join(k + '=?' for k in cols)} WHERE id=?", [new[k] for k in cols] + [food_id])
+        c.execute(f"UPDATE foods SET {', '.join(k + '=?' for k in cols)} WHERE id=?", [int(new[k]) if k == "kcal_estimated" else new[k] for k in cols] + [food_id])
         estimated = [k for k in (row["ai_micros"] or "").split(",") if k in MICROS and new[k] == old[k]]  # an edited value is mine now
         c.execute("UPDATE foods SET ai_micros=? WHERE id=?", (",".join(estimated), food_id))
         return need_food(c, food_id)
@@ -1814,7 +1841,7 @@ def claude_fill_ready(uid: int) -> tuple:
 
 
 def _names(keys) -> str:
-    return ", ".join(MICRO_INFO[k][0].lower() for k in keys)
+    return ", ".join("calories" if k == "kcal" else MICRO_INFO[k][0].lower() for k in keys)
 
 
 @router.post("/foods/{food_id}/refresh-nutrients")
@@ -1835,7 +1862,7 @@ async def refresh_nutrients(food_id: int, user: CurrentUser, claude: bool = Fals
     kind = lookup.refresh_kind(food)
     if kind is None and source is None:
         raise bad("This food has no source ID or barcode, so there is nothing to look up")
-    if all(food[k] is not None for k in MICROS):
+    if all(food[k] is not None for k in MICROS) and not food["kcal_estimated"]:
         return {"food": food, "filled": [], "message": "This food already has every nutrient"}
     filled, note = [], ""
     if kind is not None:
@@ -1851,6 +1878,10 @@ async def refresh_nutrients(food_id: int, user: CurrentUser, claude: bool = Fals
         if not found:
             note = res.get("note") or ""
         with db.conn() as c:
+            if found and ratio is not None and food["kcal_estimated"] and not found["kcal_estimated"]:  # a real energy value replaces an estimate
+                if c.execute("UPDATE foods SET kcal=?, kcal_estimated=0 WHERE id=? AND (kcal_estimated=1 OR kcal=0)",
+                             (r2(found["kcal"] * ratio), food_id)).rowcount:
+                    filled.append("kcal")
             for k in MICROS if found and ratio is not None else ():
                 v = found.get(k)
                 if food[k] is None and isinstance(v, (int, float)) and v >= 0:

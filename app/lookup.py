@@ -11,7 +11,7 @@ from fractions import Fraction
 import httpx
 
 from . import config
-from .units import MASS, VOLUME, parse_unit
+from .units import KJ_PER_KCAL, MASS, VOLUME, parse_unit, resolve_kcal
 
 OFF_URL = "https://world.openfoodfacts.org/api/v2/product/{code}.json"
 OFF_SEARCH_URL = "https://world.openfoodfacts.org/cgi/search.pl"
@@ -19,7 +19,7 @@ OFF_FIELDS = "code,product_name,generic_name,brands,serving_size,serving_quantit
 FDC_URL = "https://api.nal.usda.gov/fdc/v1/foods/search"
 FDC_DETAIL_URL = "https://api.nal.usda.gov/fdc/v1/food/{id}"
 USER_AGENT = "macrolog/0.1"
-FDC_NUTRIENTS = {"208": "kcal", "205": "carbs", "203": "protein", "204": "fat", "291": "fiber"}
+FDC_NUTRIENTS = {"268": "kj", "208": "kcal", "205": "carbs", "203": "protein", "204": "fat", "291": "fiber"}
 # Micronutrients: our key -> (unit we store, OFF nutriment name, FDC nutrient id, FDC nutrient number, FDC labelNutrients name).
 # OFF keeps *_100g and *_serving in grams, so mg and mcg values are converted. Missing data stays None, never 0.
 MICROS = {
@@ -28,7 +28,7 @@ MICROS = {
     "cholesterol": ("mg", "cholesterol", 1253, "601", "cholesterol"), "potassium": ("mg", "potassium", 1092, "306", "potassium"),
     "calcium": ("mg", "calcium", 1087, "301", "calcium"), "iron": ("mg", "iron", 1089, "303", "iron"),
     "vitamin_d": ("mcg", "vitamin-d", 1114, "328", None)}
-FDC_IDS = {1008: "kcal", 1005: "carbs", 1003: "protein", 1004: "fat", **{v[2]: k for k, v in MICROS.items()}}
+FDC_IDS = {1008: "kcal", 1062: "kj", 1005: "carbs", 1003: "protein", 1004: "fat", **{v[2]: k for k, v in MICROS.items()}}
 FDC_NUMBERS = {**FDC_NUTRIENTS, **{v[3]: k for k, v in MICROS.items()}}
 TO_G = {"g": 1.0, "mg": 0.001, "mcg": 1e-6, "ug": 1e-6, "µg": 1e-6, "μg": 1e-6}
 _transport = None  # tests set an httpx.MockTransport here
@@ -150,7 +150,7 @@ def parse_serving(text, serving_g=None, serving_ml=None):
 
 def _food(source, source_id, barcode, name, brand, sv, vals):
     return {"source": source, "source_id": source_id, "barcode": barcode, "name": name, "brand": brand,
-            **sv, "kcal": vals["kcal"], "carbs": vals.get("carbs") or 0.0, "protein": vals.get("protein") or 0.0,
+            **sv, "kcal": vals["kcal"], "kcal_estimated": bool(vals.get("kcal_estimated")), "carbs": vals.get("carbs") or 0.0, "protein": vals.get("protein") or 0.0,
             "fat": vals.get("fat") or 0.0, **{k: vals.get(k) for k in MICROS}}
 
 
@@ -168,21 +168,38 @@ def _round(vals):
 
 def _off_values(n, basis, use_serving=True):
     """Per serving nutrients: prefer *_serving, else scale *_100g by the serving size in g or ml."""
-    def per(key):
+    def both(key):  # [per serving, per 100 g scaled to the serving], each None when the product lacks it
         v = _f(n.get(f"{key}_serving")) if use_serving else None
-        if v is None:
-            v100 = _f(n.get(f"{key}_100g"))
-            v = v100 * basis / 100 if v100 is not None and basis else None
-        return v
+        v100 = _f(n.get(f"{key}_100g"))
+        return [v, v100 * basis / 100 if v100 is not None and basis else None]
+
+    def per(key):
+        return next((v for v in both(key) if v is not None), None)
     vals = {"carbs": per("carbohydrates"), "protein": per("proteins"), "fat": per("fat")}
     for key, (unit, name, *_) in MICROS.items():  # OFF stores these in grams
         vals[key] = convert(per(name), "g", unit)
     if vals["sodium"] is None and per("salt") is not None:  # salt only: sodium = salt / 2.5
         vals["sodium"] = convert(per("salt") / 2.5, "g", "mg")
-    vals["kcal"] = per("energy-kcal")
-    if vals["kcal"] is None and per("energy") is not None:  # kJ only
-        vals["kcal"] = per("energy") / 4.184
+    vals["kcal"] = _first_energy([*both("energy-kcal"), *(None if v is None else v / KJ_PER_KCAL for k in ("energy-kj", "energy") for v in both(k))])
     return {"kcal": None, **_round(vals)}
+
+
+def _first_energy(candidates):
+    """First positive energy among the candidates (kcal, then kJ turned into kcal). A listed 0 is kept only when nothing
+    else is positive, so a kcal field of 0 does not hide a real kJ value. None when no field has a value."""
+    known = [v for v in candidates if v is not None]
+    return next((v for v in known if v > 0), 0.0 if known else None)
+
+
+def _with_energy(vals):
+    """Fill kcal from the macros when energy is missing or an unconfirmed 0 (see units.resolve_kcal); sets kcal_estimated."""
+    vals["kcal"], vals["kcal_estimated"] = resolve_kcal(vals.get("kcal"), vals.get("carbs"), vals.get("protein"), vals.get("fat"), vals.get("fiber"))
+    return vals
+
+
+def _no_data(vals):
+    """True when a parsed product has neither energy nor any macro (nothing a serving could be worked out from)."""
+    return all(vals.get(k) is None for k in ("kcal", "carbs", "protein", "fat"))
 
 
 def off_food(code, p):
@@ -193,9 +210,10 @@ def off_food(code, p):
     text = p.get("serving_size") or ("" if qty else "100 g")
     sv = parse_serving(text, None if is_ml else qty, qty if is_ml else None)
     vals = _off_values(n, sv["serving_g"] or sv["serving_ml"])
-    if vals["kcal"] is None and not (sv["serving_g"] or sv["serving_ml"]):
+    if _no_data(vals) and not (sv["serving_g"] or sv["serving_ml"]):
         sv = parse_serving("100 g")  # count serving with no weight: fall back to per 100 g
         vals = _off_values(n, 100, use_serving=False)
+    vals = _with_energy(vals)
     if vals["kcal"] is None:
         return None
     name = (p.get("product_name") or p.get("generic_name") or "Unknown product").strip()
@@ -222,7 +240,7 @@ async def _off(client, candidates, notes):
 # ---------- USDA FoodData Central ----------
 
 def fdc_food(item, barcode=None):
-    """Build a Food from an FDC search hit (values are per 100 g), or None without energy."""
+    """Build a Food from an FDC search hit (values are per 100 g), or None without energy or macros. Missing energy becomes an estimate from the macros."""
     per100 = {}
     for fn in item.get("foodNutrients") or []:
         key = FDC_NUMBERS.get(str(fn.get("nutrientNumber") or "")) or FDC_IDS.get(_int(fn.get("nutrientId")))
@@ -231,7 +249,10 @@ def fdc_food(item, barcode=None):
             v = convert(v, fn["unitName"], MICROS[key][0])
         if key and v is not None:
             per100.setdefault(key, v)
-    if "kcal" not in per100:
+    if "kj" in per100 and "kcal" not in per100:  # energy in kJ only
+        per100["kcal"] = per100["kj"] / KJ_PER_KCAL
+    per100.pop("kj", None)
+    if not any(k in per100 for k in ("kcal", "carbs", "protein", "fat")):
         return None
     size = _f(item.get("servingSize"))
     metric = {"g": "g", "grm": "g", "ml": "ml", "mlt": "ml"}.get(str(item.get("servingSizeUnit") or "").lower())
@@ -247,6 +268,7 @@ def fdc_food(item, barcode=None):
     vals = _round({k: v * factor for k, v in per100.items()})
     if size and metric:  # labelNutrients are per label serving as printed; they win for the micronutrients
         vals.update(_fdc_label_micros(item.get("labelNutrients")))
+    vals = _with_energy({**{"kcal": None}, **vals})
     desc = (item.get("description") or "Unknown").strip()
     name = desc.title() if desc.isupper() else desc
     brand = item.get("brandName") or item.get("brandOwner") or None

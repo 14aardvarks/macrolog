@@ -1,11 +1,11 @@
 import { api } from './api.js';
-import { h, field, message, show, select, sourceLine } from './dom.js';
+import { h, field, message, show, select, sourceLine, kcalCue } from './dom.js';
 import { refreshControl } from './refresh.js';
 import { DELETE_FOOD_CONFIRM, sentence, canLookUp, aiMicrosText, parseDecimal, fmtAmount, MEALS, MEAL_LABELS, guessMeal, MICROS } from './util.js';
 
 const NUM = [
   ['serving_amount', 'Serving amount', true, 'e.g. 2'],
-  ['kcal', 'Calories per serving', true, ''],
+  ['kcal', 'Calories per serving', false, 'Blank estimates from macros'],  // blank: the server estimates it from the macros
   ['carbs', 'Carbs g', true, ''],
   ['protein', 'Protein g', true, ''],
   ['fat', 'Fat g', true, ''],
@@ -34,6 +34,8 @@ export function renderFoodForm(root, opts, ctx) {
   f.barcode = field('Barcode (optional)', { value: opts.barcode || draft.barcode || '', inputmode: 'numeric' });
   NUM.forEach(([k, label, , ph]) => { f[k] = field(label, { value: val(k), inputmode: 'decimal', placeholder: ph, autocomplete: 'off', disabled: locked }); });
   if (locked) f.serving_unit.input.disabled = true;
+  const kcalNote = h('p', { class: 'sub kcal-note' }, kcalCue(draft));  // cleared as soon as the calories are edited
+  f.kcal.input.addEventListener('input', () => kcalNote.replaceChildren());
 
   const mealOpts = [{ value: 'none', label: MEAL_LABELS.none }, ...MEALS.map((m) => ({ value: m, label: MEAL_LABELS[m] }))];
   const mealSel = select(mealOpts, (ctx.settings && ctx.settings.default_meal) || guessMeal(new Date().getHours()), { 'aria-label': 'Meal' });
@@ -53,7 +55,7 @@ export function renderFoodForm(root, opts, ctx) {
     f.name, f.brand,
     h('div', { class: 'grid2' }, f.serving_amount, f.serving_unit),
     f.label_text,
-    f.kcal,
+    f.kcal, kcalNote,
     h('div', { class: 'grid3' }, f.carbs, f.protein, f.fat),
     f.fiber,
     h('div', { class: 'grid2' }, f.serving_g, f.serving_ml),

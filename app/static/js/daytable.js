@@ -1,4 +1,4 @@
-import { h, sourceBadge } from './dom.js';
+import { h, sourceBadge, kcalCue } from './dom.js';
 import { buildTable, columnHeader, VIEWS, VIEW_LABELS } from './tablemodel.js';
 import { isRecipeLog, entryAmountText } from './recipeimport.js';
 import { entryKey } from './util.js';
@@ -28,7 +28,7 @@ export function dayTable(entries, opts) {
       const food = e.food_id == null && !recipe ? h('span', null, name)
         : h('button', { class: 'food-link', type: 'button', onclick: () => opts.onOpen(e) }, name);
       const src = recipe ? h('span', { class: 'src-wrap' }, h('span', { class: 'src src-recipe' }, 'Recipe')) : sourceBadge(e.source, true);
-      rows.push(h('tr', null, h('th', { scope: 'row', class: 'food-col' }, food, src ? h('div', { class: 'src-sub' }, src) : null), h('td', { class: 'amt-col' }, entryAmountText(e)),
+      rows.push(h('tr', null, h('th', { scope: 'row', class: 'food-col' }, food, src || kcalCue(e) ? h('div', { class: 'src-sub' }, src, kcalCue(e)) : null), h('td', { class: 'amt-col' }, entryAmountText(e)),
         r.cells.map((s) => h('td', { class: 'num' }, s)),
         h('td', { class: 'del-col' }, h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Remove ' + e.name, 'data-row': entryKey(e), onclick: () => opts.onDelete(e) }, '×'))));
     });

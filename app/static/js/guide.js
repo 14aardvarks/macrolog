@@ -37,6 +37,8 @@ export const GUIDE = [
     'Macros update live and always convert back to the label\'s grams and calories.',
     'Cups of a food sold by weight use a typical density, marked Estimated Conversion.',
     'The layout stays still while you change units.',
+    'Calories the source lacks are estimated from macros and marked Estimated From Macros.',
+    'Refresh Nutrients swaps an estimate for the real value when the source has one.',
   ] },
   { heading: 'How It Remembers', bullets: [
     'A food reopens with the amount and unit from your last entry.',

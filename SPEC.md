@@ -60,8 +60,26 @@ Nutrients are PER LABEL SERVING.
   label_text: str,                # as printed, e.g. "2 tbsp (30 g)"
   kcal, carbs, protein, fat: float,
   fiber, sugars, saturated_fat: float|null (g), sodium, cholesterol, potassium, calcium, iron: float|null (mg),
-  vitamin_d: float|null (mcg) }      # micronutrients: null means unknown, never zero
+  vitamin_d: float|null (mcg),       # micronutrients: null means unknown, never zero
+  kcal_estimated: bool }             # kcal was worked out from the macros, see Estimated calories
 ```
+Estimated calories (one place on the server, `units.estimate_kcal` and `units.resolve_kcal`): kcal = 4*protein + 4*max(carbs - fiber, 0) + 2*fiber + 9*fat
+per the same basis. `resolve_kcal(kcal, carbs, protein, fat, fiber)` returns (kcal, estimated): a positive value always wins; None, or 0 beside
+macros worth at least KCAL_ZERO_FLOOR (5) kcal, becomes the estimate with estimated true; 0 beside zero or tiny macros stays a real 0, and
+no energy and no macros stays None (the lookup returns no food). Lookup: OFF tries energy-kcal_serving, energy-kcal_100g, energy-kj and energy
+(kJ divided by 4.184, serving then 100 g) and takes the first positive one (a 0 never hides a kJ value), then falls back to the estimate;
+FDC also reads kJ (nutrient 268) and accepts a hit with macros but no energy. Storage: foods.kcal_estimated and entries.kcal_estimated
+(INTEGER NOT NULL DEFAULT 0, added by core.init, nothing rewritten). `food_dict` and `entry_dict` apply resolve_kcal at read time to foods and
+entries from off and fdc whose flag is 0, so older rows with kcal 0 beside macros read as estimated (the stored row stays as it was);
+log_entry and macros() carry the flag (macros() returns kcal_estimated, recipe items, recipes (kcal_estimated: any counted row) and
+/api/day entries too; a recipe log is estimated when any part is), and /api/day totals sum the resolved values. normalize_food accepts blank
+calories (estimate, flagged) and honors a client kcal_estimated only for off and fdc foods; PATCH /api/foods works the flag out itself: a typed
+calorie value (even 0) clears it, the shown estimate sent back unchanged keeps it and is worked out again from the macros. Refresh Nutrients
+also fills kcal (key "kcal" in filled) when the food is estimated and the source has a real value at a comparable serving, and
+GET /api/foods/missing-nutrients lists foods with estimated calories. Client: util.js `kcalEstimated(x)` and KCAL_ESTIMATE_CUE, dom.js
+`kcalCue(x)` (a small muted "Estimated From Macros" span) in foodRow (Add lists, Today rows, quick lists), the Today table food cell, Saved
+my foods, the picker (a fixed height line under the calories, live from /api/preview), the food form (hidden once Calories is edited),
+recipe ingredient lines and recipe log parts.
 Micronutrients are per label serving like the macros, so unit scaling and estimated flags work the same; core scales them by
 `servings` from units.scale (units.scale itself still returns only the macros and fiber). Entries snapshot all of them; entries made
 before they existed stay null. Columns are added in place by `core.init` (PRAGMA table_info, ALTER TABLE ADD COLUMN, safe to run twice).

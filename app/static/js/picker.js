@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { h, clear, select, message, show, sourceLine } from './dom.js';
+import { h, clear, select, message, show, sourceLine, kcalCue } from './dom.js';
 import { fillMacroBar } from './chart.js';
 import { microGrid } from './micros.js';
 import { refreshControl } from './refresh.js';
@@ -109,6 +109,7 @@ export async function renderPicker(root, params, ctx) {
   const logBtn = h('button', { class: 'btn primary', type: 'button', onclick: save }, adjust != null ? 'Done' : edit ? 'Save Changes' : 'Log');
 
   const kcal = h('span', { id: 'pv-kcal' }, '-');
+  const kcalNote = h('p', { class: 'sub kcal-note' }, kcalCue(food));  // always in the layout, empty unless the calories are an estimate
   const display = ctx.display || {};
   const showBar = display.show_macro_bar !== false;
   const mbar = h('div', { class: 'pick-bar' }, h('span', { class: 'macro-bar', role: 'img', hidden: '' }));
@@ -124,6 +125,7 @@ export async function renderPicker(root, params, ctx) {
     wordBox,
     gramLine,
     h('div', { class: 'kcal-big' }, kcal, ' kcal'),
+    kcalNote,
     h('div', { class: 'macros' }, macroCell('Carbs g', 'pv-carbs'), macroCell('Protein g', 'pv-protein'),
       macroCell('Fat g', 'pv-fat'), macroCell('Fiber g', 'pv-fiber')),
     showBar ? mbar : null, micros.el, aiMicrosText(food) ? h('p', { class: 'sub' }, aiMicrosText(food)) : null, canRefresh(food) ? refreshControl(food, () => runPreview()).el : null, h('div', { class: 'badge-slot' }, estBadge),
@@ -235,6 +237,7 @@ export async function renderPicker(root, params, ctx) {
       root.querySelector('#pv-fiber').textContent = p.fiber == null ? '-' : fmtNum(p.fiber, 1);
       fillMacroBar(mbar.firstChild, p);
       micros.update(p);
+      kcalNote.replaceChildren(...[kcalCue(p)].filter(Boolean));
       estBadge.style.visibility = p.estimated ? 'visible' : 'hidden';
       if (status.firstChild) clear(status);
     } catch (e) {

@@ -1,5 +1,5 @@
 import { api, setUnauthorizedHandler } from './api.js';
-import { h, clear, select, field, message, show, cameraIcon, sourceBadge } from './dom.js';
+import { h, clear, select, field, message, show, cameraIcon, sourceBadge, kcalCue } from './dom.js';
 import {
   MEALS, MEAL_LABELS, parseDecimal, parseAmount, amountText, servingText, qtyText, amountMemo, setAmountFormat, unitLabel, fmtNum, fmtAmount, groupByMeal, mealGroupsAll, quickLabel, checkedItems, canSaveRecipe, rowAmountText, applyRowPick, draftFits, localDate, progressText, remainingText,
   sentence, matchAmount, newRecipeDraft, recipeAddRow, recipeSetRow, stepsBack, barWidth, barState, debounce, digitsOnly, guessMeal, pctTotal, latestGuard, MEAL_FILTERS, MEAL_FILTER_LABELS, filterByMeal, filterSaved, pageOf, PAGE_SIZE, emptyText,
@@ -345,7 +345,7 @@ const unitText = amountText;
 function foodRow(title, sub, onclick, extra, macros, source, tag) {
   const badge = tag ? h('span', { class: 'src-wrap' }, h('span', { class: 'src src-recipe' }, tag)) : sourceBadge(source, true);
   return h('li', { class: 'item' },
-    h('button', { class: 'item-main', type: 'button', onclick }, h('span', { class: 'item-title' }, title), h('span', { class: 'item-sub' }, sub, badge ? ' ' : null, badge), macros && state.display.show_macro_bar !== false ? macroBar(macros) : null),
+    h('button', { class: 'item-main', type: 'button', onclick }, h('span', { class: 'item-title' }, title), h('span', { class: 'item-sub' }, sub, badge ? ' ' : null, badge, kcalCue(macros)), macros && state.display.show_macro_bar !== false ? macroBar(macros) : null),
     extra || null);
 }
 

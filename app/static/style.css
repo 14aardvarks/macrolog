@@ -388,6 +388,9 @@ input[type=text], input[type=search], input[type=password], input[type=email], s
 .src { display: inline-block; padding: 0 6px; border: 1px solid var(--line); border-radius: 99px; font-size: .75rem; line-height: 1.5; color: var(--muted); white-space: nowrap; font-weight: 400; }
 .src-ai { background: var(--warn-bg); color: var(--text); border-color: var(--over); font-weight: 600; }
 .src-est { font-size: .75rem; color: var(--muted); }
+.kcal-note { margin: 0 0 4px; font-size: .875rem; }
+.picker .kcal-note { min-height: 1.3rem; }  /* the cue's line stays in the layout, so the wheels never jump */
+.item-sub .kcal-cue { white-space: normal; }
 h1 .src { font-size: .875rem; vertical-align: middle; }
 .src-line { margin: 0 0 8px; }
 .day-table .src-sub { margin-top: 2px; font-weight: 400; line-height: 1.3; }

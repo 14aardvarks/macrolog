@@ -2,7 +2,7 @@
 // to log it again. Shows the portion, the combined nutrition and the ingredients (read only). Today: change the portion
 // (the server rescales every row), move it to another meal, or remove it. Yesterday (params.copy): Log puts a copy on today.
 import { api } from './api.js';
-import { h, field, message, show, select, sourceBadge } from './dom.js';
+import { h, field, message, show, select, sourceBadge, kcalCue } from './dom.js';
 import { MEALS, MEAL_LABELS, fmtNum, qtyText, amountText, amountMemo } from './util.js';
 import { portionUnits, portionFraction, portionAmount, recipeAmountText, scaledLog, partsText, REMOVE_RECIPE_CONFIRM } from './recipeimport.js';
 import { fillMacroBar } from './chart.js';
@@ -87,7 +87,7 @@ export async function renderRecipeLog(root, params, ctx) {
     const badge = sourceBadge(p.source, true);
     return h('li', { class: 'item' }, h('div', { class: 'item-main' },
       h('span', { class: 'item-title' }, p.brand ? p.name + ' (' + p.brand + ')' : p.name),
-      h('span', { class: 'item-sub' }, amountText(p.amount, p.unit) + ' - ' + fmtNum(p.kcal, 0) + ' kcal', badge ? ' ' : null, badge)));
+      h('span', { class: 'item-sub' }, amountText(p.amount, p.unit) + ' - ' + fmtNum(p.kcal, 0) + ' kcal', badge ? ' ' : null, badge, kcalCue(p))));
   }));
   root.appendChild(h('section', { class: 'screen recipe-log-view' },
     h('div', { class: 'bar' }, h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back')),

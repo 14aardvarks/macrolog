@@ -1,4 +1,4 @@
-import { sentence, sourceLabel, isEstimate, sourceNote, CUSTOM_UNIT, CUSTOM_UNIT_LABEL, CUSTOM_UNIT_MAX, CUSTOM_UNIT_HINT, cleanUnitText, unitToSave } from './util.js';
+import { sentence, sourceLabel, kcalEstimated, KCAL_ESTIMATE_CUE, isEstimate, sourceNote, CUSTOM_UNIT, CUSTOM_UNIT_LABEL, CUSTOM_UNIT_MAX, CUSTOM_UNIT_HINT, cleanUnitText, unitToSave } from './util.js';
 
 // Tiny DOM helpers. Text always goes through textContent / text nodes, never innerHTML.
 
@@ -110,6 +110,11 @@ export function sourceBadge(source, withEstimate) {
   if (!label) return null;
   const est = withEstimate && isEstimate(source);
   return h('span', { class: 'src-wrap' }, h('span', { class: 'src src-' + source }, label), est ? h('span', { class: 'src-est' }, 'Estimate') : null);
+}
+
+// A small cue after calories that the server estimated them from the macros, or null. The words are always shown.
+export function kcalCue(x) {
+  return kcalEstimated(x) ? h('span', { class: 'src-wrap' }, h('span', { class: 'src-est kcal-cue' }, KCAL_ESTIMATE_CUE)) : null;
 }
 
 // A line for the picker and the food form: the badge, and for Claude foods the estimate note.

@@ -262,6 +262,32 @@ def default_pick(food):
     return label_amount, label_unit
 
 
+# ---------- energy ----------
+# Calories missing from a source are estimated from the macros (Atwater, fiber counted at about 2 kcal per g). This is the
+# only place that does it: lookup (at import), core (read time for older foods and entries) and the food form all call it.
+KJ_PER_KCAL = 4.184
+KCAL_ZERO_FLOOR = 5.0  # a stored 0 next to macros worth less than this many kcal is a real (label rounded) 0
+
+
+def estimate_kcal(carbs, protein, fat, fiber=None):
+    """4 per g protein, 4 per g carbs without fiber, 2 per g fiber, 9 per g fat. None when no macro is known at all."""
+    if carbs is None and protein is None and fat is None:
+        return None
+    c, p, f, fi = (float(v or 0) for v in (carbs, protein, fat, fiber))
+    return 4 * p + 4 * max(c - fi, 0) + 2 * fi + 9 * f
+
+
+def resolve_kcal(kcal, carbs, protein, fat, fiber=None):
+    """(kcal, estimated). A real positive value always wins. Missing (None) or 0 next to macros worth at least
+    KCAL_ZERO_FLOOR kcal counts as missing and gets the estimate; 0 beside zero or tiny macros stays a real 0."""
+    est = estimate_kcal(carbs, protein, fat, fiber)
+    if kcal is None:
+        return (round(est, 2), True) if est else (0.0 if est is not None else None, False)
+    if kcal == 0 and est is not None and est >= KCAL_ZERO_FLOOR:
+        return round(est, 2), True
+    return kcal, False
+
+
 def scale(food, amount, unit):
     servings, estimated = _convert(food, amount, unit)
 

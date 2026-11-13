@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { missingMicros, canLookUp, canRefresh, refreshTargets, bulkSummary, pendingPlan, planText, REFRESH_CAP } from '../../app/static/js/util.js';
+import { kcalEstimated, KCAL_ESTIMATE_CUE, missingMicros, canLookUp, canRefresh, refreshTargets, bulkSummary, pendingPlan, planText, REFRESH_CAP } from '../../app/static/js/util.js';
 
 const FULL = { fiber: 1, sugars: 1, saturated_fat: 1, sodium: 1, cholesterol: 1, potassium: 1, calcium: 1, iron: 1, vitamin_d: 1 };
 
@@ -63,4 +63,19 @@ test('planText says how many foods the next tap checks', () => {
   assert.equal(planText({ total: 1 }), '1 food will be checked');
   assert.equal(planText({ total: 7 }), '7 foods will be checked');
   assert.equal(planText({ total: 23 }), '10 of 23 foods will be checked now');
+});
+
+test('kcalEstimated is true only for an explicit server flag', () => {
+  assert.equal(kcalEstimated({ kcal: 130, kcal_estimated: true }), true);
+  assert.equal(kcalEstimated({ kcal: 0, kcal_estimated: false }), false);
+  assert.equal(kcalEstimated({ kcal: 0 }), false);
+  assert.equal(kcalEstimated(null), false);
+  assert.equal(KCAL_ESTIMATE_CUE, 'Estimated From Macros');
+});
+
+test('estimated calories make a food with every micronutrient worth refreshing', () => {
+  const food = { source: 'off', source_id: '3017620422003', ...FULL };
+  assert.equal(canRefresh(food), false);
+  assert.equal(canRefresh({ ...food, kcal_estimated: true }), true);
+  assert.equal(canRefresh({ source: 'custom', kcal_estimated: true, ...FULL }), false);  // nothing to look up
 });

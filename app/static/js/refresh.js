@@ -1,7 +1,7 @@
 // Refresh Nutrients: fills blank micronutrients from the food's original source. Never changes existing values.
 import { api } from './api.js';
 import { h, message, show } from './dom.js';
-import { missingMicros, refreshTargets, bulkSummary, pendingPlan, microsWhat, sentence, CLAUDE_CAP_NOTE } from './util.js';
+import { missingMicros, kcalEstimated, refreshTargets, bulkSummary, pendingPlan, microsWhat, sentence, CLAUDE_CAP_NOTE } from './util.js';
 import { autoClaude } from './notice.js';
 
 // Full Claude Use: app.js hands over the signed-in user's settings, so Refresh Nutrients can let Claude fill what the source left.
@@ -29,7 +29,7 @@ export function refreshControl(food, onDone) {
       const res = await api.refreshNutrients(food.id, ai.go);
       Object.assign(food, res.food);
       show(status, message(ai.note ? sentence(res.message) + ' ' + ai.note : res.message, res.filled.length ? 'ok' : ''));
-      if (!missingMicros(food).length) btn.hidden = true;
+      if (!missingMicros(food).length && !kcalEstimated(food)) btn.hidden = true;
       if (onDone) onDone(res);
     } catch (e) {
       show(status, message(e.message, 'error'));

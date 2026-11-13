@@ -377,8 +377,11 @@ export function canLookUp(food) {
   if ((food.source === 'off' && sid) || (food.source === 'fdc' && /^\d+$/.test(sid))) return true;
   return String(food.barcode == null ? '' : food.barcode).replace(/\D/g, '').length >= 8;
 }
-// Shows the button only when the food can be looked up and has a blank nutrient.
-export function canRefresh(food) { return canLookUp(food) && missingMicros(food).length > 0; }
+// Calories the server worked out from the macros because the source had none (food, entry or recipe row with kcal_estimated).
+export const KCAL_ESTIMATE_CUE = 'Estimated From Macros';
+export function kcalEstimated(x) { return !!x && x.kcal_estimated === true; }
+// Shows the button only when the food can be looked up and has a blank nutrient or estimated calories.
+export function canRefresh(food) { return canLookUp(food) && (missingMicros(food).length > 0 || kcalEstimated(food)); }
 // The first `cap` foods worth refreshing, and how many more were left for another click.
 export function refreshTargets(foods, cap = REFRESH_CAP) {
   const all = (foods || []).filter(canRefresh);

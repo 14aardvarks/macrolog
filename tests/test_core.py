@@ -94,7 +94,7 @@ def test_create_food_parses_unit_and_reports_units(a):
 
 
 @pytest.mark.parametrize("patch", [{"kcal": -1}, {"name": " "}, {"serving_amount": 0}, {"source": "off"},
-                                   {"kcal": None}, {"carbs": "x"}, {"serving_unit": ""}, {"fiber": -2}])
+                                   {"kcal": "x"}, {"carbs": "x"}, {"serving_unit": ""}, {"fiber": -2}])
 def test_create_food_validation(a, patch):
     assert a.post("/api/foods", json=BREAD | patch).status_code == 400
 

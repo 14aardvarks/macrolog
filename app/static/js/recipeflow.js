@@ -3,7 +3,7 @@
 // but only Save makes it count as saved: Back writes the state of the last save back after asking Discard Changes?.
 // Matching is optional: Save always saves. Rows still not matched are kept (to finish later) or removed, the user's choice.
 import { api } from './api.js';
-import { h, clear, field, message, show, select, sourceBadge, unitControl } from './dom.js';
+import { h, clear, field, message, show, select, sourceBadge, unitControl, kcalCue } from './dom.js';
 import { toJpeg } from './ai.js';
 import { confirmClaude } from './notice.js';
 import { chips } from './saved.js';
@@ -192,6 +192,7 @@ function foodLine(it) {
   const f = it.food;
   return h('span', { class: 'item-sub' }, (f.brand ? f.name + ' (' + f.brand + ')' : f.name) + ' ', sourceBadge(f.source, true),
     ' - ' + matchedAmountText(it.amount, it.unit, it.grams) + (it.check ? '' : ' - ' + fmtNum(it.kcal, 0) + ' kcal'),
+    it.check ? null : kcalCue(it),
     it.estimated && !it.check ? [' ', h('span', { class: 'src-est' }, 'Estimated Conversion')] : null);
 }
 
