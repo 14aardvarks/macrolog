@@ -123,7 +123,7 @@ const ctx = {
     find(meal, item, how) {
       const src = item.src || {};
       // line: what the recipe says ("1 cup"), from which the amount is worked out once a food is picked (autoMatch).
-      const line = item.src ? { amount: src.amount, unit: src.unit, pkg: src.pkg_amount ? { amount: src.pkg_amount, unit: src.pkg_unit } : null }
+      const line = item.src ? { amount: src.amount, unit: src.unit, pkg: src.pkg_amount ? { amount: src.pkg_amount, unit: src.pkg_unit } : null, name: src.name || '' }
         : { amount: item.amount, unit: item.unit };
       state.recipe = { match: { mealId: meal.id, itemId: item.id, amount: item.food ? item.amount : src.amount, unit: item.food ? item.unit : src.unit,
         line, label: src.text || (item.food && item.food.name) || '' }, name: '', meals: [], rows: [], depth: state.depth, adding: true, picking: null };
@@ -869,7 +869,7 @@ async function autoMatch(root, params) {
   root.appendChild(h('section', { class: 'screen' }, message('Matching...')));
   const food = await api.food(params.foodId);
   const label = food.units[0];
-  const pick = matchAmount(food.units, m.line && m.line.amount, m.line && m.line.unit, m.line && m.line.pkg) || { amount: label.default_amount, unit: label.unit, check: true };
+  const pick = matchAmount(food.units, m.line && m.line.amount, m.line && m.line.unit, m.line && m.line.pkg, m.line && m.line.name) || { amount: label.default_amount, unit: label.unit, check: true };
   await api.matchItem(m.mealId, m.itemId, { food_id: food.id, amount: pick.amount, unit: pick.unit, ...(pick.check ? { check: true } : {}) });
   delete ctx.flow.proposals(m.mealId)[m.itemId];
   const n = stepsBack(state.depth, r.depth);

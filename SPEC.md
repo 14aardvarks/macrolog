@@ -111,7 +111,7 @@ Conversion rules: same-family conversions are exact (US customary: 1 cup = 236.5
 1 floz = 29.5735 ml, 1 oz = 28.3495 g, 1 lb = 453.592 g). Mass to volume uses density derived from the food's own
 serving_g and serving_ml when both exist. If the label has only one of them, the missing family is reachable only as an
 ESTIMATE and `estimated: true`: with the typical density of the food when its name matches the keyword table `units.GRAMS_PER_CUP`
-(about 30 common ingredients, grams per US cup: all purpose flour 125, bread flour 127, whole wheat flour 120, granulated sugar 200, brown sugar packed 213,
+(about 90 common ingredients since v73, grams per US cup: all purpose flour 125, bread flour 127, whole wheat flour 120, granulated sugar 200, brown sugar packed 213,
 powdered sugar 120, butter 227, honey 340, milk 245, water 237, rolled oats 90, uncooked rice 185, cocoa powder 85, salt 288, baking powder 192 and so on;
 rounded typical values from USDA household measures and common ingredient weight charts, matched by name regex with words that rule a name out, first match wins),
 else 1 g per ml. The table is used only for the missing family: a food's own serving_ml (or serving_g) always wins and is exact. The conversion stays marked
@@ -932,6 +932,62 @@ POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log i
   amount editor has Enter Grams. The review screen flags a package or fuzzy unit with no printed size (`reviewFlag`) with Use Grams (`useGrams`),
   and shows "15 oz per can, exact" (`pkgNote`) for a printed size. Check rows count zero until confirmed, as before.
 - Tests: tests/test_package_units.py, tests/ui/packageunits.test.mjs, and the count tests updated. Shell cache macrolog-shell-v71.
+
+## Unit Weights, Typical Weights, Source Portions (v73, issue #45 steps 4 to 6)
+
+- Step 4, food_units: `food_units(id, food_id, user_id NULL, unit, grams, source, estimated 0/1, created_at)`, unique per
+  (food_id, IFNULL(user_id, 0), unit, source) through an expression index, made by core.init (CREATE IF NOT EXISTS, safe to run again,
+  no CHECK; source is validated in `core.save_unit_weight`). One row says one unit of the food weighs grams. Units (`units.WEIGHT_UNITS`):
+  the package and fuzzy units, count, small, medium, large, and cup, tbsp, tsp, fl oz (`units.weight_unit`, each, whole and item are count).
+  Sources in order of trust (`units.WEIGHT_SOURCES`): user (the viewer's own, per user), a printed size on the line, fdc and off (global,
+  user_id null, exact), table (worked out from the name, never stored), ai (per user, estimated, never global; written by steps 7 and 8).
+  A global write never touches a user row. core attaches the rows a viewer may see as `food["food_units"]` (`need_food(c, id, uid)`,
+  `with_units`): global rows plus the viewer's own. `units.unit_weights(food)` merges them with the table rows, most trusted per unit.
+- Resolution (`units.count_row(food, unit, hint)`): the label's own word, and a plain count on a count word label, never need a row. A
+  size word uses its row, else count. A plain count (blank, count, each, a typed word with custom=False) uses the size the line's name
+  gives (`size_hint`, "large eggs", extra large and jumbo are large), else count, medium, large, small. A package or fuzzy unit uses its
+  own row. A row needs the food's grams. `_convert`, `grams`, `available_units` and `match_amount` use it: 2 cloves of a 100 g garlic label
+  are 6 g, estimated with source table; grams stays None for an estimate. match_amount returns the row's unit (clove, count, large) with
+  "source" and "estimated" when the row or the label grams are estimates; only a user row beats a printed size. A volume row
+  (cup, tbsp, tsp, fl oz) is the food's own density, before GRAMS_PER_CUP, exact unless estimated. `available_units` adds an entry per
+  weight unit with label "clove (3 g)", grams, source and note. util.js `matchAmount(units, amount, unit, pkg, hint)` and `weightEntry`
+  mirror this from those entries; the client passes the line's name as hint.
+- item_dict and proposals carry `weight_source` (the row's source, exact or not) and `weight_note` ("Standard can size assumed"), and
+  `estimate_source` is the row's source for an estimated row (`units.estimate_source(food, unit)`), else density or guess. util.js
+  ESTIMATE_SOURCES words user, fdc, off, table and ai too.
+- Typed grams become the user's weight (`core.remember_weight`): a match in a weight with `remember: true` (Enter Grams, or Confirm
+  Amount on a Check Amount row in a weight) on a count-like line without a printed size saves grams / line amount for the line's unit
+  (a plain count with a size in the name saves that size). Use Grams on the review keeps the line as wasAmount and wasUnit; import sends
+  `was_amount` and `was_unit` (both, positive, at most 100000, a count-like unit; kept only on a line in a weight) stored as
+  meal_items.item_was_amount and item_was_unit (nullable, added in place, copied by Duplicate); any later match in a weight saves it.
+```
+GET    /api/foods/{id}/units -> {"food_id", "rows": [{"unit","grams","source","estimated","mine","note"?}], "units": [{...best per unit, "label"}]}
+PUT    /api/foods/{id}/units {"unit","grams"} -> same   # the viewer's own weight (source user); 400 for g, serving, grams 0 or above 100000
+DELETE /api/foods/{id}/units/{unit} -> same              # removes the viewer's own user row only; fine when there is none
+```
+- Step 5, tables in units.py: `PIECE_GRAMS` (name pattern, words that rule it out, unit, grams), about 70 rows from USDA household measures:
+  garlic clove 3 and head 40, egg count and large 50, medium 44, small 38, egg white 33, yolk 17, onion medium 110, small 70, large 150,
+  green onion 15 and bunch 100, butter stick 113, celery rib and stalk 40, herb sprig 1, bread slice 28, cheese slice 21, pinch 0.36 and dash
+  0.6 (seasonings only), handful 30 (nuts, berries) or 25 (greens), heads of lettuce 539, romaine 626, cabbage 908, cauliflower 588, broccoli
+  608, potato 170, sweet potato 130, carrot 61, lemon 58, lime 67, tomato 123, bell pepper 120, banana 118, apple 182, orange 131, avocado
+  150, chicken breast and fillet 174, salmon fillet 170, bunches of cilantro and parsley 60, kale 200, spinach 340, and so on. `PACKAGE_GRAMS`
+  (name pattern, exclusions, package units, net grams) when no size is printed: 15 oz can beans 425, 14.5 oz can tomatoes 411, 6 oz can
+  tomato paste 170, 8 oz cream cheese 227, 10.5 oz can soup 298, 12 oz bag frozen vegetables 340, 1 lb pasta box 454, tuna 142, broth
+  carton 946 and so on, with note `units.package_note` ("Standard can size assumed"). Every table row is source table, estimated.
+  GRAMS_PER_CUP grows by about 60 rows: chopped onion 160, pepper 150, carrot 128, celery 101, shredded cheddar 113, nuts, cooked beans 172,
+  broth 240, frozen peas 134, spinach raw 30 and cooked 180, ground spices (grams per tsp x 48), minced garlic 136 and so on.
+- Step 6, source portions: lookup.fdc_portions maps an FDC detail's foodPortions (measureUnit name, else modifier, else portionDescription;
+  gramWeight / amount) through `portion_unit` (clove, slice, stick, cup chopped, medium, large; oz, NLEA serving, extra large and anything
+  unknown are ignored; a plain or chopped measure wins over sliced). lookup.off_portions turns product_quantity (else the quantity text) in
+  grams into a package row (the word from packaging, packaging_tags or quantity, else package; package is added too); nothing below one
+  serving. OFF_FIELDS asks for quantity, product_quantity, product_quantity_unit, packaging and packaging_tags, so Search and Scan store
+  OFF rows at save (`save_food(c, food, portions)`). A USDA food is read on its first pick (`core.ensure_portions` in GET /api/foods/{id},
+  Match With Claude and Match With Search for the chosen food), once (foods.portions_at, added in place), with a 4 s timeout; network
+  trouble or a 429 stores nothing and the next pick tries again (Search stops asking once USDA is limited). Refresh Nutrients saves the
+  portions its lookup returns and, for a food with every nutrient, still reads them once. Tests stub every lookup with a 404 transport
+  (tests/conftest.py).
+- Tests: tests/test_food_units.py, tests/ui/foodunits.test.mjs, and the step 1 to 3 tests moved to names no table row matches. Shell cache
+  macrolog-shell-v73.
 
 ## Photos on Foods and Recipes (v68)
 

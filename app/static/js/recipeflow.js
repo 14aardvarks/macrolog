@@ -575,6 +575,7 @@ export async function renderMatch(root, params, ctx) {
     const save = h('button', { class: 'btn small primary', type: 'button', disabled: true }, item.check ? 'Confirm Amount' : 'Save Amount');
     let unitSel = null;
     let hasGrams = false;
+    let typedGrams = false;  // Enter Grams: the grams typed become your weight of one of the line's unit (remember)
     unitsOf(item.food_id).then((units) => {
       hasGrams = units.some((u) => u.unit === 'g');
       unitSel = unitControl(unitChoices(units).map((u) => ({ value: u.value, label: u.label + (u.estimated ? ' (estimated)' : '') })), item.unit, { 'aria-label': 'Unit of ' + name });
@@ -586,13 +587,15 @@ export async function renderMatch(root, params, ctx) {
       delete editing[item.id];
       if (!amt.input.value.trim()) { apply(item.id, { skipped: true }); return; }  // no amount: it stays a plain text line, counting nothing
       if (a == null || a <= 0) { editing[item.id] = true; show(status, message('Check the amount of ' + name + '.', 'error')); amt.input.focus(); return; }
-      apply(item.id, { food_id: item.food_id, amount: a, unit: unitSel.value });
+      const remember = (typedGrams || item.check) && ['g', 'kg', 'oz', 'lb'].indexOf(unitSel.value) >= 0;
+      apply(item.id, { food_id: item.food_id, amount: a, unit: unitSel.value, ...(remember ? { remember: true } : {}) });
     });
     const noAmount = item.check && item.src && item.src.amount == null;
     // Enter Grams: the quick way out of a missing weight, the unit goes to g and the amount box is cleared for typing.
     const grams = h('button', { class: 'btn small', type: 'button', onclick: () => {
       if (!unitSel || !hasGrams) { amt.input.focus(); return; }
       unitSel.value = 'g';
+      typedGrams = true;
       amt.input.value = '';
       amt.input.focus();
     } }, 'Enter Grams');

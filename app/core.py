@@ -50,10 +50,12 @@ MEAL_ITEMS_BODY = """
   id INTEGER PRIMARY KEY, meal_id INTEGER NOT NULL REFERENCES meals(id) ON DELETE CASCADE,
   food_id INTEGER REFERENCES foods(id), amount REAL, unit TEXT, position INTEGER NOT NULL DEFAULT 0,
   src_text TEXT, src_amount REAL, src_unit TEXT, src_name TEXT, src_note TEXT, skipped INTEGER NOT NULL DEFAULT 0,
-  needs_check INTEGER NOT NULL DEFAULT 0, item_pkg_amount REAL, item_pkg_unit TEXT"""
+  needs_check INTEGER NOT NULL DEFAULT 0, item_pkg_amount REAL, item_pkg_unit TEXT, item_was_amount REAL, item_was_unit TEXT"""
 # needs_check: a food is attached but its amount could not be worked out from the recipe line (for example "1 cup" of a
 # food known only by weight). It counts for nothing, like an unmatched row, until the user confirms an amount.
 # item_pkg_amount and item_pkg_unit: the size printed on one package of the line ("1 (15 oz) can" is 15 oz), null when none.
+# item_was_amount and item_was_unit: the line before Use Grams on the review screen ("2 clove"), so the grams typed for it can be
+# saved as the user's own weight of one clove once the row is matched (issue #45). Null when Use Grams was not used.
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS foods(
@@ -101,6 +103,12 @@ CREATE TABLE IF NOT EXISTS settings(
   user_id INTEGER PRIMARY KEY REFERENCES users(id), start_screen TEXT NOT NULL DEFAULT 'today',
   default_meal TEXT, use_last INTEGER NOT NULL DEFAULT 1,
   confirm_ai INTEGER NOT NULL DEFAULT 1, amount_format TEXT NOT NULL DEFAULT 'fraction');
+CREATE TABLE IF NOT EXISTS food_units(
+  id INTEGER PRIMARY KEY, food_id INTEGER NOT NULL REFERENCES foods(id) ON DELETE CASCADE,
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, unit TEXT NOT NULL, grams REAL NOT NULL,
+  source TEXT NOT NULL, estimated INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS food_units_key ON food_units(food_id, IFNULL(user_id, 0), unit, source);
+-- food_units.source is user, fdc, off, table or ai (units.WEIGHT_SOURCES), checked in save_unit_weight, never by a CHECK.
 CREATE TABLE IF NOT EXISTS micro_targets(
   user_id INTEGER NOT NULL REFERENCES users(id), nutrient TEXT NOT NULL, target REAL NOT NULL, PRIMARY KEY(user_id, nutrient));
 """
@@ -156,7 +164,8 @@ def init(c: sqlite3.Connection) -> None:
     if "needs_check" not in {r[1] for r in c.execute("PRAGMA table_info(meal_items)")}:  # databases made before Check Amount
         c.execute("ALTER TABLE meal_items ADD COLUMN needs_check INTEGER NOT NULL DEFAULT 0")
     item_cols = {r[1] for r in c.execute("PRAGMA table_info(meal_items)")}
-    for col, kind in (("item_pkg_amount", "REAL"), ("item_pkg_unit", "TEXT")):  # databases made before printed package sizes (null = none)
+    for col, kind in (("item_pkg_amount", "REAL"), ("item_pkg_unit", "TEXT"),  # databases made before printed package sizes (null = none)
+                      ("item_was_amount", "REAL"), ("item_was_unit", "TEXT")):  # and before Use Grams kept the line (null = none)
         if col not in item_cols:
             c.execute(f"ALTER TABLE meal_items ADD COLUMN {col} {kind}")
     c.execute("CREATE INDEX IF NOT EXISTS meal_items_meal ON meal_items(meal_id, position)")
@@ -208,6 +217,8 @@ def init(c: sqlite3.Connection) -> None:
     if "group_id" not in {r[1] for r in c.execute("PRAGMA table_info(entries)")}:  # databases made before recipe logs were grouped
         c.execute("ALTER TABLE entries ADD COLUMN group_id INTEGER")  # null: a plain entry, or one logged from a recipe before this
     c.execute("CREATE INDEX IF NOT EXISTS entries_group ON entries(group_id)")
+    if "portions_at" not in {r[1] for r in c.execute("PRAGMA table_info(foods)")}:  # when USDA or OFF portions were last read (null = never)
+        c.execute("ALTER TABLE foods ADD COLUMN portions_at TEXT")
     for table in ("foods", "meals"):  # databases made before photos: no photo (null), nothing rewritten
         if "photo" not in {r[1] for r in c.execute(f"PRAGMA table_info({table})")}:
             c.execute(f"ALTER TABLE {table} ADD COLUMN photo TEXT")
@@ -289,11 +300,89 @@ def food_dict(row) -> dict:
     return out
 
 
-def need_food(c, food_id) -> dict:
+def need_food(c, food_id, uid: int | None = None) -> dict:
+    """The food, with the unit weights uid may see attached (food_units) when uid is given."""
     row = c.execute("SELECT * FROM foods WHERE id=?", (food_id,)).fetchone()
     if not row:
         raise HTTPException(404, "Food not found")
-    return food_dict(row)
+    food = food_dict(row)
+    return with_units(c, uid, food) if uid is not None else food
+
+
+# ---------- unit weights (issue #45 step 4) ----------
+# food_units: one row says one unit (clove, can, large, cup) of a food weighs this many grams. Global rows (user_id null) come
+# from the food's source (fdc, off), exact; user rows are the viewer's own weights (Enter Grams, Use Grams, PUT below) and ai
+# rows Claude's estimates, both per user and never global. table rows are worked out from the name (units.table_weights) and are
+# not stored. units.unit_weights picks the most trusted row per unit: user, then fdc and off, then table, then ai.
+GLOBAL_UNIT_SOURCES = ("fdc", "off", "table")
+
+
+def unit_rows(c, food_id: int, uid: int | None) -> list[dict]:
+    """The stored rows uid may see for a food: the global ones and uid's own (user, ai)."""
+    rows = c.execute("SELECT unit, grams, source, estimated, user_id FROM food_units WHERE food_id=? AND "
+                     "((user_id IS NULL AND source IN ('fdc','off','table')) OR user_id=?) ORDER BY id", (food_id, uid if uid is not None else -1))
+    return [{"unit": r["unit"], "grams": r["grams"], "source": r["source"], "estimated": bool(r["estimated"]), "mine": r["user_id"] is not None}
+            for r in rows]
+
+
+def with_units(c, uid: int | None, food: dict) -> dict:
+    """The food with food_units set to the rows uid may see (nothing for a food that is not saved)."""
+    if food.get("id") is not None:
+        food["food_units"] = unit_rows(c, food["id"], uid)
+    return food
+
+
+def save_unit_weight(c, food_id: int, uid: int | None, unit: str, grams: float, source: str, estimated: bool = False) -> bool:
+    """Insert or update one row. user and ai rows need uid and are kept per user; fdc, off and table rows are global. A global
+    row never touches a user row (they differ in user_id). Returns False for a unit or weight a row cannot hold."""
+    u = units.weight_unit(unit)
+    g = units._pos(grams)
+    if u is None or g is None or g > units.MAX_UNIT_GRAMS or source not in units.WEIGHT_SOURCES:
+        return False
+    owner = uid if source in ("user", "ai") else None
+    if owner is None and source in ("user", "ai"):
+        return False
+    key = (food_id, owner if owner is not None else 0, u, source)
+    if not c.execute("UPDATE food_units SET grams=?, estimated=? WHERE food_id=? AND IFNULL(user_id, 0)=? AND unit=? AND source=?",
+                     (round(g, 2), int(bool(estimated)), *key)).rowcount:
+        c.execute("INSERT INTO food_units(food_id, user_id, unit, grams, source, estimated, created_at) VALUES(?,?,?,?,?,?,?)",
+                  (food_id, owner, u, round(g, 2), source, int(bool(estimated)), now()))
+    return True
+
+
+def save_portions(c, food_id: int, source: str, rows) -> int:
+    """Store portion rows from lookup (fdc or off, exact, global) and mark the food as read. Returns how many were kept."""
+    kept = 0
+    for r in rows or []:
+        if isinstance(r, dict) and save_unit_weight(c, food_id, None, r.get("unit"), r.get("grams"), source):
+            kept += 1
+    c.execute("UPDATE foods SET portions_at=? WHERE id=?", (now(), food_id))
+    return kept
+
+
+async def ensure_portions(food: dict, state: dict | None = None) -> bool:
+    """Read the portions of a saved USDA or Open Food Facts food from its source once (foods.portions_at). Fails soft: on network
+    trouble or the USDA rate limit nothing is stored and the next pick tries again. True when rows were read."""
+    if food.get("id") is None or food.get("source") not in ("fdc", "off") or (state or {}).get("limited"):
+        return False
+    with db.conn() as c:
+        row = c.execute("SELECT portions_at FROM foods WHERE id=?", (food["id"],)).fetchone()
+    if not row or row["portions_at"]:
+        return False
+    found = await lookup.portions(food, state)
+    if found is None:
+        return False
+    with db.conn() as c:
+        save_portions(c, food["id"], food["source"], found)
+    return True
+
+
+def units_payload(c, food: dict, uid: int) -> dict:
+    """GET /api/foods/{id}/units: every row the viewer may see (table rows included) and the one used for each unit."""
+    food = with_units(c, uid, food)
+    rows = [*food["food_units"], *({**r, "mine": False} for r in units.table_weights(food))]
+    best = units.unit_weights(food)
+    return {"food_id": food["id"], "rows": rows, "units": [{**r, "label": units.unit_label(u, r["grams"])} for u, r in best.items()]}
 
 
 # A deleted food is hidden, never removed: entries and recipe rows keep pointing at it, so history and totals never change.
@@ -345,12 +434,15 @@ def normalize_food(raw: dict, sources: tuple = SOURCES) -> dict:
     return food
 
 
-def save_food(c, f: dict) -> dict:
-    """Insert a normalized food, or return the existing row with the same (source, source_id)."""
+def save_food(c, f: dict, portions: list | None = None) -> dict:
+    """Insert a normalized food, or return the existing row with the same (source, source_id). portions (rows lookup read with
+    the food, Open Food Facts package sizes) are stored for a new USDA or OFF food (save_portions)."""
     cols = [k for k in FOOD_COLS if k != "id"]
     cur = c.execute(f"INSERT INTO foods({','.join(cols)}) VALUES({','.join('?' * len(cols))}) "
                     "ON CONFLICT(source, source_id) DO NOTHING", [int(f[k]) if k == "kcal_estimated" else f[k] for k in cols])
     if cur.rowcount:
+        if portions and f["source"] in ("fdc", "off"):
+            save_portions(c, cur.lastrowid, f["source"], portions)
         return need_food(c, cur.lastrowid)
     row = c.execute("SELECT * FROM foods WHERE source=? AND source_id=?", (f["source"], f["source_id"])).fetchone()
     return food_dict(row)
@@ -415,7 +507,7 @@ async def barcode(code: str, user: CurrentUser):
     if food:
         try:
             with db.conn() as c:
-                food = save_food(c, normalize_food(food))
+                food = save_food(c, normalize_food(food), food.get("portions"))
                 undelete(c, user["id"], food["id"])
         except HTTPException as e:
             food, note = None, f"Found a product but its data was unusable ({e.detail})"
@@ -456,7 +548,7 @@ async def search_foods(user: CurrentUser, q: str = "", remote: int = 1, source: 
     with db.conn() as c:
         for raw in found:
             try:
-                saved = save_food(c, normalize_food(raw))
+                saved = save_food(c, normalize_food(raw), raw.get("portions"))
             except HTTPException:
                 continue  # unusable remote data is skipped, not fatal
             if saved["id"] not in seen:
@@ -497,9 +589,12 @@ def missing_nutrients(user: CurrentUser, date: str | None = None, claude: bool =
 
 
 @router.get("/foods/{food_id}")
-def get_food(food_id: int, user: CurrentUser):
+async def get_food(food_id: int, user: CurrentUser):
     with db.conn() as c:
         food = need_food(c, food_id)
+    await ensure_portions(food)  # a USDA or OFF food picked for the first time: its household measures (clove, cup, can)
+    with db.conn() as c:
+        food = need_food(c, food_id, user["id"])
         last = c.execute("SELECT amount, unit FROM last_used WHERE user_id=? AND food_id=?",
                          (user["id"], food_id)).fetchone()
         fav = c.execute("SELECT 1 FROM favorites WHERE user_id=? AND food_id=?", (user["id"], food_id)).fetchone()
@@ -508,10 +603,48 @@ def get_food(food_id: int, user: CurrentUser):
             "last": {"amount": last["amount"], "unit": last["unit"]} if last else None}
 
 
+@router.get("/foods/{food_id}/units")
+def get_food_units(food_id: int, user: CurrentUser):
+    """The unit weights the viewer may see for a food: {"food_id", "rows": [{"unit", "grams", "source", "estimated", "mine", "note"?}],
+    "units": the row used for each unit, with its picker label}. Global rows (fdc, off), the viewer's own (user, ai) and the table."""
+    with db.conn() as c:
+        return units_payload(c, need_food(c, food_id), user["id"])
+
+
+@router.put("/foods/{food_id}/units")
+def put_food_unit(food_id: int, user: CurrentUser, body: dict = Body(...)):
+    """{"unit", "grams"}: the viewer's own weight of one unit of the food (source user, exact for them). It beats every other source
+    for this viewer only. unit is a count, package or fuzzy unit, a size (small, medium, large) or a volume (cup, tbsp, tsp, fl oz)."""
+    if not isinstance(body, dict) or set(body) != {"unit", "grams"}:
+        raise bad("Send unit and grams")
+    unit = units.weight_unit(body["unit"]) if isinstance(body["unit"], str) else None
+    if unit is None:
+        raise bad("unit must be a count, package or fuzzy unit, a size or a volume")
+    grams = number(body["grams"], "grams", positive=True)
+    if grams > units.MAX_UNIT_GRAMS:
+        raise bad(f"grams must be {units.MAX_UNIT_GRAMS:g} or less")
+    with db.conn() as c:
+        food = need_food(c, food_id)
+        save_unit_weight(c, food_id, user["id"], unit, grams, "user")
+        return units_payload(c, food, user["id"])
+
+
+@router.delete("/foods/{food_id}/units/{unit}")
+def delete_food_unit(food_id: int, unit: str, user: CurrentUser):
+    """Remove the viewer's own weight (source user) for a unit; the next most trusted source takes over. Fine when there is none."""
+    u = units.weight_unit(unit)
+    if u is None:
+        raise bad("unit must be a count, package or fuzzy unit, a size or a volume")
+    with db.conn() as c:
+        food = need_food(c, food_id)
+        c.execute("DELETE FROM food_units WHERE food_id=? AND user_id=? AND unit=? AND source='user'", (food_id, user["id"], u))
+        return units_payload(c, food, user["id"])
+
+
 @router.get("/preview")
 def preview(user: CurrentUser, food_id: int, amount: str = "", unit: str = ""):
     with db.conn() as c:
-        food = need_food(c, food_id)
+        food = need_food(c, food_id, user["id"])
     amount, unit = check_amount_unit(food, amount, unit)
     return macros(food, amount, unit)
 
@@ -559,7 +692,7 @@ def add_entry(user: CurrentUser, body: dict = Body(...)):
     day, meal = day_str(body.get("day")), pick(body.get("meal"), MEALS, "meal", nullable=True)
     food_id = whole_id(body.get("food_id"), "food_id")
     with db.conn() as c:
-        food = need_food(c, food_id)
+        food = need_food(c, food_id, user["id"])
         amount, unit = check_amount_unit(food, body.get("amount"), body.get("unit"))
         if meal:  # a favorite logged with a meal gets that meal tag (tags are never removed automatically)
             c.execute("INSERT INTO favorite_tags(user_id, food_id, meal) SELECT user_id, food_id, ? FROM favorites "
@@ -581,7 +714,7 @@ def patch_entry(entry_id: int, user: CurrentUser, body: dict = Body(...)):
         if {"amount", "unit"} & body.keys():
             if row["food_id"] is None:
                 raise bad("This entry's food no longer exists, so its amount cannot change")
-            food = need_food(c, row["food_id"])
+            food = need_food(c, row["food_id"], user["id"])
             amount, unit = check_amount_unit(food, body.get("amount", row["amount"]), body.get("unit", row["unit"]))
             sets.update(amount=amount, unit=unit, **macros(food, amount, unit))
             sets.pop("estimated")
@@ -761,7 +894,7 @@ def copy_group(group_id: int, user: CurrentUser, body: dict | None = Body(None))
         gid = new_group(c, uid, day, meal, g["meal_id"], g["name"], amount, unit, frac, group_portions(g))
         for row in rows:
             try:
-                log_entry(c, uid, need_food(c, row["food_id"]), round(row["amount"] * k, 4), row["unit"], day, meal, gid, revive)
+                log_entry(c, uid, need_food(c, row["food_id"], uid), round(row["amount"] * k, 4), row["unit"], day, meal, gid, revive)
             except (ValueError, HTTPException):
                 continue  # a food whose unit can no longer be reached is left out
         if not c.execute("SELECT 1 FROM entries WHERE group_id=?", (gid,)).fetchone():
@@ -1168,7 +1301,7 @@ def remove_favorite(food_id: int, user: CurrentUser):
 
 # ---------- meals ----------
 
-def parse_items(c, raw) -> list[tuple[dict, float, str]]:
+def parse_items(c, raw, uid: int | None = None) -> list[tuple[dict, float, str]]:
     """Validate [{food_id, amount, unit}] and return (food, amount, unit) tuples."""
     if not isinstance(raw, list) or not raw:
         raise bad("items must be a non-empty list")
@@ -1177,7 +1310,7 @@ def parse_items(c, raw) -> list[tuple[dict, float, str]]:
         try:
             if not isinstance(it, dict):
                 raise bad("must be an object with food_id, amount and unit")
-            food = need_food(c, whole_id(it.get("food_id"), "food_id"))
+            food = need_food(c, whole_id(it.get("food_id"), "food_id"), uid)
             out.append((food, *check_amount_unit(food, it.get("amount"), it.get("unit"))))
         except HTTPException as e:
             raise HTTPException(e.status_code, f"item {i}: {e.detail}")
@@ -1186,9 +1319,10 @@ def parse_items(c, raw) -> list[tuple[dict, float, str]]:
 
 SRC_KEYS = ("text", "amount", "unit", "name", "note")
 PKG_KEYS = ("pkg_amount", "pkg_unit")  # a printed package size on an imported line, stored as item_pkg_amount and item_pkg_unit
+WAS_KEYS = ("was_amount", "was_unit")  # the line before Use Grams (2 clove), stored as item_was_amount and item_was_unit
 
 
-def item_dict(c, it) -> dict:
+def item_dict(c, it, uid: int | None = None) -> dict:
     """One recipe ingredient. Unmatched rows have food null and null nutrients; skipped rows count for nothing."""
     src = None
     if it["src_text"] is not None or it["src_name"] is not None:
@@ -1198,13 +1332,17 @@ def item_dict(c, it) -> dict:
             "skipped": bool(it["skipped"]), "matched": it["food_id"] is not None and not check, "check": check, "check_reason": None}
     if it["food_id"] is None:
         return {**base, "food": None, "servings": None, "estimated": False, "kcal_estimated": False, "grams": None, **{k: None for k in (*MACROS, *MICROS)}}
-    food = need_food(c, it["food_id"])
+    food = need_food(c, it["food_id"], uid)
     if check:  # why the amount needs a check (units.NO_WEIGHT, NO_SIZE, NO_CONVERT, NO_AMOUNT), None when the line does not say
         base["check_reason"] = check_reason(food, src)
     grams = None if check else units.grams(food, it["amount"], it["unit"])  # a Check Amount row has no weight yet, never an exact one
     m = macros(food, it["amount"], it["unit"])
-    # An Estimated Conversion says where it comes from: a typical density of the food, or the 1 g per ml guess.
-    return {**base, "food": food, "grams": grams, **m, "estimate_source": units.estimate_source(food) if m["estimated"] and not check else None}
+    # An Estimated Conversion says where it comes from: the unit's weight row (table, ai), a typical density of the food, or the
+    # 1 g per ml guess. weight_source names the row a clove, can or large converted through, exact or not (user, fdc, off, table, ai);
+    # weight_note says why (Standard can size assumed).
+    wsrc, wnote = (None, None) if check else units.weight_info(food, it["unit"])
+    return {**base, "food": food, "grams": grams, **m, "weight_source": wsrc, "weight_note": wnote,
+            "estimate_source": units.estimate_source(food, it["unit"]) if m["estimated"] and not check else None}
 
 
 def check_reason(food: dict, src: dict | None) -> str | None:
@@ -1214,7 +1352,7 @@ def check_reason(food: dict, src: dict | None) -> str | None:
     if src.get("amount") is None:
         return units.NO_AMOUNT
     try:
-        m = units.match_amount(food, src["amount"], src.get("unit"), pkg=(src.get("pkg_amount"), src.get("pkg_unit")))
+        m = units.match_amount(food, src["amount"], src.get("unit"), pkg=(src.get("pkg_amount"), src.get("pkg_unit")), hint=src.get("name"))
     except ValueError:
         return None
     return m.get("reason") if m and m["check"] else None
@@ -1314,7 +1452,7 @@ def meal_dict(c, row, user: dict | None = None) -> dict:
     the owner's. mine and can_edit tell the client which tools to show; the server checks them again on every write."""
     viewer = user["id"] if user else row["user_id"]
     mine = viewer == row["user_id"]
-    items = [item_dict(c, it) for it in c.execute("SELECT * FROM meal_items WHERE meal_id=? ORDER BY position, id", (row["id"],))]
+    items = [item_dict(c, it, viewer) for it in c.execute("SELECT * FROM meal_items WHERE meal_id=? ORDER BY position, id", (row["id"],))]
     tags = clean_tags([r["meal"] for r in c.execute("SELECT meal FROM recipe_tags WHERE meal_id=?", (row["id"],))])
     counts = {r["meal"]: r["n"] for r in c.execute("SELECT meal, COUNT(*) n FROM recipe_logs WHERE meal_id=? AND COALESCE(user_id, ?)=? "
                                                    "GROUP BY meal", (row["id"], row["user_id"], viewer))}
@@ -1459,7 +1597,7 @@ def create_meal(user: CurrentUser, body: dict = Body(...)):
     tags = clean_tags(body["meals"]) if "meals" in body else clean_tags([m for m in [pick(body.get("meal"), MEALS, "meal", nullable=True)] if m])
     steps = clean_steps(body.get("steps"))
     with db.conn() as c:
-        return save_meal(c, user["id"], name, parse_items(c, body.get("items")), tags, steps)
+        return save_meal(c, user["id"], name, parse_items(c, body.get("items"), user["id"]), tags, steps)
 
 
 def recipe_from_entries(uid: int, body: dict, only_meal: bool = False) -> dict:
@@ -1509,7 +1647,7 @@ def patch_meal(meal_id: int, user: CurrentUser, body: dict = Body(...)):
     servings = recipe_servings(body["servings"]) if "servings" in body else None
     with db.conn() as c:
         writable_meal(c, user, meal_id)
-        items = parse_items(c, body["items"]) if "items" in body else None
+        items = parse_items(c, body["items"], user["id"]) if "items" in body else None
         if "shared" in body:
             c.execute("UPDATE meals SET shared=? WHERE id=?", (int(body["shared"]), meal_id))
         if name:
@@ -1636,8 +1774,9 @@ def duplicate_meal(meal_id: int, user: CurrentUser, body: dict | None = Body(Non
             c.execute("UPDATE meals SET photo=? WHERE id=?", (photos.copy_file(row["photo"]), new))
         c.execute("INSERT INTO recipe_tags(meal_id, meal) SELECT ?, meal FROM recipe_tags WHERE meal_id=?", (new, meal_id))
         c.execute("INSERT INTO meal_items(meal_id, food_id, amount, unit, position, src_text, src_amount, src_unit, src_name, src_note, "
-                  "skipped, needs_check, item_pkg_amount, item_pkg_unit) SELECT ?, food_id, amount, unit, position, src_text, src_amount, "
-                  "src_unit, src_name, src_note, skipped, needs_check, item_pkg_amount, item_pkg_unit FROM meal_items WHERE meal_id=? ORDER BY position, id", (new, meal_id))
+                  "skipped, needs_check, item_pkg_amount, item_pkg_unit, item_was_amount, item_was_unit) SELECT ?, food_id, amount, unit, position, "
+                  "src_text, src_amount, src_unit, src_name, src_note, skipped, needs_check, item_pkg_amount, item_pkg_unit, item_was_amount, "
+                  "item_was_unit FROM meal_items WHERE meal_id=? ORDER BY position, id", (new, meal_id))
         return meal_dict(c, own_meal(c, user["id"], new), user)
 
 
@@ -1702,10 +1841,11 @@ def clean_source_url(v) -> str:
 
 
 def import_row(raw) -> tuple:
-    """(text, amount, unit, name, note, pkg_amount, pkg_unit) of one imported ingredient line, validated. A known unit is stored
+    """(text, amount, unit, name, note, pkg_amount, pkg_unit, was_amount, was_unit) of one imported ingredient line, validated. A known unit is stored
     canonical (Cloves is clove), a typed word as typed. pkg_amount and pkg_unit are the size printed on one package ("1 (15 oz) can"):
-    kept only on a count, package or fuzzy unit with an amount, read from text when not sent."""
-    if not isinstance(raw, dict) or set(raw) - set(SRC_KEYS) - set(PKG_KEYS):
+    kept only on a count, package or fuzzy unit with an amount, read from text when not sent. was_amount and was_unit are the line
+    before Use Grams (2 clove), kept only on a line in a weight."""
+    if not isinstance(raw, dict) or set(raw) - set(SRC_KEYS) - set(PKG_KEYS) - set(WAS_KEYS):
         raise bad("must be an object with text, amount, unit, name and note")
     name = short_text(raw.get("name"), "name", 200, required=True)
     amount = number(raw.get("amount"), "amount", optional=True)
@@ -1731,7 +1871,20 @@ def import_row(raw) -> tuple:
         pkg = (found["size"], found["size_unit"]) if found and found["unit"] == unit else None
     if pkg and (amount is None or amount <= 0 or not units.is_countlike(unit or "")):
         pkg = None
-    return text, amount, unit, name, note, *(pkg or (None, None))
+    was = None
+    if any(raw.get(k) is not None for k in WAS_KEYS):  # Use Grams: kept only on a line in a weight
+        was_amount = number(raw.get("was_amount"), "was_amount", positive=True)
+        if was_amount > 100000:
+            raise bad("was_amount must be 100000 or less")
+        wu = raw.get("was_unit") if isinstance(raw.get("was_unit"), str) else ""
+        try:
+            ok = bool(wu.strip()) and units.is_countlike(units.unit_or_blank(wu))
+        except ValueError:
+            ok = False
+        if not ok:
+            raise bad("was_unit must be a count, package or fuzzy unit")
+        was = (was_amount, units.known_unit(wu) or units.COUNT) if unit in units.MASS else None
+    return text, amount, unit, name, note, *(pkg or (None, None)), *(was or (None, None))
 
 
 @router.post("/meals/import")
@@ -1759,8 +1912,8 @@ def import_meal(user: CurrentUser, body: dict = Body(...)):
         cur = c.execute("INSERT INTO meals(user_id, name, meal, servings, steps, source_url) VALUES(?,?,?,?,?,?)",
                         (user["id"], name, tags[0] if tags else None, servings, steps_json(steps), source_url))
         c.executemany("INSERT INTO recipe_tags(meal_id, meal) VALUES(?,?)", [(cur.lastrowid, m) for m in tags])
-        c.executemany("INSERT INTO meal_items(meal_id, position, src_text, src_amount, src_unit, src_name, src_note, item_pkg_amount, item_pkg_unit) "
-                      "VALUES(?,?,?,?,?,?,?,?,?)",
+        c.executemany("INSERT INTO meal_items(meal_id, position, src_text, src_amount, src_unit, src_name, src_note, item_pkg_amount, item_pkg_unit, "
+                      "item_was_amount, item_was_unit) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
                       [(cur.lastrowid, i, *r) for i, r in enumerate(rows)])
         return meal_dict(c, own_meal(c, user["id"], cur.lastrowid))
 
@@ -1778,7 +1931,7 @@ def own_item(c, meal_id: int, item_id: int):
     return row
 
 
-ITEM_KEYS = {"food_id", "amount", "unit", "skipped", "check"}
+ITEM_KEYS = {"food_id", "amount", "unit", "skipped", "check", "remember"}
 
 
 def check_item_body(body) -> None:
@@ -1790,6 +1943,32 @@ def check_item_body(body) -> None:
         raise bad("check must be true or false and needs food_id")
     if "food_id" not in body and {"amount", "unit"} & body.keys():
         raise bad("Send food_id together with amount and unit")
+    if "remember" in body and (not isinstance(body["remember"], bool) or body.get("food_id") is None):
+        raise bad("remember must be true or false and needs food_id")
+
+
+def remember_weight(c, uid: int, item_id: int, food: dict, amount: float, unit: str, typed: bool) -> None:
+    """Grams the user typed for a count-like recipe line become their own weight of one unit of the food (a user food_units row),
+    so the next line with that unit and food converts at once. Use Grams on the review screen kept the line (item_was_*): any
+    match in a weight saves it. Enter Grams on Match Ingredients sends remember (typed): the line's own unit, without a printed size."""
+    if unit not in units.MASS:
+        return
+    it = c.execute("SELECT src_amount, src_unit, src_name, item_pkg_amount, item_was_amount, item_was_unit FROM meal_items WHERE id=?",
+                   (item_id,)).fetchone()
+    grams = amount * units.MASS[unit]
+    if it["item_was_amount"] and it["item_was_unit"]:
+        n, line_unit = it["item_was_amount"], it["item_was_unit"]
+    elif typed and it["src_amount"] and it["item_pkg_amount"] is None and units.is_countlike(it["src_unit"] or ""):
+        n, line_unit = it["src_amount"], it["src_unit"] or units.COUNT
+    else:
+        return
+    wu = units.weight_unit(line_unit)
+    if wu is None and units.parse_unit(line_unit) in units.PLAIN_COUNTS:
+        wu = units.COUNT
+    if wu == units.COUNT and units.size_hint(it["src_name"]):
+        wu = units.size_hint(it["src_name"])  # "2 large eggs": the weight of one large
+    if wu is not None and n > 0:
+        save_unit_weight(c, food["id"], uid, wu, grams / n, "user")
 
 
 def apply_item(c, item_id: int, body: dict, uid: int | None = None) -> None:
@@ -1805,12 +1984,14 @@ def apply_item(c, item_id: int, body: dict, uid: int | None = None) -> None:
                       (row["name"][:300], row["name"][:200], row["amount"], row["unit"], item_id))
         c.execute("UPDATE meal_items SET food_id=NULL, amount=NULL, unit=NULL, needs_check=0 WHERE id=?", (item_id,))
     elif "food_id" in body:
-        food = need_food(c, whole_id(body["food_id"], "food_id"))
+        food = need_food(c, whole_id(body["food_id"], "food_id"), uid)
         amount, unit = check_amount_unit(food, body.get("amount"), body.get("unit"))
         c.execute("UPDATE meal_items SET food_id=?, amount=?, unit=?, skipped=0, needs_check=? WHERE id=?",
                   (food["id"], amount, unit, int(body.get("check") is True), item_id))
         if uid is not None:
             undelete(c, uid, food["id"])  # picking a deleted food again for a recipe brings it back
+            if body.get("check") is not True:
+                remember_weight(c, uid, item_id, food, amount, unit, body.get("remember") is True)
     if "skipped" in body:
         c.execute("UPDATE meal_items SET skipped=? WHERE id=?", (int(body["skipped"]), item_id))
 
@@ -1875,7 +2056,7 @@ def add_meal_item(meal_id: int, user: CurrentUser, body: dict = Body(...)):
         raise bad("check must be true or false and needs food_id")
     if "food_id" not in body and {"amount", "unit"} & body.keys():
         raise bad("Send food_id together with amount and unit")
-    src = import_row(body["src"]) if "src" in body else (None,) * 7
+    src = import_row(body["src"]) if "src" in body else (None,) * 9
     pos = body.get("position")
     if pos is not None and (isinstance(pos, bool) or not isinstance(pos, int) or pos < 0):
         raise bad("position must be a whole number of 0 or more")
@@ -1891,7 +2072,7 @@ def add_meal_item(meal_id: int, user: CurrentUser, body: dict = Body(...)):
             food_id = food["id"]
             undelete(c, user["id"], food_id)
         cur = c.execute("INSERT INTO meal_items(meal_id, food_id, amount, unit, position, src_text, src_amount, src_unit, src_name, src_note,"
-                        " item_pkg_amount, item_pkg_unit, skipped, needs_check) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        " item_pkg_amount, item_pkg_unit, item_was_amount, item_was_unit, skipped, needs_check) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (meal_id, food_id, amount, unit, len(ids), *src, int(body.get("skipped") is True), int(body.get("check") is True)))
         ids.insert(len(ids) if pos is None else min(pos, len(ids)), cur.lastrowid)
         c.executemany("UPDATE meal_items SET position=? WHERE id=?", [(i, x) for i, x in enumerate(ids)])
@@ -1936,9 +2117,9 @@ def log_meal(meal_id: int, user: CurrentUser, body: dict | None = Body(None)):
         given = "amount" in body or "unit" in body
         frac = recipe_fraction(md, body.get("amount"), body.get("unit")) if given else None
         if body.get("items") is not None:  # the client's checklist replaces the saved items
-            items = parse_items(c, body["items"])
+            items = parse_items(c, body["items"], user["id"])
         else:
-            items = [(need_food(c, i["food_id"]), i["amount"] if frac is None else round(i["amount"] * frac, 4), i["unit"]) for i in
+            items = [(need_food(c, i["food_id"], user["id"]), i["amount"] if frac is None else round(i["amount"] * frac, 4), i["unit"]) for i in
                      c.execute("SELECT * FROM meal_items WHERE meal_id=? AND food_id IS NOT NULL AND skipped=0 AND needs_check=0 "
                                  "ORDER BY position, id", (row["id"],))]
         if meal:  # logging a recipe with a meal counts toward that meal, and tags it when it is mine
@@ -2051,6 +2232,7 @@ async def refresh_nutrients(food_id: int, user: CurrentUser, claude: bool = Fals
     if kind is None and source is None:
         raise bad("This food has no source ID or barcode, so there is nothing to look up")
     if all(food[k] is not None for k in MICROS) and not food["kcal_estimated"]:
+        await ensure_portions(food)  # still read household measures a food saved before them never got
         return {"food": food, "filled": [], "message": "This food already has every nutrient"}
     filled, note = [], ""
     if kind is not None:
@@ -2066,6 +2248,8 @@ async def refresh_nutrients(food_id: int, user: CurrentUser, claude: bool = Fals
         if not found:
             note = res.get("note") or ""
         with db.conn() as c:
+            if found and found.get("portions") is not None and food["source"] in ("fdc", "off") and found.get("source") == food["source"]:
+                save_portions(c, food_id, food["source"], found["portions"])  # backfill household measures (clove, cup, can)
             if found and ratio is not None and food["kcal_estimated"] and not found["kcal_estimated"]:  # a real energy value replaces an estimate
                 if c.execute("UPDATE foods SET kcal=?, kcal_estimated=0 WHERE id=? AND (kcal_estimated=1 OR kcal=0)",
                              (r2(found["kcal"] * ratio), food_id)).rowcount:

@@ -446,8 +446,8 @@ def test_unmatched_name_keeps_one_gram_per_ml():
     assert units.servings_for(f, 1, "cup") == {"servings": pytest.approx(CUP / 30), "estimated": True}
 
 
-@pytest.mark.parametrize("name", ["Butter Cookies", "Peanut Butter Cups", "Chocolate Milk", "Rice, cooked", "Sugar Snap Peas",
-                                  "Salted Peanuts", "Rice Flour", "Tuna in oil", "Almond Milk", ""])
+@pytest.mark.parametrize("name", ["Butter Cookies", "Peanut Butter Cups", "Chocolate Milk", "Sugar Snap Peas",
+                                  "Rice Flour", "Tuna in oil", "Almond Milk", ""])
 def test_lookalike_names_do_not_match(name):
     if name == "Peanut Butter Cups":
         assert units.density(food(30, "g", name=name)) == pytest.approx(258 / CUP)  # peanut butter is a keyword, the cups are close enough

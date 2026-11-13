@@ -205,8 +205,14 @@ export function reviewFlag(row) {
   if (!String(row.amount || '').trim() || !isCountish(u) || PLAIN_COUNTS.indexOf(u) >= 0 || rowPkg(row)) return '';
   return checkReasonLine(PACKAGE_UNITS.indexOf(u) >= 0 ? 'no_size' : 'no_weight', u);
 }
-// Use Grams on a flagged review row: the amount is cleared for the grams, the unit becomes g and the printed size goes.
-export const useGrams = (row) => Object.assign(row, { amount: '', shown: '', exact: null, unit: 'g', pkgAmount: null, pkgUnit: null });
+// Use Grams on a flagged review row: the amount is cleared for the grams, the unit becomes g and the printed size goes. The line
+// before it (2 clove) is kept as wasAmount and wasUnit, so the grams typed become your weight of one clove once the row is matched.
+export function useGrams(row) {
+  const a = rowAmount(row);
+  const u = canonUnit(row.unit);
+  const was = a != null && a > 0 && isCountish(u) ? { wasAmount: a, wasUnit: u } : { wasAmount: null, wasUnit: null };
+  return Object.assign(row, { amount: '', shown: '', exact: null, unit: 'g', pkgAmount: null, pkgUnit: null }, was);
+}
 
 // A row's amount: the exact number it was filled from while the box text is untouched (shown is the text the box was built with),
 // else what was typed.
@@ -242,7 +248,8 @@ export function reviewBody(draft) {
     const unit = cleanUnitText(r.unit) || (amount != null ? 'count' : null);  // an amount with no unit is a count
     const note = String(r.note || '').trim() || null;
     const pkg = amount != null ? rowPkg({ ...r, unit }) : null;  // null tells the server not to read a size from the text again
-    ingredients.push({ text: rowText(r).slice(0, 300), amount, unit, name: nm, note, pkg_amount: pkg ? pkg.amount : null, pkg_unit: pkg ? pkg.unit : null });
+    const was = amount != null && r.wasAmount && ['g', 'kg', 'oz', 'lb'].indexOf(canonUnit(unit)) >= 0 ? { was_amount: r.wasAmount, was_unit: r.wasUnit } : {};
+    ingredients.push({ text: rowText(r).slice(0, 300), amount, unit, name: nm, note, pkg_amount: pkg ? pkg.amount : null, pkg_unit: pkg ? pkg.unit : null, ...was });
   }
   const st = stepsCheck(draft.steps);
   if (st.error) return st;

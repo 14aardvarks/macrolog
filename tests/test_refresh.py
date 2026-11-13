@@ -135,8 +135,22 @@ def test_shared_off_food_any_user_and_unknown_food(a, b, monkeypatch):
 def test_complete_food_skips_the_network(a, monkeypatch):
     seen = mock(monkeypatch, off_ok)
     f = saved(**{k: 1 for k in MICROS})
+    with db.conn() as c:  # its household measures were read already (issue #45)
+        c.execute("UPDATE foods SET portions_at='2026-01-01' WHERE id=?", (f["id"],))
     r = refresh(a, f).json()
     assert r["filled"] == [] and "already has every nutrient" in r["message"] and not seen
+
+
+def test_complete_food_still_backfills_its_portions_once(a, monkeypatch):
+    seen = mock(monkeypatch, lambda r: httpx.Response(200, json={"status": 1, "product": {**OFF["product"], "product_quantity": 400,
+                                                                                         "packaging": "Jar, glass"}}))
+    f = saved(**{k: 1 for k in MICROS})
+    r = refresh(a, f).json()
+    assert "already has every nutrient" in r["message"] and len(seen) == 1
+    units_ = a.get(f"/api/foods/{f['id']}/units").json()["units"]
+    assert {(u["unit"], u["grams"], u["source"]) for u in units_ if u["source"] == "off"} == {("jar", 400, "off"), ("package", 400, "off")}
+    refresh(a, f)
+    assert len(seen) == 1  # read once
 
 
 @pytest.mark.parametrize("src,sid", [("off", "3017620422003"), ("fdc", "777")])

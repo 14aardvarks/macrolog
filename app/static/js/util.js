@@ -678,18 +678,49 @@ const isMeasure = (u) => MASS_UNITS.indexOf(u) >= 0 || VOLUME_UNITS.indexOf(u) >
 // - A count-like unit converts only where one thing has a known weight: a plain count (no unit, piece, each) uses the label's count
 //   word ("2 eggs" -> 2 egg), a package or fuzzy unit only the label's own word, a typed word counts like the label's word.
 //   Anything else is one label serving with check true and reason no_weight (no_size for a package unit), never label servings.
+// - A count-like unit with a weight on the food (an entry with grams: clove (3 g), can (425 g), large (50 g), from food_units on the
+//   server) keeps the line's unit, estimated when that weight is, with its source. Mirrors units.count_row: a size word uses its own
+//   entry, else count; a plain count the size the line's name gives (hint, "large eggs"), else count, medium, large, small.
 // - A known measure the food cannot reach: one label serving with check true and reason no_convert.
-export function matchAmount(units, amount, unit, pkg) {
+const SIZE_WORDS = ['small', 'medium', 'large'];
+export function sizeHint(text) {
+  const m = /\b(extra[- ]large|jumbo|large|medium|small)\b/i.exec(String(text || ''));
+  if (!m) return null;
+  const w = m[1].toLowerCase();
+  return SIZE_WORDS.indexOf(w) >= 0 ? w : 'large';
+}
+export function weightEntry(units, u, hint) {
+  if (!units || !units.length) return null;
+  const label = units[0].unit;
+  if (u && u === label) return null;
+  const w = {};
+  units.slice(1).forEach((x) => { if (x.grams != null && !(x.unit in w)) w[x.unit] = x; });
+  const p = ['each', 'whole', 'item', 'unit'].indexOf(u) >= 0 ? 'count' : (u || '');
+  const plain = !p || p === 'count' || PLAIN_COUNTS.indexOf(p) >= 0;
+  if (plain && !isCountish(p) && !isMeasure(label)) return null;  // a count word label: the label's own word is exact
+  if (SIZE_WORDS.indexOf(p) >= 0) return w[p] || w.count || null;
+  if (isCountish(p) && p !== 'piece') return w[p] || null;
+  if (p === 'piece' && w.piece) return w.piece;
+  if (plain) {
+    const s = sizeHint(hint);
+    if (s && w[s]) return w[s];
+    return w.count || w.medium || w.large || w.small || null;
+  }
+  return w[p] || null;
+}
+export function matchAmount(units, amount, unit, pkg, hint) {
   const a = typeof amount === 'number' ? amount : parseAmount(amount);
   if (a == null || !(a > 0) || !units || !units.length) return null;
   const label = units[0];
   const typed = cleanUnitText(unit);
   const u = canonUnit(typed);
   const size = pkg && Number(pkg.amount) > 0 && SIZE_UNITS.indexOf(canonUnit(pkg.unit)) >= 0 ? pkg : null;
-  if (size && isCountlike(u)) return matchAmount(units, Math.round(a * Number(size.amount) * 1e6) / 1e6, canonUnit(size.unit));
+  const row = isCountlike(u) ? weightEntry(units, u, hint) : null;
+  if (size && isCountlike(u) && !(row && row.source === 'user')) return matchAmount(units, Math.round(a * Number(size.amount) * 1e6) / 1e6, canonUnit(size.unit));
   const check = (reason) => ({ amount: label.default_amount, unit: label.unit, check: true, reason });
   if (isCountlike(u)) {
     if (u && u === label.unit) return { amount: a, unit: label.unit, check: false };
+    if (row) return { amount: a, unit: row.unit, check: false, ...(row.estimated ? { estimated: true } : {}), source: row.source };
     if (isMeasure(label.unit)) return check(PACKAGE_UNITS.indexOf(u) >= 0 ? 'no_size' : 'no_weight');
     if (isCountish(u) && PLAIN_COUNTS.indexOf(u) < 0) return check(PACKAGE_UNITS.indexOf(u) >= 0 ? 'no_size' : 'no_weight');
     if (u && KNOWN_UNITS.indexOf(u) < 0 && PLAIN_COUNTS.indexOf(u) < 0) return { amount: a, unit: typed, check: false };
@@ -702,8 +733,11 @@ export function matchAmount(units, amount, unit, pkg) {
 // ---------- why an amount needs a check (issue #45) ----------
 // reason: no_weight (a count or fuzzy unit with no known weight on the food), no_size (a package unit with no printed size),
 // no_convert (a measure the food cannot reach), no_amount (the line gives none), estimated (counted, but from an estimate;
-// source density, guess or claude). Each reads as a short clause after the ingredient's name.
-export const ESTIMATE_SOURCES = { density: 'a typical density for this food', guess: '1 g per ml, no density known', claude: 'Claude' };
+// source density, guess or claude, or the unit weight's source: user, fdc, off, table, ai). Each reads as a short clause after the
+// ingredient's name.
+export const ESTIMATE_SOURCES = { density: 'a typical density for this food', guess: '1 g per ml, no density known', claude: 'Claude',
+  user: 'your own weight for this unit', fdc: 'USDA household measures', off: 'the Open Food Facts package weight',
+  table: 'a typical weight table', ai: 'a Claude estimate' };
 export function checkReasonText(reason, unit, source) {
   const u = unitWord(unit, 1) || 'this unit';
   if (reason === 'no_weight') return 'no standard weight for ' + u + ', enter grams';

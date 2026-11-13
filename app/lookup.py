@@ -11,11 +11,13 @@ from fractions import Fraction
 import httpx
 
 from . import config
+from . import units
 from .units import KJ_PER_KCAL, MASS, VOLUME, parse_unit, resolve_kcal
 
 OFF_URL = "https://world.openfoodfacts.org/api/v2/product/{code}.json"
 OFF_SEARCH_URL = "https://world.openfoodfacts.org/cgi/search.pl"
-OFF_FIELDS = "code,product_name,generic_name,brands,serving_size,serving_quantity,serving_quantity_unit,nutriments"
+OFF_FIELDS = ("code,product_name,generic_name,brands,serving_size,serving_quantity,serving_quantity_unit,nutriments,"
+              "quantity,product_quantity,product_quantity_unit,packaging,packaging_tags")
 FDC_URL = "https://api.nal.usda.gov/fdc/v1/foods/search"
 FDC_DETAIL_URL = "https://api.nal.usda.gov/fdc/v1/food/{id}"
 USER_AGENT = "macrolog/0.1"
@@ -34,8 +36,8 @@ TO_G = {"g": 1.0, "mg": 0.001, "mcg": 1e-6, "ug": 1e-6, "µg": 1e-6, "μg": 1e-6
 _transport = None  # tests set an httpx.MockTransport here
 
 
-def _client():
-    return httpx.AsyncClient(timeout=10.0, headers={"User-Agent": USER_AGENT}, transport=_transport)
+def _client(timeout=10.0):
+    return httpx.AsyncClient(timeout=timeout, headers={"User-Agent": USER_AGENT}, transport=_transport)
 
 
 def _f(value):
@@ -218,7 +220,7 @@ def off_food(code, p):
         return None
     name = (p.get("product_name") or p.get("generic_name") or "Unknown product").strip()
     brand = (p.get("brands") or "").split(",")[0].strip() or None
-    return _food("off", str(p.get("code") or code), code, name, brand, sv, vals)
+    return {**_food("off", str(p.get("code") or code), code, name, brand, sv, vals), "portions": off_portions(p)}
 
 
 async def _off(client, candidates, notes):
@@ -235,6 +237,104 @@ async def _off(client, candidates, notes):
             notes.append("Open Food Facts has no nutrition data for this product")
             return None
     return None
+
+
+# ---------- portions: what one can, clove or cup weighs (issue #45 step 6) ----------
+# Stored by core as global food_units rows (source fdc or off, exact). Units go through units.weight_unit, so only the known
+# vocabulary is kept (clove, slice, can, cup, medium, large); anything else (oz, NLEA serving, "breast, bone removed") is ignored.
+_PKG_WORDS = re.compile(r"\b(can|tin|jar|bottle|bag|box|carton|packet|pouch|package|pack)s?\b", re.I)
+_PKG_MAP = {"tin": "can", "pouch": "bag", "pack": "package"}
+_QTY = re.compile(r"(\d+(?:[.,]\d+)?)\s*(kg|g|lbs?|oz)\b", re.I)
+
+
+def off_portions(p):
+    """Package rows from an OFF product's net weight (product_quantity, else the quantity text): [{"unit", "grams"}]. The package
+    word comes from the packaging or quantity text (can, jar, bottle, bag, box, carton, packet), else package; package is added too.
+    A net weight smaller than one serving (serving_quantity) or a volume only quantity gives nothing."""
+    try:
+        q = _f(p.get("product_quantity"))
+        qu = str(p.get("product_quantity_unit") or "g").lower()
+        if q is None or qu not in ("g", "gr", "gram", "grams"):
+            m = _QTY.search(str(p.get("quantity") or ""))
+            q = float(m.group(1).replace(",", ".")) * MASS[units.parse_unit(m.group(2))] if m else None
+        sq = _f(p.get("serving_quantity"))
+        if q is None or not 1 <= q <= units.MAX_UNIT_GRAMS or (sq and q < sq):
+            return []
+        tags = p.get("packaging_tags") if isinstance(p.get("packaging_tags"), list) else []
+        text = " ".join(str(x) for x in (p.get("packaging"), " ".join(map(str, tags)), p.get("quantity")) if x)
+        m = _PKG_WORDS.search(text.replace("en:", " "))
+        word = _PKG_MAP.get(m.group(1).lower(), m.group(1).lower()) if m else "package"
+        return [{"unit": u, "grams": round(q, 1)} for u in dict.fromkeys((word, "package"))]
+    except (TypeError, ValueError, KeyError):
+        return []
+
+
+def portion_unit(text):
+    """(unit, rank) for an FDC portion text ("clove", "cup, chopped", "medium (2-1/2\" dia)", "slice, large"), rank 0 for a plain or
+    chopped measure and 1 for any other modifier (sliced, whole), or None when the unit is not one food_units holds."""
+    t = re.sub(r"\([^)]*\)", " ", str(text or "").lower())
+    lead = units.lead_amount(t)
+    t = lead[1] if lead else t
+    t = re.sub(r"\s+", " ", t).strip(" ,")
+    if not t or re.match(r"(extra|jumbo|nlea|serving|oz\b|ounce|g\b|gram|lb\b|pound)", t):
+        return None
+    head, _, mods = t.partition(",")
+    words = head.split()
+    unit = units.weight_unit(" ".join(words[:2])) if len(words) > 1 and words[0] == "fl" else None
+    unit = unit or units.weight_unit(words[0] if words else "")
+    if unit is None:
+        return None
+    rest = (" ".join(words[2 if unit == "floz" and words[0] == "fl" else 1:]) + " " + mods).strip()
+    return unit, 0 if not rest or re.search(r"\b(chopped|diced|minced)\b", rest) else 1
+
+
+def fdc_portions(item):
+    """foodPortions of an FDC food detail as [{"unit", "grams"}] (grams of one unit), one row per unit, the plainest first."""
+    found = {}
+    for n, fp in enumerate(item.get("foodPortions") or []):
+        if not isinstance(fp, dict):
+            continue
+        g = _f(fp.get("gramWeight"))
+        mu = fp.get("measureUnit") if isinstance(fp.get("measureUnit"), dict) else {}
+        name = str(mu.get("name") or mu.get("abbreviation") or "").strip()
+        mod = str(fp.get("modifier") or "").strip()
+        text = f"{name} {mod}".strip() if name and name.lower() != "undetermined" else (mod or str(fp.get("portionDescription") or ""))
+        amount = _f(fp.get("amount")) or (units.lead_amount(fp.get("portionDescription") or "") or (1.0,))[0] or 1.0
+        hit = portion_unit(text)
+        if not g or g <= 0 or not hit or amount <= 0:
+            continue
+        unit, rank = hit
+        per = round(g / amount, 2)
+        if 0 < per <= units.MAX_UNIT_GRAMS and (unit not in found or (rank, n) < found[unit][0]):
+            found[unit] = ((rank, n), per)
+    return [{"unit": u, "grams": v[1]} for u, v in found.items()]
+
+
+async def portions(food, state=None):
+    """Portion rows for a saved USDA or Open Food Facts food, fetched from its source: a list (maybe empty), or None when the
+    source could not be asked (no id, network trouble, a 429 sets state["limited"]). Never raises; a short timeout keeps the
+    picker quick."""
+    src, sid = food.get("source"), str(food.get("source_id") or "").strip()
+    if not sid or src not in ("fdc", "off") or (src == "fdc" and not sid.isdigit()):
+        return None
+    try:
+        async with _client(4.0) as client:
+            if src == "fdc":
+                r = await client.get(FDC_DETAIL_URL.format(id=sid), params=_fdc_params())
+                if r.status_code == 404:
+                    return []
+                r.raise_for_status()
+                return fdc_portions(r.json())
+            r = await client.get(OFF_URL.format(code=sid), params={"fields": OFF_FIELDS})
+            if r.status_code == 404:
+                return []
+            r.raise_for_status()
+            data = r.json()
+            return off_portions(data.get("product") or {}) if isinstance(data, dict) else []
+    except (httpx.HTTPError, ValueError, AttributeError) as e:
+        if state is not None and getattr(getattr(e, "response", None), "status_code", None) == 429:
+            state["limited"] = True
+        return None
 
 
 # ---------- USDA FoodData Central ----------
@@ -407,7 +507,9 @@ async def _fdc_detail(client, fdc_id):
     if r.status_code == 404:
         return None
     r.raise_for_status()
-    return fdc_food(_detail_to_search(r.json()))
+    data = r.json()
+    food = fdc_food(_detail_to_search(data))
+    return {**food, "portions": fdc_portions(data)} if food else None
 
 
 async def refresh(food):

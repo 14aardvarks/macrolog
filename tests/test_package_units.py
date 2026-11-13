@@ -6,7 +6,8 @@ import pytest
 from app import core, db, ingredients, recipe_ai, units
 from tests.test_recipe_ai import env, reply, saved_recipe  # noqa: F401
 
-GARLIC_G = {"name": "Garlic, raw", "serving_amount": 100, "serving_unit": "g", "kcal": 149, "carbs": 33, "protein": 6.4, "fat": 0.5}
+GARLIC_G = {"name": "Mystery root, raw",  # no typical weight row matches it
+            "serving_amount": 100, "serving_unit": "g", "kcal": 149, "carbs": 33, "protein": 6.4, "fat": 0.5}
 GARLIC_CLOVE = {"name": "Garlic", "serving_amount": 1, "serving_unit": "clove", "serving_g": 3, "kcal": 4.5, "carbs": 1, "protein": 0.2, "fat": 0}
 BEANS = {"source": "fdc", "source_id": "b1", "name": "Black beans", "serving_amount": 100, "serving_unit": "g", "label_text": "100 g",
          "kcal": 91, "carbs": 16, "protein": 6, "fat": 0.3}
@@ -36,7 +37,8 @@ def test_a_count_with_a_known_weight_converts_exactly():
     assert units.match_amount(GARLIC_CLOVE, 2, "cloves") == {"amount": 2, "unit": "clove", "check": False}
     assert units.match_amount(GARLIC_CLOVE, 2, None) == {"amount": 2, "unit": "clove", "check": False}
     assert units.grams(GARLIC_CLOVE, 2, "clove") == 6
-    assert units.match_amount(GARLIC_CLOVE, 1, "head")["reason"] == "no_weight"  # another fuzzy unit: still no weight
+    assert units.match_amount(GARLIC_CLOVE, 1, "head") == {"amount": 1, "unit": "head", "check": False, "estimated": True, "source": "table"}
+    assert units.match_amount({**GARLIC_CLOVE, "name": "Mystery root"}, 1, "head")["reason"] == "no_weight"  # no table row: still no weight
     assert units.match_amount(BAR, 2, None)["check"] is True  # a serving label is a measure
 
 
@@ -48,7 +50,7 @@ def test_grams_never_reports_a_count_without_a_weight():
 
 def test_picker_offers_count_only_with_a_count_weight_and_server_still_accepts_counts():
     assert "count" not in [u["unit"] for u in units.available_units(GARLIC_G)]
-    assert [u["unit"] for u in units.available_units(GARLIC_CLOVE)][-1] == "count"
+    assert [u["unit"] for u in units.available_units(GARLIC_CLOVE)][-2:] == ["count", "head"]  # head (40 g) from the typical table
     for unit in ("count", "", "clove", "can", "Shell"):  # older entries and typed words keep working
         assert core.check_amount_unit(GARLIC_G, 1, unit)[1] == units.unit_or_blank(unit)
 
@@ -118,7 +120,8 @@ def test_match_amount_uses_the_printed_size_once():
     assert units.grams(BEANS, 15, "oz") == 425.2
     # a food labelled per can: the printed size wins, never can x printed size
     assert units.match_amount(BEANS_CAN, 1, "can", pkg=(15, "oz")) == {"amount": 15, "unit": "oz", "check": False}
-    assert units.match_amount(BEANS, 1, "can", pkg=(None, None))["reason"] == "no_size"
+    assert units.match_amount({**BEANS, "name": "Mystery mash"}, 1, "can", pkg=(None, None))["reason"] == "no_size"
+    assert units.match_amount(BEANS, 1, "can", pkg=(None, None)) == {"amount": 1, "unit": "can", "check": False, "estimated": True, "source": "table"}
     no_weight = {"serving_amount": 2, "serving_unit": "slice"}
     assert units.match_amount(no_weight, 1, "can", pkg=(15, "oz"))["reason"] == "no_convert"
     assert units.match_amount(BEANS, 1, "cup", pkg=(15, "oz"))["unit"] == "cup"  # a measure line ignores a stray size

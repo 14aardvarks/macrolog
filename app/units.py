@@ -285,6 +285,68 @@ GRAMS_PER_CUP = [
     (r"corn ?meal", None, 157),
     (r"\braisins?\b", r"\b(bran|cereal|cookie|cookies|bread|oatmeal|bagel|bagels)\b", 145),
     (r"grated parmesan|parmesan, grated|parmesan cheese, grated", None, 100),
+    # Issue #45 step 5: chopped vegetables, cheese, nuts, beans, liquids and ground spices. Grams per US cup as in USDA FoodData
+    # Central household measures (a ground spice row is its grams per tsp x 48).
+    (r"shredded (cheddar|cheese)|cheddar, shredded|cheese, shredded", None, 113),
+    (r"(shredded|grated) mozzarella|mozzarella, shredded", None, 112),
+    (r"cream cheese", None, 232),
+    (r"cottage cheese", None, 226),
+    (r"\bricotta\b", None, 246),
+    (r"green onions?|spring onions?|scallions?", None, 100),
+    (r"\bonions?\b", r"\b(powder|rings?|soup|dip|flakes|salt|dried|dehydrated|fried)\b", 160),  # chopped
+    (r"\b(bell|sweet|green|red|yellow|orange) peppers?\b|peppers?, (sweet|bell)", r"\b(flakes|crushed|ground|powder|sauce|jelly|chili|black|white)\b", 150),  # chopped
+    (r"\bcarrots?\b", r"\b(juice|cake|soup|baby food)\b", 128),  # chopped
+    (r"\bcelery\b", r"\b(salt|seed|seeds|soup)\b", 101),  # chopped
+    (r"\bbroccoli\b", r"\b(soup|casserole)\b", 91),
+    (r"\bcauliflower\b", r"\b(rice|crust|soup)\b", 107),
+    (r"\bcabbage\b", r"\b(rolls?|soup)\b", 89),
+    (r"\bmushrooms?\b", r"\b(soup|sauce|dried|powder)\b", 70),
+    (r"\bzucchini\b", r"\b(bread|noodles)\b", 124),
+    (r"\bspinach\b", r"\b(cooked|boiled|frozen|dip|pasta|tortilla|wrap|artichoke)\b", 30),  # raw
+    (r"\bspinach\b", r"\b(dip|pasta|tortilla|wrap|artichoke)\b", 180),  # cooked
+    (r"\bkale\b", r"\b(chips?)\b", 67),
+    (r"\bpeas\b", r"\b(chick|split|black[- ]eyed|soup|snap|snow|protein)\b", 134),  # frozen green peas
+    (r"\bcorn\b", r"\b(starch|meal|flour|syrup|chips?|flakes|oil|bread|dog|tortillas?|cereal|pops?|nuts?|popcorn|chowder)\b", 154),
+    (r"\b(diced|crushed|stewed) tomato|tomatoes, (canned|crushed|diced|stewed)", None, 240),
+    (r"tomato paste", None, 262),
+    (r"tomato sauce|marinara|pasta sauce", None, 245),
+    (r"\btomato(es)?\b", r"\b(paste|sauce|soup|juice|ketchup|sun[- ]dried|dried|powder)\b", 180),  # chopped fresh
+    (r"\bpotato(es)?\b", r"\b(sweet|chips?|fries|flakes|salad|starch|flour|mashed|tots?|soup|skins?)\b", 150),  # diced
+    (r"sweet potato", r"\b(fries|chips?|pie)\b", 133),
+    (r"chick ?peas?|garbanzo", r"\b(flour|pasta|snacks?)\b", 164),  # cooked or canned, drained
+    (r"\blentils?\b", r"\b(cooked|boiled|soup|pasta|chips?)\b", 192),  # dry
+    (r"\blentils?\b", r"\b(soup|pasta|chips?)\b", 198),  # cooked
+    (r"\bbeans?\b", r"\b(green|string|snap|coffee|jelly|vanilla|cocoa|sprouts?|baked|refried|soup|chips?|pasta|flour)\b", 172),  # cooked or canned, drained
+    (r"\balmonds?\b", r"\b(milk|butter|flour|meal|extract|bar|bars)\b", 143),
+    (r"\bwalnuts?\b", None, 117),  # chopped
+    (r"\bpecans?\b", r"\b(pie)\b", 109),  # chopped
+    (r"\bcashews?\b", r"\b(milk|butter)\b", 137),
+    (r"\bpeanuts?\b", r"\b(butter|oil|sauce|flour|brittle)\b", 146),
+    (r"\b(chicken|beef|vegetable|bone) (broth|stock)\b|\bbroth\b|\bstock\b", None, 240),
+    (r"soy sauce|tamari", None, 255),
+    (r"\bvinegar\b", None, 239),
+    (r"\bketchup\b", None, 272),
+    (r"\bmayonnaise\b|\bmayo\b", None, 220),
+    (r"coconut milk", r"\b(beverage|drink)\b", 226),  # canned
+    (r"vanilla extract", None, 208),
+    (r"\bblueberries\b", r"\b(muffins?|dried|pie)\b", 148),
+    (r"\bstrawberries\b", r"\b(jam|dried|preserves)\b", 166),  # sliced
+    (r"\braspberries\b", r"\b(jam|preserves)\b", 123),
+    (r"(white|brown|jasmine|basmati)? ?rice, cooked|cooked (white |brown )?rice", None, 158),
+    (r"\bquinoa\b", r"\b(cooked|flour|pasta)\b", 170),  # uncooked
+    (r"bread ?crumbs|panko", None, 108),
+    (r"ground cinnamon|cinnamon, ground|^cinnamon\b|spices?, cinnamon", None, 125),  # 2.6 g per tsp
+    (r"\bcumin\b", None, 101),  # 2.1 g per tsp
+    (r"\bpaprika\b", None, 110),  # 2.3 g per tsp
+    (r"chil[ei] powder", None, 130),  # 2.7 g per tsp
+    (r"black pepper|pepper, black|ground pepper", None, 110),  # 2.3 g per tsp
+    (r"garlic powder", None, 149),  # 3.1 g per tsp
+    (r"onion powder", None, 115),  # 2.4 g per tsp
+    (r"\boregano\b", None, 48),  # dried, 1 g per tsp
+    (r"ground ginger|ginger, ground", None, 86),  # 1.8 g per tsp
+    (r"\bturmeric\b", None, 144),  # 3 g per tsp
+    (r"\bnutmeg\b", None, 106),  # 2.2 g per tsp
+    (r"\bgarlic\b", r"\b(powder|salt|bread|oil|sauce|press)\b", 136),  # minced, 2.8 g per tsp
 ]
 _DENSITY = [(re.compile(inc), re.compile(exc) if exc else None, cup / VOLUME["cup"]) for inc, exc, cup in GRAMS_PER_CUP]
 
@@ -299,6 +361,216 @@ def density(food):
     return None
 
 
+# ---------- unit weights: what one clove, can or large weighs (issue #45 steps 4 and 5) ----------
+# A food_units row says one unit of a food weighs this many grams. Sources in order of trust, best first: user (the viewer's own
+# weight), fdc and off (the source's own data, exact, global), table (the typical weights below, estimated), ai (Claude's
+# estimate, per user, estimated). A printed size on the recipe line ("1 (15 oz) can") sits between user and fdc. core attaches the
+# rows a viewer may see as food["food_units"]; the table rows are worked out here from the food's name, so they need no database.
+WEIGHT_SOURCES = ("user", "fdc", "off", "table", "ai")
+SIZE_WORDS = ("small", "medium", "large")
+VOLUME_ROW_UNITS = ("cup", "tbsp", "tsp", "floz")  # a volume row gives the food's own density (1 cup chopped is 160 g)
+WEIGHT_UNITS = (*COUNTISH, COUNT, *SIZE_WORDS, *VOLUME_ROW_UNITS)
+MAX_UNIT_GRAMS = 100000.0
+
+# Typical piece weights, (name pattern, words that rule it out, unit, grams). Rounded values from USDA FoodData Central household
+# measures (SR Legacy portions) and common recipe conventions; real pieces vary, so every row is an estimate (source table).
+# count is one of the thing when the line gives no size (2 eggs means large eggs, 1 onion a medium one).
+_EGG = (r"\beggs?\b", r"\b(white|whites|yolks?|noodles?|plant|substitute|nog|rolls?|salad|beaters|replacer)\b")
+_ONION = (r"\bonions?\b", r"\b(green|spring|powder|rings?|soup|dip|flakes|salt|dried|fried)\b")
+_POTATO = (r"\bpotato(es)?\b", r"\b(sweet|chips?|fries|flakes|salad|starch|flour|mashed|tots?|soup|skins?)\b")
+_CARROT = (r"\bcarrots?\b", r"\b(juice|cake|soup|baby)\b")
+_TOMATO = (r"\btomato(es)?\b", r"\b(paste|sauce|soup|juice|ketchup|sun[- ]dried|dried|canned|diced|crushed|stewed|cherry|grape|salsa)\b")
+_PEPPER = (r"\b(bell|sweet|green|red|yellow|orange) peppers?\b|peppers?, (sweet|bell)", r"\b(flakes|crushed|ground|powder|sauce|jelly|chili|black|white)\b")
+_BANANA = (r"\bbananas?\b", r"\b(chips?|bread|pudding|muffins?|dried|peppers?)\b")
+_APPLE = (r"\bapples?\b", r"\b(juice|sauce|cider|vinegar|pie|chips?|butter|crisp|dried|pineapple|custard)\b")
+_HERBS = r"\b(thyme|rosemary|parsley|cilantro|coriander leaves|dill|mint|basil|oregano|sage|tarragon|marjoram)\b"
+_DRIED = r"\b(dried|ground|flakes)\b"
+_SEASONING = r"\b(salt|pepper|cinnamon|cumin|paprika|cayenne|nutmeg|cloves, ground|ground|spices?|seasoning|chili powder|garlic powder|onion powder|oregano|thyme|baking soda|baking powder|sugar|allspice|ginger|turmeric|saffron|herbs?)\b"
+PIECE_GRAMS = [
+    (r"garlic", r"\b(powder|salt|bread|oil|sauce|minced in|press)\b", "clove", 3),
+    (r"garlic", r"\b(powder|salt|bread|oil|sauce|press)\b", "head", 40),
+    (r"egg whites?|eggs?, white", None, COUNT, 33),
+    (r"egg yolks?|eggs?, yolk", None, COUNT, 17),
+    (*_EGG, COUNT, 50), (*_EGG, "large", 50), (*_EGG, "medium", 44), (*_EGG, "small", 38),
+    (*_ONION, COUNT, 110), (*_ONION, "medium", 110), (*_ONION, "small", 70), (*_ONION, "large", 150),
+    (r"green onions?|spring onions?|scallions?", None, COUNT, 15),
+    (r"green onions?|spring onions?|scallions?", None, "bunch", 100),
+    (r"\bbutter\b", r"\b(peanut|almond|cashew|nut|seed|cookie|cookies|cocoa|shea|apple|bean|beans|cream)\b", "stick", 113),
+    (r"\bcelery\b", r"\b(salt|seed|seeds|soup|root)\b", "rib", 40),
+    (r"\bcelery\b", r"\b(salt|seed|seeds|soup|root)\b", "stalk", 40),
+    (_HERBS, _DRIED, "sprig", 1),
+    (r"cilantro|coriander leaves", _DRIED, "bunch", 60),
+    (r"\bparsley\b", _DRIED, "bunch", 60),
+    (r"\bkale\b", r"\b(chips?)\b", "bunch", 200),
+    (r"\bspinach\b", r"\b(frozen|dip|pasta)\b", "bunch", 340),
+    (r"\bbread\b", r"\b(crumbs|stuffing|pudding|flour|fruit|sticks?|mix|machine)\b", "slice", 28),
+    (r"\bcheese\b", r"\b(cream|cottage|ricotta|sauce|spread|dip|shredded|grated|cake|puffs?)\b", "slice", 21),
+    (_SEASONING, None, "pinch", 0.36),
+    (_SEASONING, None, "dash", 0.6),
+    (r"\b(nuts?|almonds?|walnuts?|pecans?|cashews?|peanuts?|pistachios?|hazelnuts?|chips?|berries|blueberries|raisins?)\b", r"\b(butter|milk|flour|oil)\b", "handful", 30),
+    (r"\b(spinach|arugula|lettuce|greens|kale|basil)\b", None, "handful", 25),
+    (r"\blettuce\b|\biceberg\b", r"\b(romaine)\b", "head", 539),
+    (r"\bromaine\b", None, "head", 626),
+    (r"\bcabbage\b", r"\b(rolls?|soup)\b", "head", 908),
+    (r"\bcauliflower\b", r"\b(rice|crust|soup)\b", "head", 588),
+    (r"\bbroccoli\b", r"\b(soup|casserole)\b", "head", 608),
+    (r"\bbroccoli\b", r"\b(soup|casserole)\b", "bunch", 608),
+    (*_POTATO, COUNT, 170), (*_POTATO, "medium", 170), (*_POTATO, "small", 92), (*_POTATO, "large", 300),
+    (r"sweet potato", r"\b(fries|chips?|pie)\b", COUNT, 130), (r"sweet potato", r"\b(fries|chips?|pie)\b", "medium", 130),
+    (*_CARROT, COUNT, 61), (*_CARROT, "medium", 61), (*_CARROT, "small", 50), (*_CARROT, "large", 72),
+    (r"\blemons?\b", r"\b(juice|zest|peel|pepper|curd|grass|ade|extract)\b", COUNT, 58),
+    (r"\blimes?\b", r"\b(juice|zest|peel|ade|leaves)\b", COUNT, 67),
+    (r"cherry tomato|grape tomato", None, COUNT, 17),
+    (*_TOMATO, COUNT, 123), (*_TOMATO, "medium", 123), (*_TOMATO, "small", 91), (*_TOMATO, "large", 182),
+    (*_PEPPER, COUNT, 120), (*_PEPPER, "medium", 120), (*_PEPPER, "small", 74), (*_PEPPER, "large", 164),
+    (r"jalape[nñ]o", None, COUNT, 14),
+    (*_BANANA, COUNT, 118), (*_BANANA, "medium", 118), (*_BANANA, "small", 101), (*_BANANA, "large", 136),
+    (*_APPLE, COUNT, 182), (*_APPLE, "medium", 182), (*_APPLE, "small", 149), (*_APPLE, "large", 223),
+    (r"\boranges?\b", r"\b(juice|zest|peel|chicken|marmalade|soda)\b", COUNT, 131),
+    (r"\bavocados?\b", r"\b(oil|toast)\b", COUNT, 150),
+    (r"\bzucchini\b", r"\b(bread|noodles)\b", COUNT, 196),
+    (r"\bmushrooms?\b", r"\b(soup|sauce|dried|powder)\b", COUNT, 18),
+    (r"\bstrawberr(y|ies)\b", r"\b(jam|dried|preserves)\b", COUNT, 12),
+    (r"bay lea(f|ves)", None, COUNT, 0.2),
+    (r"chicken breast|chicken, breast|breast, chicken", r"\b(nuggets?|patty|patties|sandwich)\b", COUNT, 174),
+    (r"chicken breast|chicken, breast|breast, chicken", r"\b(nuggets?|patty|patties|sandwich)\b", "fillet", 174),
+    (r"\bsalmon\b", r"\b(canned|smoked|jerky)\b", "fillet", 170),
+    (r"\b(tilapia|cod|white fish)\b", None, "fillet", 113),
+]
+# Standard package sizes when the recipe prints none, (name pattern, words that rule it out, package units, net grams). Common US
+# sizes: a 15 oz can of beans, a 14.5 oz can of tomatoes, an 8 oz brick of cream cheese, a 1 lb box of pasta.
+PACKAGE_GRAMS = [
+    (r"tomato paste", None, ("can",), 170),
+    (r"(diced|crushed|stewed|whole peeled) tomato|tomatoes, (canned|crushed|diced|stewed)|canned tomato", None, ("can",), 411),
+    (r"tomato sauce", None, ("can",), 425),
+    (r"chick ?peas?|garbanzo", r"\b(flour|pasta|snacks?)\b", ("can",), 425),
+    (r"\bbeans?\b", r"\b(green|string|snap|coffee|jelly|vanilla|cocoa|sprouts?|soup|chips?|pasta|flour)\b", ("can",), 425),
+    (r"green beans", None, ("can",), 411),
+    (r"cream of \w+|condensed|\bsoup\b", r"\b(mix|dry|bowl)\b", ("can",), 298),
+    (r"coconut milk", r"\b(beverage|drink)\b", ("can",), 400),
+    (r"\btuna\b", None, ("can",), 142),
+    (r"\bcorn\b", r"\b(starch|meal|flour|syrup|chips?|flakes|oil|bread|tortillas?|cereal|frozen)\b", ("can",), 432),
+    (r"cream cheese", None, ("package", "box"), 227),
+    (r"\bfrozen\b.*\b(vegetables?|peas|corn|broccoli|spinach|green beans|carrots|mixed)\b|\b(vegetables?|peas|corn|broccoli|spinach|green beans|mixed), frozen", None, ("bag", "package"), 340),
+    (r"\b(pasta|spaghetti|penne|macaroni|rigatoni|fettuccine|linguine|rotini|fusilli|farfalle|ziti|orzo|lasagna)\b", r"\b(sauce|salad|cooked|soup)\b", ("box", "package", "bag"), 454),
+    (r"\b(chicken|beef|vegetable|bone) (broth|stock)\b|\bbroth\b|\bstock\b", None, ("carton", "box"), 946),
+]
+_PIECES = [(re.compile(inc), re.compile(exc) if exc else None, unit, float(g)) for inc, exc, unit, g in PIECE_GRAMS]
+_PACKAGES = [(re.compile(inc), re.compile(exc) if exc else None, units_, float(g)) for inc, exc, units_, g in PACKAGE_GRAMS]
+_SIZE_HINT = re.compile(r"\b(extra[- ]large|jumbo|large|medium|small)\b", re.I)
+
+
+def _food_name(food):
+    name = re.sub(r"['’]", "", str(food.get("name") or "").lower())
+    return re.sub(r"\s+", " ", name).strip()
+
+
+def package_note(unit):
+    """The reason text of a standard package size: "Standard can size assumed"."""
+    return f"Standard {unit} size assumed"
+
+
+def table_weights(food):
+    """The typical weights (PIECE_GRAMS) and standard package sizes (PACKAGE_GRAMS) that match the food's name, as food_units
+    rows with source table and estimated True. The first matching row wins for each unit."""
+    name = _food_name(food)
+    out = {}
+    for inc, exc, unit, g in _PIECES:
+        if unit not in out and inc.search(name) and not (exc and exc.search(name)):
+            out[unit] = {"unit": unit, "grams": g, "source": "table", "estimated": True}
+    for inc, exc, pkgs, g in _PACKAGES:
+        if inc.search(name) and not (exc and exc.search(name)):
+            for unit in pkgs:
+                out.setdefault(unit, {"unit": unit, "grams": g, "source": "table", "estimated": True, "note": package_note(unit)})
+    return list(out.values())
+
+
+def weight_unit(text):
+    """The canonical unit of a food_units row (clove, can, count, large, cup), or None for a unit a row cannot hold (g, serving)."""
+    try:
+        u = unit_or_blank(text)
+    except ValueError:
+        return None
+    u = parse_unit(u) if u else u
+    if u in ("each", "whole", "item", "unit"):
+        u = COUNT
+    return u if u in WEIGHT_UNITS else None
+
+
+def unit_weights(food):
+    """{unit: row} with the most trusted row for each unit (WEIGHT_SOURCES order): the rows core attached (food["food_units"]) and
+    the table rows. Each row is {"unit", "grams" (one unit), "source", "estimated", "note"?}."""
+    best, rank = {}, {}
+    for r in [*(food.get("food_units") or []), *table_weights(food)]:
+        u, g, src = r.get("unit"), _pos(r.get("grams")), r.get("source")
+        if u not in WEIGHT_UNITS or g is None or src not in WEIGHT_SOURCES:
+            continue
+        k = WEIGHT_SOURCES.index(src)
+        if u not in best or k < rank[u]:
+            best[u] = {"unit": u, "grams": g, "source": src, "estimated": bool(r.get("estimated")) or src in ("table", "ai"),
+                       **({"note": r["note"]} if r.get("note") else {})}
+            rank[u] = k
+    return best
+
+
+def _volume_row(food):
+    """The most trusted volume row of the food (one cup chopped is 160 g), cup first, else None."""
+    w = unit_weights(food) if food.get("food_units") else {}
+    rows = [w[u] for u in VOLUME_ROW_UNITS if u in w]
+    return min(rows, key=lambda r: WEIGHT_SOURCES.index(r["source"])) if rows else None
+
+
+def size_hint(text):
+    """small, medium or large named in a recipe line's name ("large eggs"), else None. Extra large and jumbo count as large."""
+    m = _SIZE_HINT.search(str(text or ""))
+    if not m:
+        return None
+    w = m.group(1).lower()
+    return w if w in SIZE_WORDS else "large"
+
+
+def _is_plain(unit):
+    return unit in (BLANK, COUNT, None) or unit in PLAIN_COUNTS
+
+
+def count_row(food, unit, hint=None):
+    """The food_units row that gives a count-like unit its weight on this food, or None. The label's own word (and, on a count
+    word label, a plain count) never needs one. A size word (large) uses its own row, else count. A plain count (blank, count,
+    each) uses the size the line names (hint, "large eggs"), else count, medium, large, small. A package or fuzzy unit uses
+    its own row. None when the label has no weight at all (nothing to convert through)."""
+    try:
+        u = unit_or_blank(unit) if unit not in (None, BLANK) else BLANK
+        label_unit, _, g = _profile(food)[:3]
+    except ValueError:
+        return None
+    if not g or not is_countlike(u) or (u and same_word(u, label_unit)):
+        return None
+    p = parse_unit(u) if u else u
+    if p in ("each", "whole", "item", "unit"):
+        p = COUNT
+    if _is_plain(p) and p not in COUNTISH and not _is_measure(label_unit):
+        return None  # a count word label: the label's own word is exact
+    w = unit_weights(food)
+    if p in SIZE_WORDS:
+        return w.get(p) or w.get(COUNT)
+    if p in COUNTISH and p != "piece":
+        return w.get(p)
+    if p == "piece" and "piece" in w:
+        return w["piece"]
+    if _is_plain(p) or p == "piece":
+        size = size_hint(hint)
+        if size and size in w:
+            return w[size]
+        return next((w[k] for k in (COUNT, "medium", "large", "small") if k in w), None)
+    return w.get(p) if p in WEIGHT_UNITS else None
+
+
+def unit_label(unit, grams):
+    """"clove (3 g)", "count (50 g)": a weight unit as the picker shows it."""
+    g = round(grams, 1) if grams < 10 else round(grams)
+    return f"{LABELS.get(unit, unit)} ({g:g} g)"
+
+
 def _profile(food):
     """Return (label unit, label amount, grams, grams estimated, ml, ml estimated) per serving."""
     unit = parse_unit(food.get("serving_unit"))
@@ -308,23 +580,30 @@ def _profile(food):
     sg, sml = _pos(food.get("serving_g")), _pos(food.get("serving_ml"))
     # The label's own grams and ml always win. Only the missing family is estimated: with the typical density of the food when its
     # name matches a keyword (density), else 1 g per ml.
-    d = density(food) if not (sg and sml) else None
+    # A volume row of the food (food_units, issue #45: one cup chopped is 160 g from USDA, exact) comes before the keyword density.
+    d, dest = None, True
+    if not (sg and sml):
+        vr = _volume_row(food)
+        if vr:
+            d, dest = vr["grams"] / VOLUME[vr["unit"]], vr["estimated"]
+        else:
+            d = density(food)
     to_ml = (lambda grams: grams / d) if d else (lambda grams: grams)
     to_g = (lambda millilitres: millilitres * d) if d else (lambda millilitres: millilitres)
     g = ge = ml = mle = None
     if unit in MASS:
         g, ge = amount * MASS[unit], False
-        ml, mle = (sml, False) if sml else (to_ml(g), True)
+        ml, mle = (sml, False) if sml else (to_ml(g), dest)
     elif unit in VOLUME:
         ml, mle = amount * VOLUME[unit], False
-        g, ge = (sg, False) if sg else (to_g(ml), True)
+        g, ge = (sg, False) if sg else (to_g(ml), dest)
     else:
         g, ml = sg, sml
         ge = mle = False
         if g and not ml:
-            ml, mle = to_ml(g), True
+            ml, mle = to_ml(g), dest
         elif ml and not g:
-            g, ge = to_g(ml), True
+            g, ge = to_g(ml), dest
     return unit, amount, g, bool(ge), ml, bool(mle)
 
 
@@ -343,6 +622,9 @@ def _convert(food, amount, unit):
     if unit == label_unit or same_word(unit, label_unit):
         return amount / label_amount, False
     if unit in (COUNT, BLANK) or unit in COUNTISH or is_custom(unit):  # a plain count: the label's count word, else label servings
+        row = count_row(food, unit)  # one clove, can or large has a weight on this food (food_units or the typical table)
+        if row:
+            return amount * row["grams"] / g, bool(ge or row["estimated"])
         return (amount, False) if _is_measure(label_unit) else (amount / label_amount, False)
     if unit == SERVING:
         return amount, False
@@ -382,6 +664,14 @@ def available_units(food):
             out.append(entry(unit, round(x, 2) or float(f"{x:.2g}"), est))
     if label_unit != COUNT and not _is_measure(label_unit):  # a count only where one thing has a known weight (a count word label)
         out.append(entry(COUNT, 1.0, False))
+    if g:  # units one thing of which has a weight (issue #45): clove (3 g), can (425 g), large (50 g)
+        have = {e["unit"] for e in out}
+        for unit, row in unit_weights(food).items():
+            if unit in have or unit in VOLUME or (unit in (COUNT, *SIZE_WORDS) and not _is_measure(label_unit)):
+                continue
+            e = entry(unit, 1.0, bool(ge or row["estimated"]))
+            e.update(label=unit_label(unit, row["grams"]), grams=row["grams"], source=row["source"], **({"note": row["note"]} if row.get("note") else {}))
+            out.append(e)
     return out
 
 
@@ -459,9 +749,10 @@ def grams(food, amount, unit):
         label_unit, _, g, ge = _profile(food)[:4]
     except ValueError:
         return None
-    if is_custom(u) and not same_word(u, label_unit):  # a typed unit is only counted like Count, so its weight is not known
+    row = count_row(food, u)
+    if is_custom(u) and not same_word(u, label_unit) and not row:  # a typed unit is only counted like Count, so its weight is not known
         return None
-    if is_countlike(u) and not same_word(u, label_unit) and not count_weight(label_unit, u):
+    if is_countlike(u) and not same_word(u, label_unit) and not count_weight(label_unit, u) and not row:
         return None
     if u == "g" or not g or ge or estimated:
         return None
@@ -531,7 +822,7 @@ def size_text(size, size_unit):
     return f"{size:g} {LABELS.get(size_unit, size_unit)}"
 
 
-def match_amount(food, amount, unit, custom=True, pkg=None):
+def match_amount(food, amount, unit, custom=True, pkg=None, hint=None):
     """Amount and unit for a recipe line ("1 cup", "2 tbsp", "2" eggs) matched to food, without asking the user.
 
     Returns {"amount", "unit", "check"} (plus "estimated": True when only a typical density or the 1 g per ml guess reaches the
@@ -557,7 +848,8 @@ def match_amount(food, amount, unit, custom=True, pkg=None):
     except ValueError:
         u = None
     size = pkg_size(*pkg) if pkg else None
-    if size and (u is None or is_countlike(u)):
+    mine = count_row(food, u, hint) if u is not None and is_countlike(u) else None
+    if size and (u is None or is_countlike(u)) and not (mine and mine["source"] == "user"):  # only the user's own weight beats a printed size
         return match_amount(food, round(a * size[0], 6), size[1], custom=False)
     if u is not None and not custom and is_custom(u) and not same_word(u, label_unit):
         u = None
@@ -565,6 +857,10 @@ def match_amount(food, amount, unit, custom=True, pkg=None):
     if u is None or is_countlike(u):
         if u is not None and same_word(u, label_unit):
             return {"amount": a, "unit": label_unit, "check": False}
+        row = count_row(food, u, hint)
+        if row:  # one of the line's unit has a weight on this food: the line keeps its unit, the source is named
+            est = row["estimated"] or _profile(food)[3]
+            return {"amount": a, "unit": row["unit"], "check": False, **({"estimated": True} if est else {}), "source": row["source"]}
         if not count_weight(label_unit, u or COUNT):
             return no_weight
         if u is not None and is_custom(u) and parse_unit(u) not in PLAIN_COUNTS:
@@ -576,6 +872,20 @@ def match_amount(food, amount, unit, custom=True, pkg=None):
     return {"amount": label_amount, "unit": label_unit, "check": True, "reason": NO_CONVERT}
 
 
-def estimate_source(food):
-    """Where an estimated conversion comes from: "density" (a typical density of the food, GRAMS_PER_CUP) or "guess" (1 g per ml)."""
+def estimate_source(food, unit=None):
+    """Where an estimated conversion comes from: the source of the unit's weight row (table, ai, user, fdc, off) when a count-like
+    unit converts through one, else the source of the food's volume row, else "density" (a typical density of the food,
+    GRAMS_PER_CUP) or "guess" (1 g per ml)."""
+    row = count_row(food, unit) if unit is not None else None
+    if row:
+        return row["source"]
+    vr = _volume_row(food)
+    if vr:
+        return vr["source"]
     return "density" if density(food) else "guess"
+
+
+def weight_info(food, unit):
+    """(source, note) of the food_units row a count-like unit converts through on this food, else (None, None)."""
+    row = count_row(food, unit)
+    return (row["source"], row.get("note")) if row else (None, None)

@@ -528,16 +528,17 @@ REASON_WARNINGS = {units.NO_WEIGHT: NO_WEIGHT_WARNING, units.NO_SIZE: NO_SIZE_WA
 ESTIMATED_WEIGHT_WARNING = "The recipe line gives no weight for this food, so the amount is Claude's estimate. Check it."
 
 
-def fit_amount(food: dict, prefs: list[tuple]) -> tuple[float, str, Optional[str], bool, Optional[str]]:
+def fit_amount(food: dict, prefs: list[tuple], hint: Optional[str] = None) -> tuple[float, str, Optional[str], bool, Optional[str]]:
     """(amount, unit, warning, check, reason) for a proposal. Each (amount, unit) or (amount, unit, pkg) in prefs (the recipe line first,
     then Claude's answer) goes through units.match_amount, the same rule the app uses when a food is picked by Search or Scan.
     The first one that works without a check wins (a later one, when the line itself had no known weight, says so); else one
     label serving, flagged Check Amount, with the first reason a preference gave (units.match_amount). Never a custom unit
-    (custom=False): a line unit the server does not know counts as count, and an amount with no unit is count too."""
+    (custom=False): a line unit the server does not know counts as count, and an amount with no unit is count too. hint is the
+    line's name, so "2 large eggs" uses the weight of a large one."""
     reason = None
     for n, (amount, unit, *pkg) in enumerate(prefs):
         try:
-            m = units.match_amount(food, amount, unit, custom=False, pkg=pkg[0] if pkg else None)
+            m = units.match_amount(food, amount, unit, custom=False, pkg=pkg[0] if pkg else None, hint=hint)
         except ValueError:
             m = None
         if m and not m["check"]:
@@ -569,11 +570,27 @@ def estimate_food(est) -> tuple[Optional[dict], list[str]]:
     return food, ai.check_values(food, from_text=True)
 
 
-def proposal(it, cands: list[dict], m: Optional[dict], prev: Optional[dict] = None) -> dict:
+def weight_fields(out: dict) -> None:
+    """weight_source and weight_note of a proposal: the food_units row its unit converts through (see core.item_dict)."""
+    src, note = (None, None) if out["check"] or not out["food"] else units.weight_info(out["food"], out["unit"])
+    out["weight_source"], out["weight_note"] = src, note
+
+
+async def with_portions(food: dict, user_id: int, state: Optional[dict] = None) -> dict:
+    """A saved USDA or OFF food with its household measures read once (core.ensure_portions, fail soft) and the unit weights
+    user_id may see attached. An unsaved food (Claude's estimate) is returned as it is."""
+    if food.get("id") is None:
+        return food
+    await core.ensure_portions(food, state)
+    with db.conn() as c:
+        return core.need_food(c, food["id"], user_id)
+
+
+async def proposal(it, cands: list[dict], m: Optional[dict], prev: Optional[dict] = None, user_id: Optional[int] = None) -> dict:
     """prev: the food an earlier recipe matched to this ingredient. It is used when Claude chose no candidate, and a proposal
     that ends on it carries from_previous."""
     out = {"item_id": it["id"], "kind": "none", "food": None, "amount": None, "unit": None, "check": False, "check_reason": None, "grams": None,
-           "note": None, "warnings": [], "preview": None}
+           "note": None, "warnings": [], "preview": None, "weight_source": None, "weight_note": None}
     if not isinstance(m, dict) and prev is None:
         out["note"] = "Claude did not answer for this ingredient."
         return out
@@ -596,13 +613,16 @@ def proposal(it, cands: list[dict], m: Optional[dict], prev: Optional[dict] = No
         out["kind"], out["food"], out["warnings"] = "estimate", food, warns
     if prev is not None and out["food"].get("id") == prev["id"]:
         out["from_previous"] = True
-    amount, unit, warn, check, reason = fit_amount(out["food"], prefs)
+    if user_id is not None:
+        out["food"] = await with_portions(out["food"], user_id)
+    amount, unit, warn, check, reason = fit_amount(out["food"], prefs, it["src_name"])
     out["amount"], out["unit"], out["check"], out["check_reason"] = amount, unit, check, reason
     out["grams"] = None if check else units.grams(out["food"], amount, unit)
     out["preview"] = core.macros(out["food"], amount, unit)
     # tagged Estimated Conversion, never shown as exact: Claude's own weight for a line with none, or a typical density
     out["estimated"] = not check and (warn == ESTIMATED_WEIGHT_WARNING or out["preview"]["estimated"])
-    out["estimate_source"] = None if not out["estimated"] else "claude" if warn == ESTIMATED_WEIGHT_WARNING else units.estimate_source(out["food"])  # what the row would add once accepted (and, with check, confirmed)
+    out["estimate_source"] = None if not out["estimated"] else "claude" if warn == ESTIMATED_WEIGHT_WARNING else units.estimate_source(out["food"], unit)  # what the row would add once accepted (and, with check, confirmed)
+    weight_fields(out)
     if warn:
         out["warnings"].append(warn)
     return out
@@ -644,7 +664,7 @@ async def match(meal_id: int, user: CurrentUser, body: Any = Body(None)):
     for m in out.pop("data").get("matches") or []:
         if isinstance(m, dict) and isinstance(m.get("row"), int) and m["row"] not in by_row:
             by_row[m["row"]] = m
-    return {"proposals": [proposal(it, cs, by_row.get(n), b) for (n, it, cs), b in zip(rows, before)], **out}
+    return {"proposals": [await proposal(it, cs, by_row.get(n), b, user["id"]) for (n, it, cs), b in zip(rows, before)], **out}
 
 
 # ---------- Match With Search: the same candidates, no Claude ----------
@@ -702,10 +722,11 @@ def own_foods(user_id: int, source: str = "all") -> list[dict]:
         return [core.food_dict(r) for r in c.execute(sql + " ORDER BY f.name", params)]
 
 
-def search_proposal(it, food: Optional[dict], own: bool = False, cls: int = 0, skipped: bool = False, previous: bool = False) -> dict:
+async def search_proposal(it, food: Optional[dict], own: bool = False, cls: int = 0, skipped: bool = False, previous: bool = False,
+                          user_id: Optional[int] = None, usda: Optional[dict] = None) -> dict:
     """A pending proposal for one row, shaped like Claude's (kind candidate or none), with method search. No estimates."""
     out = {"item_id": it["id"], "kind": "none", "food": None, "amount": None, "unit": None, "check": False, "check_reason": None, "grams": None,
-           "note": "No match found.", "warnings": [], "preview": None, "method": "search"}
+           "note": "No match found.", "warnings": [], "preview": None, "method": "search", "weight_source": None, "weight_note": None}
     if skipped:
         out["skipped"] = True  # USDA was not asked for this row because of the rate limit
     if food is None:
@@ -715,14 +736,17 @@ def search_proposal(it, food: Optional[dict], own: bool = False, cls: int = 0, s
     if food.get("id") is None:  # a remote candidate is saved only now that it was chosen
         with db.conn() as c:
             food = core.save_food(c, food)
-    amount, unit, warn, check, reason = fit_amount(food, [(it["src_amount"], it["src_unit"], item_pkg(it))])
+    if user_id is not None:
+        food = await with_portions(food, user_id, usda)
+    amount, unit, warn, check, reason = fit_amount(food, [(it["src_amount"], it["src_unit"], item_pkg(it))], it["src_name"])
     where = "your foods" if own else {"fdc": "USDA", "off": "Open Food Facts"}.get(food["source"], "foods on this server")
     out.update(kind="candidate", food=food, amount=amount, unit=unit, check=check, grams=None if check else units.grams(food, amount, unit),
                check_reason=reason,
                preview=core.macros(food, amount, unit),
                note=PREVIOUS_NOTE if previous else ("Same name in " if cls == 2 else "Closest name in ") + where)
     out["estimated"] = not check and out["preview"]["estimated"]
-    out["estimate_source"] = units.estimate_source(food) if out["estimated"] else None
+    out["estimate_source"] = units.estimate_source(food, unit) if out["estimated"] else None
+    weight_fields(out)
     if previous:
         out["from_previous"] = True
     if warn:
@@ -775,7 +799,8 @@ async def match_search(meal_id: int, user: CurrentUser, body: Any = Body(None)):
     for it in items:
         before = previous_for(prev, it)  # an earlier recipe's match for this ingredient comes first
         if before is not None:
-            out.append(search_proposal(it, before, True, 2, previous=True))
+            out.append(await search_proposal(it, before, True, 2, previous=True, user_id=user["id"], usda=usda))
         else:
-            out.append(search_proposal(it, *((await tasks[item_query(it)]) or (None,)), skipped=item_query(it) in usda["skipped"]))
+            out.append(await search_proposal(it, *((await tasks[item_query(it)]) or (None,)), skipped=item_query(it) in usda["skipped"],
+                                             user_id=user["id"], usda=usda))
     return {"proposals": out, "method": "search", "rate_limited": bool(usda["skipped"])}
