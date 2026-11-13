@@ -111,11 +111,79 @@ def unit_or_blank(text):
 
 
 TASTE = re.compile(r"\b(to taste|as needed)\b", re.I)
+_VULGAR = {"\u00bd": (1, 2), "\u00bc": (1, 4), "\u00be": (3, 4), "\u2153": (1, 3), "\u2154": (2, 3), "\u2155": (1, 5), "\u2156": (2, 5),
+           "\u2157": (3, 5), "\u2158": (4, 5), "\u2159": (1, 6), "\u215a": (5, 6), "\u215b": (1, 8), "\u215c": (3, 8),
+           "\u215d": (5, 8), "\u215e": (7, 8)}
+_VULGAR_RE = re.compile("(\\d+)?\\s*([" + "".join(_VULGAR) + "])")
 
 
-def taste_line(text, note, unit, name):
+def normalize_fractions(text):
+    """Unicode fractions as plain ones: "1 \u00bd" and "1\u00bd" are "1 1/2", "\u00be" is "3/4"."""
+    def one(m):
+        n, d = _VULGAR[m.group(2)]
+        return f"{m.group(1)} {n}/{d}" if m.group(1) else f"{n}/{d}"
+    return _VULGAR_RE.sub(one, str(text or ""))
+
+
+_LEAD_NUM = r"\d+\s+\d+/\d+|\d+-\d+/\d+|\d+/\d+|\d+(?:[.,]\d+)?"
+_LEAD = re.compile(rf"^\s*(?P<a>{_LEAD_NUM})(?:\s*(?:-|\u2013|to)\s*(?P<b>{_LEAD_NUM}))?(?![\d/])\s*(?P<rest>.*)$", re.I | re.S)
+
+
+def _lead_number(text):
+    t = str(text).replace(",", ".").replace("-", " ", 1) if re.match(r"\d+-\d+/\d+$", str(text)) else str(text).replace(",", ".")
+    total = 0.0
+    try:
+        for part in t.split():
+            if "/" in part:
+                n, d = part.split("/")
+                total += float(n) / float(d)
+            else:
+                total += float(part)
+    except (ValueError, ZeroDivisionError):
+        return None
+    return _pos(total)
+
+
+def lead_amount(text):
+    """(amount, rest) for a line that starts with a real amount ("1 \u00bd tablespoons olive oil", "1-1/2 cups", "2-3 cloves" is 2.5), else None."""
+    m = _LEAD.match(normalize_fractions(text))
+    if not m:
+        return None
+    a = _lead_number(m.group("a"))
+    b = _lead_number(m.group("b")) if m.group("b") else None
+    if a is None:
+        return None
+    return (a + b) / 2 if b is not None and b > a else a, m.group("rest").strip()
+
+
+def lead_unit(rest):
+    """The known unit that opens the rest of a line after its amount ("tablespoons olive oil" is tbsp), else None."""
+    r = str(rest or "").strip()
+    m = re.match(r"(fl\.?\s*oz\.?|fluid\s+ounces?)\b", r, re.I)
+    if m:
+        return "floz"
+    m = re.match(r"([A-Za-z]+)\.?(?=\s|$|,)", r)
+    return known_unit(m.group(1)) if m else None
+
+
+def strip_taste(name, note):
+    """(name, note) with a to taste or as needed phrase moved from the name into the note. Used on a line that has an amount, which keeps it."""
+    name = str(name or "").strip()
+    m = TASTE.search(name)
+    if not m:
+        return name, note
+    clean = re.sub(r"\s+", " ", TASTE.sub("", name)).strip(" ,;-") or name
+    phrase = m.group(1).lower()
+    note = str(note or "").strip()
+    return clean, (note if TASTE.search(note) else (f"{phrase}, {note}" if note else phrase))
+
+
+def taste_line(text, note, unit, name, amount=None):
     """For a line that says to taste or as needed (salt to taste, pepper as needed): (name, note) with the phrase moved into the note and
-    the name without it, else None. Such a line has no amount and no unit and is never a count."""
+    the name without it, else None. Such a line has no amount and no unit and is never a count. A line with a real amount (amount above
+    0, or text that starts with one, "1 \u00bd tbsp olive oil (more as needed)") is never a taste line: the phrase stays a note."""
+    if _pos(amount) is not None or lead_amount(text):
+        return None
     found = next((m for m in (TASTE.search(str(x or "")) for x in (note, unit, name, text)) if m), None)
     if not found:
         return None
@@ -416,7 +484,7 @@ _PRINTED = [
 
 
 def _number(text):
-    t = str(text).replace(",", ".").strip()
+    t = normalize_fractions(text).replace(",", ".").strip()
     parts = t.split()
     try:
         total = 0.0

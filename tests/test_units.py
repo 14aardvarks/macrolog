@@ -475,3 +475,24 @@ def test_count_unit_food_with_grams_only_uses_the_density():
 def test_match_amount_for_a_cup_of_flour_is_estimated_with_the_better_density():
     flour = food(30, "g", name="All Purpose Flour")
     assert units.match_amount(flour, 1, "cup") == {"amount": 1, "unit": "cup", "check": False, "estimated": True}
+
+
+@pytest.mark.parametrize("text,amount,rest", [
+    ("1 ½ tablespoons olive oil", 1.5, "tablespoons olive oil"), ("1½ cups flour", 1.5, "cups flour"),
+    ("¾ tsp salt", 0.75, "tsp salt"), ("1-1/2 cups sugar", 1.5, "cups sugar"), ("2-3 cloves garlic", 2.5, "cloves garlic"),
+    ("1/2 cup (120 ml) milk", 0.5, "cup (120 ml) milk"), ("1 1/2 cups flour", 1.5, "cups flour"), ("⅓ cup rice", 1 / 3, "cup rice"),
+    ("⅛ tsp nutmeg", 0.125, "tsp nutmeg"), ("2 eggs", 2, "eggs")])
+def test_lead_amount(text, amount, rest):
+    got = units.lead_amount(text)
+    assert got[0] == pytest.approx(amount) and got[1] == rest
+
+
+@pytest.mark.parametrize("text", ["salt to taste", "pepper", "as needed", "olive oil, as needed"])
+def test_lead_amount_none(text):
+    assert units.lead_amount(text) is None
+
+
+@pytest.mark.parametrize("word,unit", [("tablespoons", "tbsp"), ("teaspoons", "tsp"), ("cups", "cup"), ("ounces", "oz"), ("pounds", "lb"),
+                                       ("grams", "g"), ("Tablespoon", "tbsp"), ("milliliters", "ml"), ("cloves", "clove")])
+def test_plural_units(word, unit):
+    assert units.known_unit(word) == unit and units.lead_unit(word + " flour") == unit

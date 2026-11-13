@@ -188,8 +188,8 @@ test('an amount with no unit is a count, and package and fuzzy units stay units 
 
 test('a line that says to taste or as needed has no amount or unit and keeps to taste in the note', () => {
   assert.deepEqual(parseIngredientLine('Salt to taste'), { text: 'Salt, to taste', amount: null, unit: null, name: 'Salt', note: 'to taste' });
-  assert.deepEqual(parseIngredientLine('1 tsp salt, to taste'), { text: 'salt, to taste', amount: null, unit: null, name: 'salt', note: 'to taste' });
-  assert.deepEqual(parseIngredientLine('2 pinches pepper to taste'), { text: 'pepper, to taste', amount: null, unit: null, name: 'pepper', note: 'to taste' });
+  assert.deepEqual(parseIngredientLine('1 tsp salt, to taste'), { text: '1 tsp salt, to taste', amount: 1, unit: 'tsp', name: 'salt', note: 'to taste' });  // issue 47: a real amount stays
+  assert.deepEqual(parseIngredientLine('2 pinches pepper to taste'), { text: '2 pinches pepper to taste', amount: 2, unit: 'pinch', name: 'pepper', note: 'to taste' });
   assert.deepEqual(parseIngredientLine('Black pepper, as needed'), { text: 'Black pepper, as needed', amount: null, unit: null, name: 'Black pepper', note: 'as needed' });
   assert.deepEqual(parseIngredientLine('Water (as needed), cold'), { text: 'Water, as needed, cold', amount: null, unit: null, name: 'Water', note: 'as needed, cold' });
   const r = parseIngredientText('2 eggs\nSalt to taste');
@@ -200,4 +200,35 @@ test('the review body makes an amount with no unit a count and leaves a to taste
   const d = reviewDraft({ name: 'Soup', ingredients: [{ text: '3 carrots', amount: 3, unit: 'count', name: 'carrots', note: null }, { text: 'salt, to taste', amount: null, unit: null, name: 'salt', note: 'to taste' }] });
   const b = reviewBody(d).body.ingredients;
   assert.deepEqual(b.map((i) => [i.text, i.amount, i.unit, i.note]), [['3 carrots', 3, 'count', null], ['salt, to taste', null, null, 'to taste']]);
+});
+
+test('issue 47: a real amount is never blanked by to taste or as needed, fractions and plural units parse', () => {
+  const cases = [
+    ['1 ½ tablespoons olive oil (more as needed, if not using nonstick pan)', [1.5, 'tbsp', 'olive oil', 'more as needed, if not using nonstick pan']],
+    ['1 ½ cups flour', [1.5, 'cup', 'flour', null]],
+    ['1½ cups flour', [1.5, 'cup', 'flour', null]],
+    ['¾ tsp salt', [0.75, 'tsp', 'salt', null]],
+    ['⅓ cup sugar', [1 / 3, 'cup', 'sugar', null]],
+    ['⅔ cup milk', [2 / 3, 'cup', 'milk', null]],
+    ['⅛ tsp nutmeg', [0.125, 'tsp', 'nutmeg', null]],
+    ['¼ cup oil', [0.25, 'cup', 'oil', null]],
+    ['1-1/2 cups sugar', [1.5, 'cup', 'sugar', null]],
+    ['2-3 cloves garlic', [2.5, 'clove', 'garlic', null]],
+    ['1/2 cup (120 ml) milk', [0.5, 'cup', 'milk', '120 ml']],
+    ['1 tablespoon butter, melted (or more as needed)', [1, 'tbsp', 'butter', 'or more as needed, melted']],
+    ['2 cups water as needed', [2, 'cup', 'water', 'as needed']],
+    ['2 teaspoons salt, or to taste', [2, 'tsp', 'salt', 'or to taste']],
+    ['3 ounces cheese', [3, 'oz', 'cheese', null]],
+    ['1 pound beef', [1, 'lb', 'beef', null]],
+    ['100 grams rice', [100, 'g', 'rice', null]],
+    ['2 widgets', [2, 'count', 'widgets', null]],
+    ['salt to taste', [null, null, 'salt', 'to taste']],
+    ['pepper', [null, null, 'pepper', null]],
+    ['olive oil, as needed', [null, null, 'olive oil', 'as needed']],
+  ];
+  for (const [line, want] of cases) {
+    const got = parts(line);
+    assert.equal(got.length, 4, line);
+    got.forEach((v, i) => (typeof v === 'number' ? assert.ok(Math.abs(v - want[i]) < 1e-9, line) : assert.equal(v, want[i], line)));
+  }
 });

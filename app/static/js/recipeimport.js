@@ -21,7 +21,7 @@ const lineUnitOf = (word) => UNIT_WORDS[UNIT_WORDS[word] ? word : word.toLowerCa
 const TASTE = /\b(?:to taste|as needed)\b/i;
 const TASTE_G = /\b(?:to taste|as needed)\b/gi;
 const FLOZ = /^(?:fl\.?\s*oz\.?|fluid\s+ounces?)\b/i;
-const AMOUNT = '(?:\\d+\\s+\\d+\\s*\\/\\s*\\d+|\\d+\\s*\\/\\s*\\d+|\\d*\\s*[\\u00bc-\\u00be\\u2150-\\u215e]|\\d+(?:[.,]\\d+)?)';
+const AMOUNT = '(?:\\d+\\s*-\\s*\\d+\\s*\\/\\s*\\d+|\\d+\\s+\\d+\\s*\\/\\s*\\d+|\\d+\\s*\\/\\s*\\d+|\\d*\\s*[\\u00bc-\\u00be\\u2150-\\u215e]|\\d+(?:[.,]\\d+)?)';
 const LEAD = new RegExp('^(' + AMOUNT + ')(?:\\s*(?:-|\\u2013|to)\\s*(' + AMOUNT + '))?\\s*');
 
 // A line that is a heading ("For the sauce:"), not an ingredient.
@@ -48,7 +48,8 @@ export function parseIngredientLine(line) {
   let amount = null;
   const m = LEAD.exec(rest);
   if (m) {
-    const a = parseAmount(m[1].replace(/\s+/g, ' ').trim());
+    const mixed = /^(\d+)\s*-\s*(\d+\s*\/\s*\d+)$/.exec(m[1].trim());  // "1-1/2" is one and a half, not a range
+    const a = parseAmount(mixed ? mixed[1] + ' ' + mixed[2] : m[1].replace(/\s+/g, ' ').trim());
     const b = m[2] ? parseAmount(m[2].replace(/\s+/g, ' ').trim()) : null;
     if (a != null) {
       amount = b != null && b > a ? (a + b) / 2 : a;
@@ -75,7 +76,7 @@ export function parseIngredientLine(line) {
   if (taste) { notes.unshift(taste[1].toLowerCase()); rest = rest.trim().slice(0, -taste[0].length); }
   let name = rest.replace(/\s+/g, ' ').trim() || text;
   const hasTaste = notes.some((n) => TASTE.test(n));
-  if (hasTaste || TASTE.test(name)) {  // salt to taste: no amount, no unit, never a count; "to taste" stays in the note
+  if (amount == null && (hasTaste || TASTE.test(name))) {  // salt to taste: only a line with no amount is blanked; "to taste" stays in the note
     const clean = name.replace(TASTE_G, '').replace(/\s+/g, ' ').replace(/^[\s,;-]+|[\s,;-]+$/g, '') || name;
     const kept = notes.filter(Boolean);
     const note = kept.some((n) => TASTE.test(n)) ? kept.join(', ') : 'to taste, ' + kept.join(', ');
@@ -83,6 +84,11 @@ export function parseIngredientLine(line) {
     return { text: clean + ', ' + nt, amount: null, unit: null, name: clean, note: nt };
   }
   if (amount != null && !unit) unit = 'count';  // an amount with no known unit is a count (3 carrots)
+  if (amount != null && TASTE.test(name)) {  // "2 cups water as needed" keeps its amount, the phrase moves to the note
+    const phrase = TASTE.exec(name)[0].toLowerCase();
+    name = name.replace(TASTE_G, '').replace(/\s+/g, ' ').replace(/^[\s,;-]+|[\s,;-]+$/g, '') || name;
+    if (!notes.some((n) => TASTE.test(n))) notes.unshift(phrase);
+  }
   const note = notes.filter(Boolean).join(', ') || null;
   return { text, amount, unit, name, note };
 }

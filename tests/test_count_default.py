@@ -45,7 +45,7 @@ ROWS = {"name": "Stew", "servings": 2, "confidence": "Clear.", "ingredients": [
     {"text": "Pepper", "amount": None, "unit": None, "name": "pepper", "note": "as needed"},
     {"text": "Fresh parsley", "amount": None, "unit": None, "name": "parsley", "note": None}]}
 WANT = [(3, "count", "carrots", None), (2, "clove", "garlic", "minced"), (1, "can", "tomatoes", None), (2, "tbsp", "oil", None),
-        (None, None, "salt", None), (None, None, "salt", "to taste"), (None, None, "pepper", "as needed"), (None, None, "parsley", None)]
+        (None, None, "salt", None), (1, "tsp", "salt", None), (None, None, "pepper", "as needed"), (None, None, "parsley", None)]
 
 
 def shape(recipe):
@@ -56,7 +56,7 @@ def check(recipe):
     got = shape(recipe)
     # "a pinch of salt" has no amount: the unit is dropped and the line stays text
     assert got == WANT
-    assert recipe["ingredients"][5]["text"] == "salt, to taste"  # shown as salt, to taste
+    assert recipe["ingredients"][6]["text"] == "pepper, as needed"
     assert all(i["unit"] in (None, *units.KNOWN) for i in recipe["ingredients"])  # never a custom unit
 
 

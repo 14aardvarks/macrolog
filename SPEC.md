@@ -878,7 +878,12 @@ POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log i
   - `units.line_unit(amount, unit, name)` -> (unit, name), used by `recipe_ai.clean_recipe` (text, photo and URL import share it): no amount gives
     unit None; a known unit or alias gives its canonical unit (`units.known_unit`); no unit, blank or "none" gives count; any other word (clove, can,
     slice, pinch) gives count and joins the name, plural for an amount other than 1 and once only ("garlic" becomes "garlic cloves").
-  - To taste: `units.taste_line` (a line whose note, unit, name or text has "to taste" or "as needed") gives amount None, unit None, the phrase in
+  - Issue #47 (v72): the to taste rule only applies to a line with NO real amount. `taste_line(text, note, unit, name, amount)` returns None when
+    amount is above 0 or the text starts with an amount (`units.lead_amount`, which reads unicode fractions, "1 1/2", "1-1/2", ranges), so
+    "1 ½ tablespoons olive oil (more as needed)" is 1.5 tbsp olive oil with the phrase in the note. `clean_recipe` recovers an amount Claude
+    left out from the line's lead (`lead_amount`, `lead_unit`) and moves a phrase left in the name of a line with an amount into the note
+    (`strip_taste`). The local splitter does the same (`parseIngredientLine`, "1-1/2" is 1.5). Plural unit words normalize everywhere.
+  - To taste: `units.taste_line` (a line whose note, unit, name or text has "to taste" or "as needed" and has no amount) gives amount None, unit None, the phrase in
     `note` (kept note text after it) and the phrase removed from name; text becomes "salt, to taste". Never a count. `clean_recipe` and the local
     splitter (`parseIngredientLine`) both do it. `core.import_row` (POST /api/meals/import, add item) only turns an amount with a blank unit into count
     ("1" and "" give "count"; the stored text is built before that, so it never reads "3 count carrots"), so typed units survive a review save.

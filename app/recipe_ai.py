@@ -48,7 +48,8 @@ UNIT_RULE = (f"Use only these units: {UNIT_LIST}. Use count when the line gives 
              "Keep a package or fuzzy unit as the unit, singular, and leave it out of the name (2 cloves garlic is amount 2, unit clove, name garlic). "
              "For a printed package size (1 (15 oz) can black beans) keep the package count and unit (amount 1, unit can) and put the printed size in note (15 oz). "
              "Leave unit null only when the line has no amount. "
-             "For a line that says to taste or as needed (salt to taste, pepper as needed), leave amount and unit null and put to taste or as needed in note. ")
+             "For a line that says to taste or as needed (salt to taste, pepper as needed), leave amount and unit null and put to taste or as needed in note. "
+             "Only a line with no amount at all is blanked: if the line has an amount (1 1/2 tablespoons olive oil (more as needed)) keep the amount and unit and put the phrase in note. ")
 _NSTR = {"type": ["string", "null"]}
 _NNUM = {"type": ["number", "null"]}
 
@@ -65,7 +66,7 @@ IMPORT_TOOL = {
                 "type": "object", "additionalProperties": False,
                 "properties": {
                     "text": {"type": "string", "description": "The ingredient line exactly as written"},
-                    "amount": {**_NNUM, "description": "Quantity as a decimal (1 1/2 is 1.5, a range uses the average), null when none or when the line says to taste or as needed"},
+                    "amount": {**_NNUM, "description": "Quantity as a decimal (1 1/2 is 1.5, a range uses the average), null when the line has no amount (salt to taste), never when it has one"},
                     "unit": {**_NSTR, "description": f"One of {UNIT_LIST}: clove for 2 cloves garlic, count when the line has an amount but no listed unit (3 carrots), null when it has no amount or says to taste (salt to taste)"},
                     "name": {"type": "string", "description": "The ingredient itself, short, without amount, unit or preparation"},
                     "note": {**_NSTR, "description": "Preparation or other notes (chopped, divided), \"to taste\" or \"as needed\" for such lines (salt, to taste), or null"},
@@ -173,15 +174,24 @@ def clean_recipe(data: dict) -> tuple[dict, list[str]]:
         amount = ai._num(it.get("amount"))
         amount = amount if amount is not None and amount >= 0 else None
         note = _clip(it.get("note"), 300)
-        taste = units.taste_line(_clip(it.get("text"), 300), note, _clip(it.get("unit"), 40), name)
+        line_text = _clip(it.get("text"), 300)
+        unit_in = _clip(it.get("unit"), 40)
+        if (amount is None or amount == 0) and line_text:  # Claude left the amount out of a line that starts with one: read it from the line
+            lead = units.lead_amount(line_text)
+            if lead:
+                amount = lead[0]
+                unit_in = unit_in if units.known_unit(unit_in or "") else units.lead_unit(lead[1])
+        taste = units.taste_line(line_text, note, unit_in, name, amount)
         if taste:  # salt to taste: no amount, no unit, "to taste" in the note, never a count
             name, note = taste
             rows.append({"text": f"{name}, {note}"[:300], "amount": None, "unit": None, "name": name[:200], "note": note[:300],
                          "pkg_amount": None, "pkg_unit": None})
             continue
         # Known unit (package and fuzzy units included), count for an amount with no unit or an unknown word, no unit without an amount.
-        text = _clip(it.get("text"), 300) or name
-        unit, kept = units.line_unit(amount, _clip(it.get("unit"), 40), name)
+        text = line_text or name
+        unit, kept = units.line_unit(amount, unit_in, name)
+        if amount is not None and amount > 0:  # "olive oil as needed" with an amount keeps the amount, the phrase moves to the note
+            kept, note = units.strip_taste(kept, note)
         row = {"text": text, "amount": amount, "unit": unit, "name": kept[:200], "note": note, "pkg_amount": None, "pkg_unit": None}
         printed = units.printed_size(text)
         if printed:  # a printed package size is read in code: the package count and unit stay, the size is exact per package

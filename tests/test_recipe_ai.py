@@ -293,3 +293,34 @@ def test_match_without_a_line_amount_uses_claudes(env):
     env["reply"] = reply(recipe_ai.MATCH_TOOL_NAME, {"matches": [{"row": 1, "choice": 1, "amount": 2, "unit": "tbsp", "estimate": None, "note": None}]})
     p = env["c"].post(f"/api/recipes/{m['id']}/match", json={"item_ids": [m["items"][0]["id"]]}).json()["proposals"]
     assert (p[0]["amount"], p[0]["unit"], p[0]["check"]) == (2, "tbsp", False)  # cup label: tbsp is exact
+
+
+OIL = "1 ½ tablespoons olive oil (more as needed, if not using nonstick pan)"
+CLEAN_CASES = [
+    # (Claude row, amount, unit, name, note)
+    ({"text": OIL, "amount": None, "unit": None, "name": "olive oil", "note": "more as needed, if not using nonstick pan"},
+     1.5, "tbsp", "olive oil", "more as needed, if not using nonstick pan"),  # Claude blanked the amount: read from the line
+    ({"text": OIL, "amount": 1.5, "unit": "tablespoons", "name": "olive oil", "note": "more as needed, if not using nonstick pan"},
+     1.5, "tbsp", "olive oil", "more as needed, if not using nonstick pan"),
+    ({"text": OIL, "amount": 1.5, "unit": "shell", "name": "olive oil", "note": "as needed"}, 1.5, "count", "olive oil", "as needed"),
+    ({"text": "1 ½ cups flour", "amount": None, "name": "flour"}, 1.5, "cup", "flour", None),
+    ({"text": "¾ tsp salt", "amount": None, "unit": None, "name": "salt"}, 0.75, "tsp", "salt", None),
+    ({"text": "2-3 cloves garlic", "amount": None, "name": "garlic"}, 2.5, "clove", "garlic", None),
+    ({"text": "1/2 cup (120 ml) milk", "amount": 0.5, "unit": "cup", "name": "milk", "note": "120 ml"}, 0.5, "cup", "milk", "120 ml"),
+    ({"text": "1 tablespoon butter, melted (or more as needed)", "amount": 1, "unit": "tablespoon", "name": "butter",
+      "note": "melted, or more as needed"}, 1, "tbsp", "butter", "melted, or more as needed"),
+    ({"text": "2 cups water as needed", "amount": 2, "unit": "cups", "name": "water as needed"}, 2, "cup", "water", "as needed"),
+    ({"text": "salt to taste", "amount": None, "unit": None, "name": "salt", "note": "to taste"}, None, None, "salt", "to taste"),
+    ({"text": "salt to taste", "amount": None, "name": "salt to taste"}, None, None, "salt", "to taste"),
+    ({"text": "pepper", "amount": None, "name": "pepper"}, None, None, "pepper", None),
+    ({"text": "olive oil, as needed", "amount": None, "name": "olive oil", "note": "as needed"}, None, None, "olive oil", "as needed"),
+    ({"text": "as needed", "name": "oil", "note": "as needed"}, None, None, "oil", "as needed"),
+    ({"text": "3 widgets", "amount": 3, "unit": "widgets", "name": "widgets"}, 3, "count", "widgets", None),
+]
+
+
+@pytest.mark.parametrize("row,amount,unit,name,note", CLEAN_CASES)
+def test_clean_recipe_never_drops_a_real_amount(row, amount, unit, name, note):
+    out, _ = recipe_ai.clean_recipe({"name": "X", "ingredients": [row]})
+    got = out["ingredients"][0]
+    assert (got["amount"], got["unit"], got["name"], got["note"]) == (pytest.approx(amount) if amount else amount, unit, name, note)
