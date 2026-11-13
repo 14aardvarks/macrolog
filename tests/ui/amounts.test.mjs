@@ -46,7 +46,7 @@ test('the module format reaches amountText, the wheel and amount boxes', () => {
   try {
     setAmountFormat('fraction');
     assert.equal(amountText(1.5, 'cup'), '1 1/2 cup');
-    assert.equal(amountText(2.5, 'slice'), '2 1/2 slice');
+    assert.equal(amountText(2.5, 'slice'), '2 1/2 slices');
     assert.equal(amountText(28.35, 'g'), '28.35 g');
     assert.equal(amountLabel('tbsp', 0.5), '1/2');
     assert.equal(rowAmountText(0.75, 'cup'), '3/4');
@@ -85,8 +85,9 @@ test('matchAmount uses the line unit when the food reaches it exactly', () => {
 test('matchAmount counts go to the count word or to servings', () => {
   assert.deepEqual(matchAmount(EGG, 2, null), { amount: 2, unit: 'egg', check: false });
   assert.deepEqual(matchAmount(EGG, 3, 'eggs'), { amount: 3, unit: 'egg', check: false });
-  assert.deepEqual(matchAmount(FLOUR_G, 2, ''), { amount: 2, unit: 'serving', check: false });
-  assert.deepEqual(matchAmount(FLOUR_G, 1, 'piece'), { amount: 1, unit: 'serving', check: false });
+  // a count on a gram label has no known weight (issue #45): Check Amount, never label servings
+  assert.deepEqual(matchAmount(FLOUR_G, 2, ''), { amount: FLOUR_G[0].default_amount, unit: 'g', check: true, reason: 'no_weight' });
+  assert.deepEqual(matchAmount(FLOUR_G, 1, 'piece'), { amount: FLOUR_G[0].default_amount, unit: 'g', check: true, reason: 'no_weight' });
 });
 
 test('matchAmount uses an estimated unit and flags it, as the picker offers it', () => {
@@ -97,12 +98,13 @@ test('matchAmount uses an estimated unit and flags it, as the picker offers it',
 
 test('matchAmount flags what is unreachable and skips lines without an amount', () => {
   const SLICE = [{ unit: 'slice', default_amount: 2 }, { unit: 'serving', default_amount: 1 }, { unit: 'count', default_amount: 1 }];
-  assert.deepEqual(matchAmount(SLICE, 1, 'cup'), { amount: 2, unit: 'slice', check: true });
-  assert.deepEqual(matchAmount(SLICE, 3, 'g'), { amount: 2, unit: 'slice', check: true });
-  // a typed unit is never unreachable: it keeps its word and counts like count
-  assert.deepEqual(matchAmount(BUTTER, 1, 'stick'), { amount: 1, unit: 'stick', check: false });
-  assert.deepEqual(matchAmount(MILK, 1, 'can'), { amount: 1, unit: 'can', check: false });
-  assert.deepEqual(matchAmount(MILK, 2, '  To   Taste '), { amount: 2, unit: 'To Taste', check: false });
+  assert.deepEqual(matchAmount(SLICE, 1, 'cup'), { amount: 2, unit: 'slice', check: true, reason: 'no_convert' });
+  assert.deepEqual(matchAmount(SLICE, 3, 'g'), { amount: 2, unit: 'slice', check: true, reason: 'no_convert' });
+  // a package or fuzzy unit, or a typed word, on a measure label has no known weight
+  assert.deepEqual(matchAmount(BUTTER, 1, 'stick'), { amount: BUTTER[0].default_amount, unit: BUTTER[0].unit, check: true, reason: 'no_size' });
+  assert.deepEqual(matchAmount(MILK, 1, 'can'), { amount: MILK[0].default_amount, unit: MILK[0].unit, check: true, reason: 'no_size' });
+  assert.deepEqual(matchAmount(MILK, 2, '  To   Taste '), { amount: MILK[0].default_amount, unit: MILK[0].unit, check: true, reason: 'no_weight' });
+  assert.deepEqual(matchAmount(SLICE, 2, 'To Taste'), { amount: 2, unit: 'To Taste', check: false });  // a typed word on a count label
   assert.deepEqual(matchAmount(SLICE, 2, 'Slices'), { amount: 2, unit: 'slice', check: false });  // the label's own word
   assert.equal(matchAmount(MILK, null, 'cup'), null);
   assert.equal(matchAmount(MILK, 0, 'cup'), null);

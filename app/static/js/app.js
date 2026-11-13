@@ -1,5 +1,5 @@
 import { api, setUnauthorizedHandler } from './api.js';
-import { h, clear, select, field, message, show, cameraIcon, sourceBadge, kcalCue } from './dom.js';
+import { h, clear, select, field, message, show, cameraIcon, sourceBadge, kcalCue, checkBlock } from './dom.js';
 import {
   MEALS, MEAL_LABELS, parseDecimal, parseAmount, amountText, servingText, qtyText, amountMemo, setAmountFormat, unitLabel, fmtNum, fmtAmount, groupByMeal, mealGroupsAll, quickLabel, checkedItems, canSaveRecipe, rowAmountText, applyRowPick, draftFits, localDate, progressText, remainingText,
   sentence, matchAmount, newRecipeDraft, recipeAddRow, recipeSetRow, stepsBack, barWidth, barState, debounce, digitsOnly, guessMeal, pctTotal, latestGuard, MEAL_FILTERS, MEAL_FILTER_LABELS, filterByMeal, filterSaved, pageOf, PAGE_SIZE, emptyText,
@@ -123,7 +123,8 @@ const ctx = {
     find(meal, item, how) {
       const src = item.src || {};
       // line: what the recipe says ("1 cup"), from which the amount is worked out once a food is picked (autoMatch).
-      const line = item.src ? { amount: src.amount, unit: src.unit } : { amount: item.amount, unit: item.unit };
+      const line = item.src ? { amount: src.amount, unit: src.unit, pkg: src.pkg_amount ? { amount: src.pkg_amount, unit: src.pkg_unit } : null }
+        : { amount: item.amount, unit: item.unit };
       state.recipe = { match: { mealId: meal.id, itemId: item.id, amount: item.food ? item.amount : src.amount, unit: item.food ? item.unit : src.unit,
         line, label: src.text || (item.food && item.food.name) || '' }, name: '', meals: [], rows: [], depth: state.depth, adding: true, picking: null };
       state.matchFocus = item.id;
@@ -852,6 +853,7 @@ async function mealScreen(root, params) {
     note,
     h('ul', { class: 'list' }, rows.map((r) => r.el)),
     notCounted(found) ? h('p', { class: 'sub not-counted' }, notCountedText(notCounted(found))) : null,
+    checkBlock(found),
     h('label', { class: 'field' }, h('span', null, 'Meal'), mealSel), status,
     h('button', { class: 'btn primary', type: 'button', onclick: log }, 'Log')));
 }
@@ -867,7 +869,7 @@ async function autoMatch(root, params) {
   root.appendChild(h('section', { class: 'screen' }, message('Matching...')));
   const food = await api.food(params.foodId);
   const label = food.units[0];
-  const pick = matchAmount(food.units, m.line && m.line.amount, m.line && m.line.unit) || { amount: label.default_amount, unit: label.unit, check: true };
+  const pick = matchAmount(food.units, m.line && m.line.amount, m.line && m.line.unit, m.line && m.line.pkg) || { amount: label.default_amount, unit: label.unit, check: true };
   await api.matchItem(m.mealId, m.itemId, { food_id: food.id, amount: pick.amount, unit: pick.unit, ...(pick.check ? { check: true } : {}) });
   delete ctx.flow.proposals(m.mealId)[m.itemId];
   const n = stepsBack(state.depth, r.depth);

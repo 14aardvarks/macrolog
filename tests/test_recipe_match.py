@@ -7,7 +7,8 @@ from app import core, db
 from tests.test_core import BREAD, PB, a, b, env, food  # noqa: F401
 
 ROWS = [{"text": "2 slices bread", "amount": 2, "unit": "slice", "name": "bread"},
-        {"amount": 4, "unit": "tbsp", "name": "peanut butter", "note": "smooth"},
+        {"amount": 4, "unit": "tbsp", "name": "peanut butter", "note": "smooth",
+                                    "pkg_amount": None, "pkg_unit": None},
         {"name": "salt", "note": "to taste"}]
 
 
@@ -21,7 +22,8 @@ def test_import_saves_every_row_unmatched(a, b):
     m = imported(a)
     assert (m["matched"], m["needed"], m["skipped"], m["complete"], m["servings"], m["meals"]) == (0, 3, 0, False, 2, ["lunch"])
     assert [i["src"]["text"] for i in m["items"]] == ["2 slices bread", "4 tbsp peanut butter, smooth", "salt, to taste"]
-    assert m["items"][1]["src"] == {"text": "4 tbsp peanut butter, smooth", "amount": 4, "unit": "tbsp", "name": "peanut butter", "note": "smooth"}
+    assert m["items"][1]["src"] == {"text": "4 tbsp peanut butter, smooth", "amount": 4, "unit": "tbsp", "name": "peanut butter", "note": "smooth",
+                                    "pkg_amount": None, "pkg_unit": None}
     assert all(i["food"] is None and i["kcal"] is None and not i["matched"] for i in m["items"])
     assert m["kcal"] == 0 and m["totals"]["fiber"] is None
     assert a.get(f"/api/meals/{m['id']}").json()["id"] == m["id"]
@@ -242,7 +244,8 @@ def test_unmatching_a_hand_built_row_keeps_a_line_to_search_for(a):
     assert m["items"][0]["src"] is None
     r = a.patch(f"/api/meals/{m['id']}/items/{m['items'][0]['id']}", json={"food_id": None}).json()
     it = r["items"][0]
-    assert it["food"] is None and it["src"] == {"text": "Bread", "amount": 2, "unit": "slice", "name": "Bread", "note": None}
+    assert it["food"] is None and it["src"] == {"text": "Bread", "amount": 2, "unit": "slice", "name": "Bread", "note": None,
+                                                         "pkg_amount": None, "pkg_unit": None}
     assert (r["matched"], r["needed"], r["complete"]) == (1, 2, False)
     # an imported row keeps its own line
     imp = imported(a)

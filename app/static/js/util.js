@@ -102,6 +102,24 @@ let amountFormat = 'fraction';
 export function setAmountFormat(f) { amountFormat = f === 'decimal' ? 'decimal' : 'fraction'; }
 export function getAmountFormat() { return amountFormat; }
 
+// Package units (can, stick) and fuzzy units (clove, pinch): structured units the server knows (units.PACKAGE_UNITS, FUZZY_UNITS).
+// They stay on a recipe line ("2 cloves garlic", never "garlic cloves") and convert only through a printed size or the label's own word.
+export const PACKAGE_UNITS = ['can', 'jar', 'bottle', 'bag', 'box', 'packet', 'package', 'carton', 'stick'];
+export const FUZZY_UNITS = ['clove', 'slice', 'bunch', 'head', 'sprig', 'pinch', 'dash', 'handful', 'piece', 'fillet', 'rib', 'stalk'];
+export const COUNTISH = [...PACKAGE_UNITS, ...FUZZY_UNITS];
+export const isCountish = (unit) => COUNTISH.indexOf(unit) >= 0;
+const COUNTISH_ALIASES = { pkg: 'package', pkgs: 'package', pk: 'package', pack: 'package', pkt: 'packet', pc: 'piece', pcs: 'piece', filet: 'fillet', tin: 'can' };
+COUNTISH.forEach((u) => { COUNTISH_ALIASES[u] = u; });
+
+// "2 cloves", "3 pinches", "2 boxes" after an amount above 1: a simple plural for package and fuzzy units only. fl oz is spelled out,
+// every other unit stays as it is ("2 cup", a typed "Shell").
+export function unitWord(unit, n) {
+  const u = unit == null ? '' : String(unit);
+  if (u === 'floz') return 'fl oz';
+  if (isCountish(u) && Number(n) > 1) return u + (/(s|sh|ch|x|z)$/.test(u) ? 'es' : 's');
+  return u;
+}
+
 // Free text unit to the server's canonical name: "Cups" -> cup, "tablespoons" -> tbsp, "fl oz" -> floz, "grams" -> g,
 // "%" -> pct. Count words come back lowercase and singular ("cloves" -> clove). Empty gives ''.
 const UNIT_ALIASES = {
@@ -110,6 +128,7 @@ const UNIT_ALIASES = {
   floz: 'floz', 'fl oz': 'floz', 'fluid ounce': 'floz', 'fluid oz': 'floz', cup: 'cup', c: 'cup',
   tbsp: 'tbsp', tbs: 'tbsp', tbl: 'tbsp', tablespoon: 'tbsp', tsp: 'tsp', teaspoon: 'tsp',
   serving: SERVING_UNIT, svg: SERVING_UNIT, '%': PCT_UNIT, pct: PCT_UNIT, percent: PCT_UNIT, '% of serving': PCT_UNIT,
+  ...COUNTISH_ALIASES,
 };
 export function canonUnit(unit) {
   const raw = String(unit == null ? '' : unit).trim();
@@ -123,12 +142,14 @@ export function canonUnit(unit) {
 }
 
 // ---------- custom units ----------
-// A unit control offers the known units and Custom, which reveals a text box for the user's own word (pinch, can, clove, to taste).
+// A unit control offers the known units and Custom, which reveals a text box for the user's own word (shell, scoop, to taste).
 // Empty stays blank. Typed units are kept as typed.
 export const CUSTOM_UNIT = '__custom__';
 export const CUSTOM_UNIT_LABEL = 'Custom';
 export const CUSTOM_UNIT_MAX = 30;
-export const CUSTOM_UNIT_HINT = 'pinch, can, clove';
+export const CUSTOM_UNIT_HINT = 'shell, scoop, splash';
+// The picker's note for a typed unit on a food whose label is a measure: no count weight is known (issue #45).
+export const CUSTOM_NO_WEIGHT = sentence('No standard weight found. Each counts as one label serving');
 // A typed unit as it is saved: control characters dropped, spaces tidied, at most CUSTOM_UNIT_MAX characters.
 export function cleanUnitText(text) {
   return String(text == null ? '' : text).replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, CUSTOM_UNIT_MAX).trim();
@@ -140,7 +161,7 @@ export function unitToSave(text) {
   const c = canonUnit(t);
   return KNOWN_UNITS.indexOf(c) >= 0 ? c : t;
 }
-const KNOWN_UNITS = ['g', 'kg', 'oz', 'lb', 'ml', 'l', 'floz', 'cup', 'tbsp', 'tsp', SERVING_UNIT, PCT_UNIT, 'count'];
+const KNOWN_UNITS = ['g', 'kg', 'oz', 'lb', 'ml', 'l', 'floz', 'cup', 'tbsp', 'tsp', SERVING_UNIT, PCT_UNIT, 'count', ...COUNTISH];
 // The choices of a unit select from food.units: the blank unit is left out (Custom replaces it) and count shows lowercase.
 export function unitChoices(units) {
   return (units || []).filter((u) => u.unit !== '').map((u) => ({ value: u.unit, label: u.unit === 'count' ? 'count' : u.label, estimated: !!u.estimated }));
@@ -189,7 +210,7 @@ export function amountText(amount, unit, format) {
   if (unit === SERVING) {
     return servingText(n, format) + (n > 1 ? ' servings' : ' serving');
   }
-  return (qtyText(n, unit, format) + ' ' + (unit || '')).trim();  // a blank unit shows the bare amount
+  return (qtyText(n, unit, format) + ' ' + unitWord(unit, n)).trim();  // a blank unit shows the bare amount; 2 cloves, 1 clove
 }
 
 // ---------- picker math ----------
@@ -600,31 +621,123 @@ export function gramsFor(units, amount, unit) {
 const MASS_UNITS = ['g', 'kg', 'oz', 'lb'];
 const VOLUME_UNITS = ['ml', 'l', 'floz', 'cup', 'tbsp', 'tsp'];
 // Line units that only say "this many of the thing", like a count without a unit ("2 eggs").
-const PLAIN_COUNTS = ['count', 'piece', 'each', 'whole', 'unit', 'item', 'large', 'medium', 'small'];
+export const PLAIN_COUNTS = ['count', 'piece', 'each', 'whole', 'unit', 'item', 'large', 'medium', 'small'];
+
+// The size printed on one package at the start of a line, read like units.printed_size on the server: "1 (15 oz) can black beans",
+// "2 (8-ounce) packages cream cheese", "1 stick (113 g) butter", "1 can (14.5 oz) tomatoes", "1 15-oz can". Returns
+// { amount, unit, size, sizeUnit, rest } or null (a range, a missing number or a size unit that is not a weight or volume).
+const P_NUM = '\\d+(?:[.,]\\d+)?(?:\\s+\\d+/\\d+)?|\\d+/\\d+';
+const P_SIZE_UNIT = 'fl\\.?\\s*oz\\.?|fluid\\s+ounces?|ounces?|oz\\.?|pounds?|lbs?\\.?|grams?|g|kilograms?|kg|milliliters?|millilitres?|ml|liters?|litres?|l';
+const P_PKG = [...new Set([...COUNTISH.flatMap((u) => [u, u + 's', u + 'es']), 'pkg', 'pkgs', 'pkt', 'tin', 'tins'])].sort((x, y) => y.length - x.length).join('|');
+const P_SIZE = '(' + P_NUM + ')\\s*-?\\s*(' + P_SIZE_UNIT + ')';
+const PRINTED = [  // [pattern, index of count, size, size unit, package]
+  [new RegExp('^\\s*(' + P_NUM + ')\\s*\\(\\s*(?:about\\s+)?' + P_SIZE + '\\s*\\)\\s*(' + P_PKG + ')\\b', 'i'), 1, 2, 3, 4],
+  [new RegExp('^\\s*(' + P_NUM + ')\\s+(' + P_PKG + ')\\s*\\(\\s*(?:about\\s+)?' + P_SIZE + '\\s*\\)', 'i'), 1, 3, 4, 2],
+  [new RegExp('^\\s*(' + P_NUM + ')\\s+' + P_SIZE + '\\s+(' + P_PKG + ')\\b', 'i'), 1, 2, 3, 4],
+];
+const SIZE_UNITS = ['g', 'kg', 'oz', 'lb', 'ml', 'l', 'floz'];
+function sizeNumber(t) {
+  let total = 0;
+  for (const part of String(t).replace(',', '.').trim().split(/\s+/)) {
+    const f = /^(\d+)\/(\d+)$/.exec(part);
+    const v = f ? Number(f[1]) / Number(f[2]) : Number(part);
+    if (!Number.isFinite(v)) return null;
+    total += v;
+  }
+  return total > 0 ? total : null;
+}
+export function printedSize(text) {
+  const t = String(text == null ? '' : text);
+  for (const [re, n, sz, su, pk] of PRINTED) {
+    const m = re.exec(t);
+    if (!m) continue;
+    const amount = sizeNumber(m[n]);
+    const size = sizeNumber(m[sz]);
+    const sizeUnit = canonUnit(m[su]);
+    const unit = canonUnit(m[pk]);
+    if (amount == null || size == null || SIZE_UNITS.indexOf(sizeUnit) < 0 || !isCountish(unit)) return null;
+    return { amount, unit, size, sizeUnit, rest: t.slice(m[0].length).replace(/^[\s,]+|[\s,]+$/g, '') };
+  }
+  return null;
+}
+// "15 oz", "113 g", "12 fl oz".
+export const sizeText = (size, unit) => fmtAmount(size) + ' ' + unitWord(unit, 1);
+
+// A unit that only counts things: blank, count, a plain count word (piece, large), a package or fuzzy unit, or a typed word.
+const isCountlike = (u) => !u || PLAIN_COUNTS.indexOf(u) >= 0 || isCountish(u) || KNOWN_UNITS.indexOf(u) < 0;
+const isMeasure = (u) => MASS_UNITS.indexOf(u) >= 0 || VOLUME_UNITS.indexOf(u) >= 0 || u === SERVING || u === PCT;
 
 // Amount and unit for a recipe line matched to a food without the picker. Mirrors units.match_amount on the server.
-// units: food.units from GET /api/foods/{id} (first entry is the label unit, estimated marks a 1 g per ml guess).
-// Returns { amount, unit, check } (plus estimated: true when only the 1 g per ml guess reaches the unit) or null when the line
+// units: food.units from GET /api/foods/{id} (first entry is the label unit, estimated marks a density estimate).
+// pkg: { amount, unit } printed on one package (src.pkg_amount, src.pkg_unit) or null.
+// Returns { amount, unit, check } (plus estimated: true for a density estimate, reason when check is true) or null when the line
 // has no amount (salt to taste).
-// - The line's own unit when the food reaches it at all, as the picker offers it (an estimated one is flagged estimated): same unit, weight to weight (g, oz, lb, kg),
-//   volume to volume (ml, l, tsp, tbsp, cup, fl oz), and between the two through the food's own density or the 1 g per ml guess.
-// - A plain count (no unit, piece, each) uses the label's count word when it has one ("2 eggs" -> 2 egg), else servings.
-// - A typed unit that is not a known measure (can, clove, pinch) keeps its word, counts like count, and needs no check.
-// - A known measure the food cannot reach: one label serving with check true, so the row asks the user to confirm.
-export function matchAmount(units, amount, unit) {
+// - A printed size makes the line amount x size in that unit and nothing else, so it is exact and never counted twice.
+// - The line's own unit when the food reaches it at all, as the picker offers it: same unit, weight to weight, volume to volume,
+//   and between the two through the food's own density or an estimate (flagged estimated).
+// - A count-like unit converts only where one thing has a known weight: a plain count (no unit, piece, each) uses the label's count
+//   word ("2 eggs" -> 2 egg), a package or fuzzy unit only the label's own word, a typed word counts like the label's word.
+//   Anything else is one label serving with check true and reason no_weight (no_size for a package unit), never label servings.
+// - A known measure the food cannot reach: one label serving with check true and reason no_convert.
+export function matchAmount(units, amount, unit, pkg) {
   const a = typeof amount === 'number' ? amount : parseAmount(amount);
   if (a == null || !(a > 0) || !units || !units.length) return null;
   const label = units[0];
   const typed = cleanUnitText(unit);
   const u = canonUnit(typed);
-  // A typed unit no measure knows (can, clove, pinch) keeps its word and counts like count: no conversion, no Check Amount.
-  if (u && PLAIN_COUNTS.indexOf(u) < 0 && KNOWN_UNITS.indexOf(u) < 0 && label.unit !== u) return { amount: a, unit: typed, check: false };
-  if (u && PLAIN_COUNTS.indexOf(u) < 0) {
-    const hit = units.find((x) => x.unit === u);
-    return hit ? { amount: a, unit: u, check: false, ...(hit.estimated ? { estimated: true } : {}) } : { amount: label.default_amount, unit: label.unit, check: true };
+  const size = pkg && Number(pkg.amount) > 0 && SIZE_UNITS.indexOf(canonUnit(pkg.unit)) >= 0 ? pkg : null;
+  if (size && isCountlike(u)) return matchAmount(units, Math.round(a * Number(size.amount) * 1e6) / 1e6, canonUnit(size.unit));
+  const check = (reason) => ({ amount: label.default_amount, unit: label.unit, check: true, reason });
+  if (isCountlike(u)) {
+    if (u && u === label.unit) return { amount: a, unit: label.unit, check: false };
+    if (isMeasure(label.unit)) return check(PACKAGE_UNITS.indexOf(u) >= 0 ? 'no_size' : 'no_weight');
+    if (isCountish(u) && PLAIN_COUNTS.indexOf(u) < 0) return check(PACKAGE_UNITS.indexOf(u) >= 0 ? 'no_size' : 'no_weight');
+    if (u && KNOWN_UNITS.indexOf(u) < 0 && PLAIN_COUNTS.indexOf(u) < 0) return { amount: a, unit: typed, check: false };
+    return { amount: a, unit: label.unit, check: false };
   }
-  const count = MASS_UNITS.indexOf(label.unit) < 0 && VOLUME_UNITS.indexOf(label.unit) < 0 && label.unit !== SERVING && label.unit !== PCT;
-  return { amount: a, unit: count ? label.unit : SERVING, check: false };
+  const hit = units.find((x) => x.unit === u);
+  return hit ? { amount: a, unit: u, check: false, ...(hit.estimated ? { estimated: true } : {}) } : check('no_convert');
+}
+
+// ---------- why an amount needs a check (issue #45) ----------
+// reason: no_weight (a count or fuzzy unit with no known weight on the food), no_size (a package unit with no printed size),
+// no_convert (a measure the food cannot reach), no_amount (the line gives none), estimated (counted, but from an estimate;
+// source density, guess or claude). Each reads as a short clause after the ingredient's name.
+export const ESTIMATE_SOURCES = { density: 'a typical density for this food', guess: '1 g per ml, no density known', claude: 'Claude' };
+export function checkReasonText(reason, unit, source) {
+  const u = unitWord(unit, 1) || 'this unit';
+  if (reason === 'no_weight') return 'no standard weight for ' + u + ', enter grams';
+  if (reason === 'no_size') return u + ' size not printed, pick a size or enter grams';
+  if (reason === 'no_convert') return 'no ' + u + ' weight for this food';
+  if (reason === 'no_amount') return 'amount missing, enter one';
+  if (reason === 'estimated') return 'estimated from a typical weight, source ' + (ESTIMATE_SOURCES[source] || ESTIMATE_SOURCES.guess);
+  return 'amount could not be worked out, enter one';
+}
+const capFirst = (t) => (t ? t.charAt(0).toUpperCase() + t.slice(1) : t);
+// The reason on its own line: "No standard weight for clove, enter grams".
+export const checkReasonLine = (reason, unit, source) => capFirst(checkReasonText(reason, unit, source));
+// The reason with the ingredient: "Garlic: no standard weight for clove, enter grams".
+export const checkNameLine = (name, reason, unit, source) => capFirst(String(name || 'Ingredient').trim()) + ': ' + checkReasonText(reason, unit, source);
+
+// The rows of a saved recipe that need a check, then the ones counted from an estimate, each { id, check, text }. The unit named is
+// the recipe line's own (clove, can, cup).
+export function checkList(meal) {
+  const out = [];
+  const name = (it) => (it.src && it.src.name) || (it.food && it.food.name) || 'Ingredient';
+  const lineUnit = (it) => (it.src && it.src.unit) || it.unit;
+  const items = ((meal && meal.items) || []).filter((it) => !it.skipped);
+  items.filter((it) => it.check).forEach((it) => out.push({ id: it.id, check: true, text: checkNameLine(name(it), it.check_reason || null, lineUnit(it)) }));
+  items.filter((it) => !it.check && it.food && it.estimated).forEach((it) => out.push({ id: it.id, check: false,
+    text: checkNameLine(name(it), 'estimated', lineUnit(it), it.estimate_source) }));
+  return out;
+}
+// "2 ingredients need a check", "1 ingredient needs a check", or "1 amount is estimated" when only estimates are left; '' for none.
+export function checkSummary(list) {
+  const n = (list || []).filter((x) => x.check).length;
+  const e = (list || []).length - n;
+  if (n) return n === 1 ? '1 ingredient needs a check' : n + ' ingredients need a check';
+  if (e) return e === 1 ? '1 amount is estimated' : e + ' amounts are estimated';
+  return '';
 }
 
 // "1 cup, 125 g": the matched amount, plus grams when the server knows them and the unit is not grams already.
@@ -1044,7 +1157,7 @@ export function cookServingsNext(shown, base, dir) {
 // Every row shows, matched or not, because it is still part of the dish. Returns { text, scaled }.
 export function cookIngredient(it, factor = 1) {
   const src = it && it.src;
-  const join = (amount, unit, name, note) => [qtyText(amount, unit), unit === 'count' ? '' : unit, name].filter((x) => x !== '' && x != null).join(' ') + (note ? ', ' + note : '');
+  const join = (amount, unit, name, note) => [qtyText(amount, unit), unit === 'count' ? '' : unitWord(unit, amount), name].filter((x) => x !== '' && x != null).join(' ') + (note ? ', ' + note : '');
   if (src && src.amount != null && Number(src.amount) > 0 && src.name) {
     return { text: join(Number(src.amount) * factor, src.unit || '', src.name, src.note), scaled: true };
   }

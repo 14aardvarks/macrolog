@@ -96,15 +96,17 @@ scale(food, amount, unit) -> {"servings","estimated","kcal","carbs","protein","f
 default_pick(food) -> (amount, unit)         # where the picker starts for a food not logged yet: the package's own serving, see below
 density(food) -> g per ml|None               # typical density by name keywords (GRAMS_PER_CUP), None when no keyword matches
 grams(food, amount, unit) -> float|None      # grams (0.1) when the weight is known exactly; None for estimates, unknown or unit g
-match_amount(food, amount, unit) -> {"amount","unit","check","estimated"?: true}|None   # Match Ingredients: amount from a recipe line, see below
+match_amount(food, amount, unit, custom=True, pkg=None) -> {"amount","unit","check","estimated"?: true,"reason"?}|None   # Match Ingredients, see below
 ```
 match_amount (same rule as util.js `matchAmount` on the client): None when the line has no amount. The line's own unit when the
 food reaches it at all, as the picker offers it: same unit, weight to weight, volume to volume, weight and volume through the food's own
 serving_g and serving_ml, or the label's count word. A unit reachable only through the 1 g per ml estimate (a cup of a food known only by
 weight) is used too and the result adds "estimated": true; the row shows a muted "Estimated Conversion" tag (item.estimated from the server)
-and counts in the totals, with the same math as the picker. A plain count (no unit, piece, each, whole, large...) uses the label's count word,
-else label servings. A typed unit that is not a known measure (can, clove, pinch, to taste) keeps its word, counts like count and never needs a check. Only a
-known measure the food cannot reach at all (a cup of a food with no weight and no volume) gives one label serving with check true.
+and counts in the totals, with the same math as the picker. Count-like units (no unit, count, piece, each, a package or fuzzy unit, a typed word)
+convert only where one thing has a known weight (issue #45): a plain count uses the label's count word, a package or fuzzy unit only the label's own
+word (2 cloves on a "1 clove (3 g)" label), a typed word counts like the label's word. On a measure label (100 g, 1 cup, 1 serving) they give one
+label serving with check true and reason no_weight (no_size for a package unit), never label servings. A printed package size (pkg) makes the
+line amount x size and nothing else. A known measure the food cannot reach at all gives one label serving with check true and reason no_convert.
 Conversion rules: same-family conversions are exact (US customary: 1 cup = 236.588 ml, 1 tbsp = 14.7868 ml, 1 tsp = 4.92892 ml,
 1 floz = 29.5735 ml, 1 oz = 28.3495 g, 1 lb = 453.592 g). Mass to volume uses density derived from the food's own
 serving_g and serving_ml when both exist. If the label has only one of them, the missing family is reachable only as an
@@ -239,7 +241,7 @@ weight or volume unit (core.YIELD_UNITS: g kg oz lb ml l floz cup tbsp tsp), the
 whole = 100, always), and with a yield its unit first, then the other units of the same family converted exactly) and
 `ingredient_grams` (the total weight of a complete recipe when every counted row has an exact weight, a weight unit or the food's own
 serving_g, else null; the client offers it as Use Total of Ingredients).
-Each meal item carries id, src, skipped, matched, check and grams (unmatched rows have food null and null nutrients); each meal carries servings,
+Each meal item carries id, src (with pkg_amount and pkg_unit), skipped, matched, check, check_reason, estimate_source and grams (unmatched rows have food null and null nutrients); each meal carries servings,
 totals and per_serving (matched, not skipped rows; a micronutrient is null when no counted row knows it), matched, needed
 (rows not skipped), skipped, checks, steps and complete.
 Check Amount: meal_items.needs_check (INTEGER NOT NULL DEFAULT 0, added in place) marks a row whose food is attached but whose amount
@@ -847,7 +849,7 @@ POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log i
 
 - Issue #36 (v62): the Count unit shows lowercase, "count", in every unit selector and everywhere it is displayed (units.LABELS, util.js
   unitChoices, IMPORT_UNITS). The None choice is gone: every unit control (import review row, Match Ingredients amount editor, picker) ends
-  with Custom, which reveals a text box ("Your Unit", placeholder "pinch, can, clove") for the user's own unit; empty stays blank. dom.js
+  with Custom, which reveals a text box ("Your Unit", placeholder "shell, scoop, splash" since v71) for the user's own unit; empty stays blank. dom.js
   `unitControl` is a select plus that box and reads like a select (.value, change event); the picker wheel has a Custom row and a "Your Unit"
   box under it. Typed units are saved as typed (`units.unit_or_blank`, util.js `unitToSave`): trimmed, spaces tidied, control characters
   dropped, at most 30 characters (units.MAX_UNIT; the server answers 400 past it), known words and aliases still become their canonical
@@ -891,6 +893,40 @@ POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log i
     unit word); the Cooking view (`cookIngredient`) and recipe log parts use it. The stored unit stays count.
   - Tests: tests/test_count_default.py (every normalization path, three import routes, both match routes), tests/ui/recipeimport.test.mjs and
     tests/ui/units.test.mjs. Shell cache macrolog-shell-v70.
+  - Changed by issue #45 (v71): package and fuzzy unit words are known units now and no longer join the name.
+
+## Package and Fuzzy Units, Printed Sizes (v71, issue #45 steps 1 to 3)
+
+- Step 1, no silent label servings: a count (blank, count, a plain count word, a package or fuzzy unit, a typed word) on a food whose label is a
+  measure has no known weight. `units.match_amount` and util.js `matchAmount` (kept in sync) return one label serving with check true and a reason;
+  `units.grams` is None for it (`units.count_weight`), and every Check Amount row and proposal has grams None. `available_units` offers count only
+  on a count word label, so the picker no longer offers count for a gram or cup label; a typed Custom unit there shows "No standard weight found.
+  Each counts as one label serving." `core.check_amount_unit` still accepts every count-like unit (`units.is_countlike`), so older entries and
+  recipe rows keep working with their old meaning (one label serving each). Estimated conversions stay tagged Estimated Conversion.
+- Step 2, vocabulary: `units.PACKAGE_UNITS` (can jar bottle bag box packet package carton stick) and `units.FUZZY_UNITS` (clove slice bunch head
+  sprig pinch dash handful piece fillet rib stalk), with plurals and aliases (pkg, pkt, tin, pcs, filet), are in `units.KNOWN`. `line_unit` keeps
+  them as the unit and never changes the name; unknown words still become count. `core.import_row` stores known units canonical ("Cloves" is
+  clove). `units.unit_word` and util.js `unitWord` give the simple plural above 1 ("2 cloves garlic", "3 pinches"), used by amountText,
+  ingredientText, rowText, cookIngredient and import_row's built text. `recipe_ai.UNIT_NAMES` and the prompts list them (prompt text only, the
+  strict schema keeps plain strings); `clean_recipe` enforces through `line_unit`. The review unit select (IMPORT_UNITS) offers them.
+  `ingredients.py` strips them from name keys, and Search ranks with and without them (`ingredients.core_words`), so "garlic cloves" matches Garlic.
+  `ingredients.singular` also turns ches, shes, xes and sses into the singular (peaches, boxes).
+- Step 3, printed sizes: `units.printed_size(text)` (util.js `printedSize`) reads "1 (15 oz) can", "2 (8-ounce) packages", "1 stick (113 g)",
+  "1 can (14.5 oz)" and "1 15-oz can" into count, package unit, size and size unit (g kg oz lb ml l floz). Ranges, missing numbers and other
+  units give None. `clean_recipe` and the local splitter keep the package count and unit, put the size in the note ("15 oz, rinsed") and carry
+  pkg_amount and pkg_unit. meal_items.item_pkg_amount (REAL) and item_pkg_unit (TEXT), nullable, are added in place (safe to run again) and copied by
+  Duplicate. POST /api/meals/import and add item accept pkg_amount and pkg_unit (both, positive, at most 100000, a weight or volume unit; kept only on
+  a count-like unit with an amount); when the keys are absent the size is read from text. `match_amount(..., pkg=(size, unit))` turns the line
+  into amount x size in that unit before anything else, so the weight is exact and never counted twice; `fit_amount` and the client's autoMatch pass it.
+- Reasons: match_amount's reason is no_weight, no_size or no_convert; `core.check_reason` adds no_amount; item_dict carries `check_reason` and, for
+  an estimated row, `estimate_source` (density, guess); proposals carry check_reason, estimated and estimate_source (claude when Claude gave the
+  weight for a line with none, with a warning). util.js `checkReasonText` words each one ("no standard weight for clove, enter grams", "can size not
+  printed, pick a size or enter grams", "no cup weight for this food", "amount missing, enter one", "estimated from a typical weight, source ...").
+- Client: `checkList` and `checkSummary` build the header note ("2 ingredients need a check", the first reason visible, the rest in a collapsed list,
+  dom.js `checkBlock`) on Match Ingredients, the recipe screen and the recipe log screen. Each Check Amount row shows its reason under the chip, and the
+  amount editor has Enter Grams. The review screen flags a package or fuzzy unit with no printed size (`reviewFlag`) with Use Grams (`useGrams`),
+  and shows "15 oz per can, exact" (`pkgNote`) for a printed size. Check rows count zero until confirmed, as before.
+- Tests: tests/test_package_units.py, tests/ui/packageunits.test.mjs, and the count tests updated. Shell cache macrolog-shell-v71.
 
 ## Photos on Foods and Recipes (v68)
 

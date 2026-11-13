@@ -16,17 +16,29 @@ COUNT_STEP = 0.5
 SERVING, PCT = "serving", "pct"
 PSEUDO = (SERVING, PCT)
 STEPS.update({SERVING: 0.25, PCT: 5})
-# Count is a plain "this many of the thing" unit and BLANK is no unit at all (stored as ""). Both mean one label serving per 1 when the label
-# is not a count word, else one of the label's count word (2 slice per serving on a "2 slice" label). Count is offered for every food, shown
-# lowercase. A custom unit is any other typed word (pinch, can, clove, to taste): kept as typed (MAX_UNIT characters, no control characters)
-# and treated like Count, never converted.
+# Count is a plain "this many of the thing" unit and BLANK is no unit at all (stored as ""). Both mean one of the label's count word
+# (2 slice per serving on a "2 slice" label). On a label that is a measure (100 g, 1 cup, 1 serving) a count has no known weight,
+# so a recipe line never converts it (match_amount asks for a check) and the picker does not offer it.
+# Package units (can, jar, stick) and fuzzy units (clove, slice, pinch) are structured units too: kept on the line, shown with a
+# plural ("2 cloves"), converted only through a printed size ("1 (15 oz) can") or the label's own word ("1 clove (3 g)").
+# A custom unit is any other typed word (to taste, shell): kept as typed (MAX_UNIT characters, no control characters) and treated
+# like Count, never converted.
 COUNT, BLANK = "count", ""
 MAX_UNIT = 30
+PACKAGE_UNITS = ("can", "jar", "bottle", "bag", "box", "packet", "package", "carton", "stick")
+FUZZY_UNITS = ("clove", "slice", "bunch", "head", "sprig", "pinch", "dash", "handful", "piece", "fillet", "rib", "stalk")
+COUNTISH = (*PACKAGE_UNITS, *FUZZY_UNITS)
 LABELS = {"floz": "fl oz", SERVING: "serving", PCT: "% of serving", COUNT: "count"}
 PSEUDO_DEFAULT = {SERVING: 1.0, PCT: 100.0}
 # Display order for the non-label units offered in the picker.
 ORDER = ["g", "oz", "lb", "kg", "ml", "floz", "cup", "tbsp", "tsp", "l"]
-KNOWN = {*MASS, *VOLUME, *PSEUDO, COUNT}
+KNOWN = {*MASS, *VOLUME, *PSEUDO, COUNT, *COUNTISH}
+# Line units that only say "this many of the thing", for counts without a unit such as "2 eggs".
+PLAIN_COUNTS = (COUNT, "piece", "each", "whole", "unit", "item", "large", "medium", "small")
+# Why match_amount asks for a check: a count or fuzzy unit with no known weight on the food (2 cloves of a 100 g label), a package
+# unit with no printed size (1 can), a measure the food cannot reach (a cup of a food with no volume and no weight). no_amount is
+# core's for a line with no amount. The client words each one (util.js checkReasonText).
+NO_WEIGHT, NO_SIZE, NO_CONVERT, NO_AMOUNT = "no_weight", "no_size", "no_convert", "no_amount"
 
 _ALIASES = {
     "g": "g", "gm": "g", "gram": "g", "gramme": "g",
@@ -41,6 +53,9 @@ _ALIASES = {
     "%": PCT, "pct": PCT, "percent": PCT, "percentage": PCT,
     "tbsp": "tbsp", "tbs": "tbsp", "tbl": "tbsp", "tablespoon": "tbsp", "tablespoonful": "tbsp",
     "tsp": "tsp", "teaspoon": "tsp", "teaspoonful": "tsp",
+    "pkg": "package", "pkgs": "package", "pk": "package", "pack": "package", "pkt": "packet", "pc": "piece", "pcs": "piece",
+    "filet": "fillet", "tin": "can",
+    **{u: u for u in COUNTISH},
 }
 
 
@@ -81,7 +96,7 @@ def clean_unit_text(text):
 
 
 def is_custom(unit):
-    """True for a typed unit that is neither blank, count nor a measure the server knows (pinch, can, clove)."""
+    """True for a typed unit that is neither blank, count, a package or fuzzy unit nor a measure the server knows (to taste, shell)."""
     return bool(unit) and unit not in KNOWN
 
 
@@ -111,8 +126,8 @@ def taste_line(text, note, unit, name):
 
 
 def known_unit(text):
-    """The canonical known unit for text ("Cups" -> cup, "tablespoons" -> tbsp, "Count" -> count), else None for blank, none and
-    any word the table does not know (clove, pinch, can)."""
+    """The canonical known unit for text ("Cups" -> cup, "tablespoons" -> tbsp, "Cloves" -> clove, "Count" -> count), else None
+    for blank, none and any word the table does not know (shell, to taste)."""
     try:
         u = unit_or_blank(text)
     except ValueError:
@@ -120,37 +135,32 @@ def known_unit(text):
     return u if u in KNOWN else None
 
 
-def _word_for(word, amount):
-    """A unit word as part of a name: plural for an amount other than 1 (clove -> cloves, pinch -> pinches), else singular."""
-    w = word.strip().lower()
-    if amount == 1:
-        return _singular(w) if w.endswith("s") else w
-    if w.endswith("s"):
-        return w
-    return w + ("es" if re.search(r"(s|sh|ch|x|z)$", w) else "s")
+def unit_word(unit, amount):
+    """A unit as a word after an amount: package and fuzzy units take a simple plural above 1 (2 cloves, 3 pinches, 2 boxes),
+    fl oz is spelled out, every other unit as it is."""
+    u = str(unit or "")
+    if u == "floz":
+        return "fl oz"
+    if u in COUNTISH and _pos(amount) is not None and float(amount) > 1:
+        return u + ("es" if re.search(r"(s|sh|ch|x|z)$", u) else "s")
+    return u
+
+
+def is_countlike(unit):
+    """True for a unit that only counts things: blank, count, a plain count word (piece, large), a package or fuzzy unit, or a typed word."""
+    u = unit_or_blank(unit) if unit not in (None, BLANK) else BLANK
+    return u in (BLANK, COUNT) or u in COUNTISH or u in PLAIN_COUNTS or is_custom(u)
 
 
 def line_unit(amount, unit, name=""):
     """(unit, name) for a recipe line that comes from Claude, a web page or Search, never a custom unit.
-    No amount: no unit (None), the line stays plain text ("salt to taste"). An amount with a known unit or alias: the canonical unit.
-    An amount with no unit: count (3 carrots). An amount with a word the table does not know (clove, can, slice): count, and the word
-    moves into the name ("garlic" -> "garlic cloves") so nothing is lost. Only the user typing a unit by hand keeps a custom one."""
+    No amount: no unit (None), the line stays plain text ("salt to taste"). An amount with a known unit or alias: the canonical unit,
+    package and fuzzy units included (2 cloves garlic stays clove and garlic). An amount with no unit or a word the table does not
+    know: count, the name as it is."""
     name = str(name or "").strip()
     if _pos(amount) is None:
         return None, name
-    known = known_unit(unit)
-    if known:
-        return known, name
-    try:
-        word = clean_unit_text(unit)
-    except ValueError:
-        word = " ".join(str(unit).split())[:MAX_UNIT]
-    if word.lower() in ("", "-", "none"):
-        return COUNT, name
-    stem = _singular(word.lower())
-    if not re.search(r"\b" + re.escape(stem), name.lower()):
-        name = f"{name} {_word_for(word, float(amount))}".strip()
-    return COUNT, name
+    return known_unit(unit) or COUNT, name
 
 
 def same_word(unit, label_unit):
@@ -264,7 +274,7 @@ def _convert(food, amount, unit):
     label_unit, label_amount, g, ge, ml, mle = _profile(food)
     if unit == label_unit or same_word(unit, label_unit):
         return amount / label_amount, False
-    if unit in (COUNT, BLANK) or is_custom(unit):  # a plain count: the label's own count word when it has one, else label servings
+    if unit in (COUNT, BLANK) or unit in COUNTISH or is_custom(unit):  # a plain count: the label's count word, else label servings
         return (amount, False) if _is_measure(label_unit) else (amount / label_amount, False)
     if unit == SERVING:
         return amount, False
@@ -302,7 +312,7 @@ def available_units(food):
             table = MASS if unit in MASS else VOLUME
             x = per / table[unit]
             out.append(entry(unit, round(x, 2) or float(f"{x:.2g}"), est))
-    if label_unit != COUNT:
+    if label_unit != COUNT and not _is_measure(label_unit):  # a count only where one thing has a known weight (a count word label)
         out.append(entry(COUNT, 1.0, False))
     return out
 
@@ -361,40 +371,115 @@ def scale(food, amount, unit):
     return res
 
 
+def count_weight(label_unit, unit):
+    """True when a count-like unit (see is_countlike) has a known weight on a food with this label unit. A plain count (blank, count,
+    piece, each) or a typed word needs a count word label (1 egg, 2 slice, 1 piece (40 g)); a package or fuzzy unit needs the label's
+    own word (2 cloves on a 1 clove (3 g) label). A measure label (100 g, 1 cup, 1 serving) knows no count weight."""
+    if _is_measure(label_unit):
+        return False
+    if unit in COUNTISH and unit not in PLAIN_COUNTS:
+        return unit == label_unit
+    return True
+
+
 def grams(food, amount, unit):
-    """Grams in amount of unit, rounded to 0.1, or None when the food's weight is unknown or only estimated,
-    or when the amount is already in grams."""
+    """Grams in amount of unit, rounded to 0.1, or None when the food's weight is unknown or only estimated, when the amount is
+    already in grams, or when a count-like unit has no known weight on this food (2 cloves of a 100 g label are never 200 g)."""
     try:
         u = unit_or_blank(unit)
         servings, estimated = _convert(food, amount, u)
-        g, ge = _profile(food)[2:4]
+        label_unit, _, g, ge = _profile(food)[:4]
     except ValueError:
         return None
-    if is_custom(u) and not same_word(u, _profile(food)[0]):  # a typed unit is only counted like Count, so its weight is not known
+    if is_custom(u) and not same_word(u, label_unit):  # a typed unit is only counted like Count, so its weight is not known
+        return None
+    if is_countlike(u) and not same_word(u, label_unit) and not count_weight(label_unit, u):
         return None
     if u == "g" or not g or ge or estimated:
         return None
     return round(servings * g, 1)
 
 
-# Line units that only say "this many of the thing", for counts without a unit such as "2 eggs".
-PLAIN_COUNTS = (COUNT, "piece", "each", "whole", "unit", "item", "large", "medium", "small")
+# ---------- printed package sizes ----------
+# "1 (15 oz) can black beans", "2 (8-ounce) packages cream cheese", "1 stick (113 g) butter", "1 can (14.5 oz) tomatoes" and
+# "1 15-oz can": the size printed on one package is an exact weight or volume, so grams = count x printed size. A range
+# (14 to 15 oz), a missing number or an unknown size unit is not a printed size: the line falls back to Check Amount.
+_NUM = r"\d+(?:[.,]\d+)?(?:\s+\d+/\d+)?|\d+/\d+"
+_SIZE_UNIT = r"fl\.?\s*oz\.?|fluid\s+ounces?|ounces?|oz\.?|pounds?|lbs?\.?|grams?|g|kilograms?|kg|milliliters?|millilitres?|ml|liters?|litres?|l"
+_PKG = "|".join(sorted({w for u in COUNTISH for w in (u, u + "s", u + "es")} | {"pkg", "pkgs", "pkt", "tin", "tins"}, key=len, reverse=True))
+_SIZE = rf"(?P<size>{_NUM})\s*-?\s*(?P<su>{_SIZE_UNIT})"
+_PRINTED = [
+    re.compile(rf"^\s*(?P<n>{_NUM})\s*\(\s*(?:about\s+)?{_SIZE}\s*\)\s*(?P<pkg>{_PKG})\b", re.I),  # 1 (15 oz) can, 2 (8-ounce) packages
+    re.compile(rf"^\s*(?P<n>{_NUM})\s+(?P<pkg>{_PKG})\s*\(\s*(?:about\s+)?{_SIZE}\s*\)", re.I),  # 1 stick (113 g), 1 can (14.5 oz)
+    re.compile(rf"^\s*(?P<n>{_NUM})\s+{_SIZE}\s+(?P<pkg>{_PKG})\b", re.I),  # 1 15-oz can, 2 8 ounce packages
+]
 
 
-def match_amount(food, amount, unit, custom=True):
+def _number(text):
+    t = str(text).replace(",", ".").strip()
+    parts = t.split()
+    try:
+        total = 0.0
+        for part in parts:
+            if "/" in part:
+                n, d = part.split("/")
+                total += float(n) / float(d)
+            else:
+                total += float(part)
+    except (ValueError, ZeroDivisionError):
+        return None
+    return _pos(total)
+
+
+def printed_size(text):
+    """A printed package size at the start of an ingredient line: {"amount": packages, "unit": package or fuzzy unit,
+    "size": per package, "size_unit": g, kg, oz, lb, ml, l or floz, "rest": the line after it}, else None."""
+    t = str(text or "")
+    for pat in _PRINTED:
+        m = pat.match(t)
+        if not m:
+            continue
+        n, size = _number(m.group("n")), _number(m.group("size"))
+        su = known_unit(m.group("su"))
+        pkg = known_unit(m.group("pkg"))
+        if n is None or size is None or su not in (*MASS, *VOLUME) or pkg not in COUNTISH:
+            return None
+        return {"amount": n, "unit": pkg, "size": size, "size_unit": su, "rest": t[m.end():].strip(" ,")}
+    return None
+
+
+def pkg_size(amount, unit):
+    """(size, size unit) of one package from stored or sent values, or None when either is missing or not a weight or volume."""
+    a = _pos(amount)
+    try:
+        u = unit_or_blank(unit)
+    except ValueError:
+        return None
+    return (a, u) if a is not None and u in (*MASS, *VOLUME) else None
+
+
+def size_text(size, size_unit):
+    """"15 oz", "113 g", "12 fl oz" for a printed size."""
+    return f"{size:g} {LABELS.get(size_unit, size_unit)}"
+
+
+def match_amount(food, amount, unit, custom=True, pkg=None):
     """Amount and unit for a recipe line ("1 cup", "2 tbsp", "2" eggs) matched to food, without asking the user.
 
-    Returns {"amount", "unit", "check"} (plus "estimated": True when only the 1 g per ml guess reaches the unit) or None when
-    the line has no amount (salt to taste). A blank unit or Count is a plain count (see PLAIN_COUNTS).
+    Returns {"amount", "unit", "check"} (plus "estimated": True when only a typical density or the 1 g per ml guess reaches the
+    unit, and "reason": "no_weight" when a count has no known weight) or None when the line has no amount (salt to taste).
+    - pkg (size, size unit) is a printed package size ("1 (15 oz) can"): the line is amount x size in that unit and nothing else,
+      so a printed weight is exact and never counted twice.
     - The line's own unit when the food reaches it at all, as the picker offers it: same unit, weight to weight, volume to
-      volume, and weight to volume through the food's own density (serving_g and serving_ml) or label count word. A unit
-      reachable only through the 1 g per ml guess is used too, with "estimated": True (the same math the picker uses).
-    - A plain count (no unit, count, piece, each) uses the label's count word when it has one, else label servings.
-    - A typed unit the server does not know (can, clove, pinch) keeps its word, counts like Count (no conversion) and never
-      asks for a check, unless it is the label's own count word.
+      volume, and weight to volume through the food's own density (serving_g and serving_ml). A unit reachable only through an
+      estimated density is used too, with "estimated": True (the same math the picker uses).
+    - A count-like unit (no unit, count, piece, a package or fuzzy unit, a typed word) converts only where one thing has a known
+      weight (count_weight): a plain count uses the label's count word ("2 eggs" -> 2 egg), a package or fuzzy unit the label's own
+      word. Anything else (2 cloves of a 100 g label) is one label serving with check True and reason no_weight (no_size for a package
+      unit such as 1 can), never label servings.
     - custom=False (Claude and Search proposals) never returns a custom unit: a typed word that is not the label's own becomes a plain count.
     - A known measure that cannot be reached (a cup of a food with no volume, no weight) is unreachable:
-      one label serving with check True, so the user confirms the amount."""
+      one label serving with check True and reason no_convert, so the user confirms the amount."""
     a = _pos(amount)
     if a is None:
         return None
@@ -403,18 +488,26 @@ def match_amount(food, amount, unit, custom=True):
         u = unit_or_blank(unit) or None
     except ValueError:
         u = None
+    size = pkg_size(*pkg) if pkg else None
+    if size and (u is None or is_countlike(u)):
+        return match_amount(food, round(a * size[0], 6), size[1], custom=False)
     if u is not None and not custom and is_custom(u) and not same_word(u, label_unit):
         u = None
-    if u is not None and is_custom(u) and parse_unit(u) not in PLAIN_COUNTS:
-        if same_word(u, label_unit):
+    no_weight = {"amount": label_amount, "unit": label_unit, "check": True, "reason": NO_SIZE if u in PACKAGE_UNITS else NO_WEIGHT}
+    if u is None or is_countlike(u):
+        if u is not None and same_word(u, label_unit):
             return {"amount": a, "unit": label_unit, "check": False}
-        return {"amount": a, "unit": u, "check": False}
-    if u is not None and u not in PLAIN_COUNTS:
-        for entry in available_units(food):
-            if entry["unit"] == u:
-                return {"amount": a, "unit": u, "check": False, **({"estimated": True} if entry["estimated"] else {})}
-    elif not _is_measure(label_unit):
+        if not count_weight(label_unit, u or COUNT):
+            return no_weight
+        if u is not None and is_custom(u) and parse_unit(u) not in PLAIN_COUNTS:
+            return {"amount": a, "unit": u, "check": False}  # the user's own word on a count label counts like the label's word
         return {"amount": a, "unit": label_unit, "check": False}
-    else:
-        return {"amount": a, "unit": SERVING, "check": False}
-    return {"amount": label_amount, "unit": label_unit, "check": True}
+    for entry in available_units(food):
+        if entry["unit"] == u:
+            return {"amount": a, "unit": u, "check": False, **({"estimated": True} if entry["estimated"] else {})}
+    return {"amount": label_amount, "unit": label_unit, "check": True, "reason": NO_CONVERT}
+
+
+def estimate_source(food):
+    """Where an estimated conversion comes from: "density" (a typical density of the food, GRAMS_PER_CUP) or "guess" (1 g per ml)."""
+    return "density" if density(food) else "guess"

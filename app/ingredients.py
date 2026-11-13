@@ -13,8 +13,11 @@ STOP = {"a", "an", "the", "of", "and", "with", "or"}
 
 # Units that can lead or trail a name when a line was split by hand ("2 cups flour").
 UNITS = {"cup", "c", "tbsp", "tablespoon", "tbs", "tsp", "teaspoon", "oz", "ounce", "lb", "pound", "g", "gram", "kg", "kilogram",
-         "ml", "milliliter", "l", "liter", "litre", "pt", "pint", "qt", "quart", "gal", "gallon", "floz", "clove", "can", "jar",
-         "pinch", "dash", "slice", "piece", "stick", "package", "pkg", "packet", "bunch", "sprig", "handful", "head", "stalk"}
+         "ml", "milliliter", "l", "liter", "litre", "pt", "pint", "qt", "quart", "gal", "gallon", "floz", "pkg", "pkt", "tin"}
+# Package and fuzzy units (units.COUNTISH): a recipe line keeps them as its unit, and they never name the food ("garlic cloves" is garlic).
+COUNTISH = {"can", "jar", "bottle", "bag", "box", "packet", "package", "carton", "stick", "clove", "slice", "bunch", "head", "sprig",
+            "pinch", "dash", "handful", "piece", "fillet", "rib", "stalk"}
+UNITS |= COUNTISH
 # Preparation, size and state words that do not change which food it is. Words that do (whole, dried, ground, smoked,
 # canned, sweet, unsalted, brown, red) stay in the key.
 PREP = {"chopped", "diced", "minced", "sliced", "grated", "shredded", "crushed", "cubed", "halved", "quartered", "peeled", "seeded",
@@ -25,10 +28,12 @@ PREP = {"chopped", "diced", "minced", "sliced", "grated", "shredded", "crushed",
 
 
 def singular(w: str) -> str:
-    """Simple singulars: eggs, berries, tomatoes, cloves. Words ending in ss, us or is (hummus, asparagus) stay."""
+    """Simple singulars: eggs, berries, tomatoes, cloves, peaches, boxes. Words ending in ss, us or is (hummus, asparagus) stay."""
     if len(w) > 4 and w.endswith("ies"):
         return w[:-3] + "y"
     if len(w) > 4 and w.endswith("oes"):
+        return w[:-2]
+    if len(w) > 4 and w.endswith(("ches", "shes", "xes", "sses")):  # peaches, dashes, boxes, glasses
         return w[:-2]
     if len(w) > 3 and w.endswith("s") and not w.endswith(("ss", "us", "is")):
         return w[:-1]
@@ -38,6 +43,12 @@ def singular(w: str) -> str:
 def words(text: Optional[str]) -> frozenset:
     """Lowercase word set with light singulars, articles dropped."""
     return frozenset(singular(w) for w in re.findall(r"[a-z0-9]+", (text or "").lower()) if w not in STOP)
+
+
+def core_words(text: Optional[str]) -> frozenset:
+    """words() without package and fuzzy unit words ("garlic cloves" is {garlic}), or words() when nothing else is left ("head")."""
+    w = words(text)
+    return frozenset(x for x in w if x not in COUNTISH) or w
 
 
 def key(text: Optional[str]) -> Optional[str]:

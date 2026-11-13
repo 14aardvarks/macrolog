@@ -15,7 +15,7 @@ test('ingredient lines split into amount, unit, name and note', () => {
   assert.deepEqual(parts('2 T butter'), [2, 'tbsp', 'butter', null]);
   assert.deepEqual(parts('2 t vanilla'), [2, 'tsp', 'vanilla', null]);
   assert.deepEqual(parts('200g dark chocolate (70%)'), [200, 'g', 'dark chocolate', '70%']);
-  assert.deepEqual(parts('2-3 cloves garlic, minced'), [2.5, 'count', 'garlic cloves', 'minced']);
+  assert.deepEqual(parts('2-3 cloves garlic, minced'), [2.5, 'clove', 'garlic', 'minced']);
   assert.deepEqual(parts('2 to 3 tomatoes'), [2.5, 'count', 'tomatoes', null]);
   assert.deepEqual(parts('2 tomatoes'), [2, 'count', 'tomatoes', null]);
   assert.deepEqual(parts('8 fl oz milk'), [8, 'floz', 'milk', null]);
@@ -52,12 +52,12 @@ test('review draft keeps an odd imported amount until the box is edited', () => 
 test('review draft round trips into the import body', () => {
   const d = reviewDraft({ name: 'Pancakes', servings: 4, ingredients: [{ amount: 1.5, unit: 'cup', name: 'flour', note: null, text: '1 1/2 cups flour' }],
     steps: ['Mix.', 5, 'Fry.'] });
-  assert.deepEqual(d.rows[0], { amount: '1 1/2', shown: '1 1/2', exact: 1.5, unit: 'cup', name: 'flour', note: '', text: '1 1/2 cups flour' });
+  assert.deepEqual(d.rows[0], { amount: '1 1/2', shown: '1 1/2', exact: 1.5, unit: 'cup', name: 'flour', note: '', text: '1 1/2 cups flour', pkgAmount: null, pkgUnit: null });
   assert.deepEqual(d.steps, ['Mix.', 'Fry.']);
   d.meals = ['breakfast'];
   d.rows.push(blankRow());  // an empty row is ignored
   assert.deepEqual(reviewBody(d).body, { name: 'Pancakes', servings: 4, meals: ['breakfast'],
-    ingredients: [{ text: '1 1/2 cup flour', amount: 1.5, unit: 'cup', name: 'flour', note: null }], steps: ['Mix.', 'Fry.'] });
+    ingredients: [{ text: '1 1/2 cup flour', amount: 1.5, unit: 'cup', name: 'flour', note: null, pkg_amount: null, pkg_unit: null }], steps: ['Mix.', 'Fry.'] });
   d.rows[0].amount = '1.5';
   d.rows[0].note = 'sifted';
   assert.equal(reviewBody(d).body.ingredients[0].amount, 1.5);
@@ -82,7 +82,7 @@ test('review validation', () => {
   d.servings = '0';
   assert.match(reviewBody(d).error, /Servings/);
   d.servings = '';
-  assert.deepEqual(reviewBody(d).body.ingredients, [{ text: 'rice', amount: null, unit: null, name: 'rice', note: null }]);
+  assert.deepEqual(reviewBody(d).body.ingredients, [{ text: 'rice', amount: null, unit: null, name: 'rice', note: null, pkg_amount: null, pkg_unit: null }]);
 });
 
 const items = [
@@ -172,12 +172,14 @@ test('perServingText and logAmountText', () => {
   assert.equal(logAmountText(1, 1), '');
 });
 
-test('an amount with no unit is a count, and a unit word the server does not know joins the name', () => {
+test('an amount with no unit is a count, and package and fuzzy units stay units (issue #45)', () => {
   assert.deepEqual(parts('3 carrots'), [3, 'count', 'carrots', null]);
-  assert.deepEqual(parts('2 cloves garlic'), [2, 'count', 'garlic cloves', null]);
-  assert.deepEqual(parts('1 can black beans, drained'), [1, 'count', 'black beans can', 'drained']);
-  assert.deepEqual(parts('4 slices bread'), [4, 'count', 'bread slices', null]);
-  assert.deepEqual(parts('2 cloves garlic cloves'), [2, 'count', 'garlic cloves', null]);  // the word is not added twice
+  assert.deepEqual(parts('2 cloves garlic'), [2, 'clove', 'garlic', null]);
+  assert.deepEqual(parts('1 can black beans, drained'), [1, 'can', 'black beans', 'drained']);
+  assert.deepEqual(parts('4 slices bread'), [4, 'slice', 'bread', null]);
+  assert.deepEqual(parts('2 bunches cilantro'), [2, 'bunch', 'cilantro', null]);
+  assert.deepEqual(parts('1 head of lettuce'), [1, 'head', 'lettuce', null]);
+  assert.deepEqual(parts('3 Pinches salt'), [3, 'pinch', 'salt', null]);
   assert.deepEqual(parts('1 cup flour'), [1, 'cup', 'flour', null]);
   assert.deepEqual(parts('1 count egg'), [1, 'count', 'egg', null]);
   assert.deepEqual(parts('fresh basil'), [null, null, 'fresh basil', null]);  // no amount and no unit stays plain text

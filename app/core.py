@@ -50,9 +50,10 @@ MEAL_ITEMS_BODY = """
   id INTEGER PRIMARY KEY, meal_id INTEGER NOT NULL REFERENCES meals(id) ON DELETE CASCADE,
   food_id INTEGER REFERENCES foods(id), amount REAL, unit TEXT, position INTEGER NOT NULL DEFAULT 0,
   src_text TEXT, src_amount REAL, src_unit TEXT, src_name TEXT, src_note TEXT, skipped INTEGER NOT NULL DEFAULT 0,
-  needs_check INTEGER NOT NULL DEFAULT 0"""
+  needs_check INTEGER NOT NULL DEFAULT 0, item_pkg_amount REAL, item_pkg_unit TEXT"""
 # needs_check: a food is attached but its amount could not be worked out from the recipe line (for example "1 cup" of a
 # food known only by weight). It counts for nothing, like an unmatched row, until the user confirms an amount.
+# item_pkg_amount and item_pkg_unit: the size printed on one package of the line ("1 (15 oz) can" is 15 oz), null when none.
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS foods(
@@ -154,6 +155,10 @@ def init(c: sqlite3.Connection) -> None:
     migrate_meal_items(c)
     if "needs_check" not in {r[1] for r in c.execute("PRAGMA table_info(meal_items)")}:  # databases made before Check Amount
         c.execute("ALTER TABLE meal_items ADD COLUMN needs_check INTEGER NOT NULL DEFAULT 0")
+    item_cols = {r[1] for r in c.execute("PRAGMA table_info(meal_items)")}
+    for col, kind in (("item_pkg_amount", "REAL"), ("item_pkg_unit", "TEXT")):  # databases made before printed package sizes (null = none)
+        if col not in item_cols:
+            c.execute(f"ALTER TABLE meal_items ADD COLUMN {col} {kind}")
     c.execute("CREATE INDEX IF NOT EXISTS meal_items_meal ON meal_items(meal_id, position)")
     if "shared" not in {r[1] for r in c.execute("PRAGMA table_info(meals)")}:  # databases made before shared recipes: all stay private
         c.execute("ALTER TABLE meals ADD COLUMN shared INTEGER NOT NULL DEFAULT 0")
@@ -359,7 +364,7 @@ def check_amount_unit(food: dict, amount, unit) -> tuple[float, str]:
     except ValueError as e:
         raise bad(f"unit: {e}")
     allowed = [u["unit"] for u in units.available_units(food)]
-    if unit not in allowed and not units.is_custom(unit) and unit != units.BLANK:  # a typed unit counts like Count
+    if unit not in allowed and not units.is_countlike(unit):  # count, package and fuzzy units and typed words count like Count
         raise bad(f"Unit '{unit}' is not available for this food. Choose one of: {', '.join(allowed)}, or type your own")
     return amount, unit
 
@@ -1180,18 +1185,39 @@ def parse_items(c, raw) -> list[tuple[dict, float, str]]:
 
 
 SRC_KEYS = ("text", "amount", "unit", "name", "note")
+PKG_KEYS = ("pkg_amount", "pkg_unit")  # a printed package size on an imported line, stored as item_pkg_amount and item_pkg_unit
 
 
 def item_dict(c, it) -> dict:
     """One recipe ingredient. Unmatched rows have food null and null nutrients; skipped rows count for nothing."""
-    src = {k: it["src_" + k] for k in SRC_KEYS} if it["src_text"] is not None or it["src_name"] is not None else None
+    src = None
+    if it["src_text"] is not None or it["src_name"] is not None:
+        src = {**{k: it["src_" + k] for k in SRC_KEYS}, "pkg_amount": it["item_pkg_amount"], "pkg_unit": it["item_pkg_unit"]}
     check = it["food_id"] is not None and bool(it["needs_check"])
     base = {"id": it["id"], "food_id": it["food_id"], "amount": it["amount"], "unit": it["unit"], "src": src,
-            "skipped": bool(it["skipped"]), "matched": it["food_id"] is not None and not check, "check": check}
+            "skipped": bool(it["skipped"]), "matched": it["food_id"] is not None and not check, "check": check, "check_reason": None}
     if it["food_id"] is None:
         return {**base, "food": None, "servings": None, "estimated": False, "kcal_estimated": False, "grams": None, **{k: None for k in (*MACROS, *MICROS)}}
     food = need_food(c, it["food_id"])
-    return {**base, "food": food, "grams": units.grams(food, it["amount"], it["unit"]), **macros(food, it["amount"], it["unit"])}
+    if check:  # why the amount needs a check (units.NO_WEIGHT, NO_SIZE, NO_CONVERT, NO_AMOUNT), None when the line does not say
+        base["check_reason"] = check_reason(food, src)
+    grams = None if check else units.grams(food, it["amount"], it["unit"])  # a Check Amount row has no weight yet, never an exact one
+    m = macros(food, it["amount"], it["unit"])
+    # An Estimated Conversion says where it comes from: a typical density of the food, or the 1 g per ml guess.
+    return {**base, "food": food, "grams": grams, **m, "estimate_source": units.estimate_source(food) if m["estimated"] and not check else None}
+
+
+def check_reason(food: dict, src: dict | None) -> str | None:
+    """Why a Check Amount row's line cannot become an amount: no_amount (the line gives none), else match_amount's reason."""
+    if not src:
+        return None
+    if src.get("amount") is None:
+        return units.NO_AMOUNT
+    try:
+        m = units.match_amount(food, src["amount"], src.get("unit"), pkg=(src.get("pkg_amount"), src.get("pkg_unit")))
+    except ValueError:
+        return None
+    return m.get("reason") if m and m["check"] else None
 
 
 def recipe_totals(items: list) -> dict:
@@ -1610,8 +1636,8 @@ def duplicate_meal(meal_id: int, user: CurrentUser, body: dict | None = Body(Non
             c.execute("UPDATE meals SET photo=? WHERE id=?", (photos.copy_file(row["photo"]), new))
         c.execute("INSERT INTO recipe_tags(meal_id, meal) SELECT ?, meal FROM recipe_tags WHERE meal_id=?", (new, meal_id))
         c.execute("INSERT INTO meal_items(meal_id, food_id, amount, unit, position, src_text, src_amount, src_unit, src_name, src_note, "
-                  "skipped, needs_check) SELECT ?, food_id, amount, unit, position, src_text, src_amount, src_unit, src_name, src_note, "
-                  "skipped, needs_check FROM meal_items WHERE meal_id=? ORDER BY position, id", (new, meal_id))
+                  "skipped, needs_check, item_pkg_amount, item_pkg_unit) SELECT ?, food_id, amount, unit, position, src_text, src_amount, "
+                  "src_unit, src_name, src_note, skipped, needs_check, item_pkg_amount, item_pkg_unit FROM meal_items WHERE meal_id=? ORDER BY position, id", (new, meal_id))
         return meal_dict(c, own_meal(c, user["id"], new), user)
 
 
@@ -1676,18 +1702,36 @@ def clean_source_url(v) -> str:
 
 
 def import_row(raw) -> tuple:
-    """(text, amount, unit, name, note) of one imported ingredient line, validated."""
-    if not isinstance(raw, dict) or set(raw) - set(SRC_KEYS):
+    """(text, amount, unit, name, note, pkg_amount, pkg_unit) of one imported ingredient line, validated. A known unit is stored
+    canonical (Cloves is clove), a typed word as typed. pkg_amount and pkg_unit are the size printed on one package ("1 (15 oz) can"):
+    kept only on a count, package or fuzzy unit with an amount, read from text when not sent."""
+    if not isinstance(raw, dict) or set(raw) - set(SRC_KEYS) - set(PKG_KEYS):
         raise bad("must be an object with text, amount, unit, name and note")
     name = short_text(raw.get("name"), "name", 200, required=True)
     amount = number(raw.get("amount"), "amount", optional=True)
     unit = short_text(raw.get("unit"), "unit", 40)
     note = short_text(raw.get("note"), "note", 300)
+    if unit and units.known_unit(unit):
+        unit = units.known_unit(unit)
+    sent = any(raw.get(k) is not None for k in PKG_KEYS)
+    pkg = None
+    if sent:
+        pkg_amount = number(raw.get("pkg_amount"), "pkg_amount", positive=True)
+        if pkg_amount > 100000:
+            raise bad("pkg_amount must be 100000 or less")
+        pkg = units.pkg_size(pkg_amount, raw.get("pkg_unit") if isinstance(raw.get("pkg_unit"), str) else None)
+        if pkg is None:
+            raise bad("pkg_unit must be a weight or a volume (g, kg, oz, lb, ml, l, fl oz)")
     text = short_text(raw.get("text"), "text", 300) or " ".join(str(x) for x in (
-        None if amount is None else f"{amount:g}", unit, name) if x) + (f", {note}" if note else "")
+        None if amount is None else f"{amount:g}", units.unit_word(unit, amount) if unit != units.COUNT else None, name) if x) + (f", {note}" if note else "")
     if amount is not None and amount > 0 and not (unit or "").strip():
         unit = units.COUNT  # an amount with no unit is a count (3 carrots); a line with no amount stays plain text
-    return text, amount, unit, name, note
+    if not sent and "pkg_amount" not in raw:
+        found = units.printed_size(text)
+        pkg = (found["size"], found["size_unit"]) if found and found["unit"] == unit else None
+    if pkg and (amount is None or amount <= 0 or not units.is_countlike(unit or "")):
+        pkg = None
+    return text, amount, unit, name, note, *(pkg or (None, None))
 
 
 @router.post("/meals/import")
@@ -1715,7 +1759,8 @@ def import_meal(user: CurrentUser, body: dict = Body(...)):
         cur = c.execute("INSERT INTO meals(user_id, name, meal, servings, steps, source_url) VALUES(?,?,?,?,?,?)",
                         (user["id"], name, tags[0] if tags else None, servings, steps_json(steps), source_url))
         c.executemany("INSERT INTO recipe_tags(meal_id, meal) VALUES(?,?)", [(cur.lastrowid, m) for m in tags])
-        c.executemany("INSERT INTO meal_items(meal_id, position, src_text, src_amount, src_unit, src_name, src_note) VALUES(?,?,?,?,?,?,?)",
+        c.executemany("INSERT INTO meal_items(meal_id, position, src_text, src_amount, src_unit, src_name, src_note, item_pkg_amount, item_pkg_unit) "
+                      "VALUES(?,?,?,?,?,?,?,?,?)",
                       [(cur.lastrowid, i, *r) for i, r in enumerate(rows)])
         return meal_dict(c, own_meal(c, user["id"], cur.lastrowid))
 
@@ -1830,7 +1875,7 @@ def add_meal_item(meal_id: int, user: CurrentUser, body: dict = Body(...)):
         raise bad("check must be true or false and needs food_id")
     if "food_id" not in body and {"amount", "unit"} & body.keys():
         raise bad("Send food_id together with amount and unit")
-    src = import_row(body["src"]) if "src" in body else (None,) * 5
+    src = import_row(body["src"]) if "src" in body else (None,) * 7
     pos = body.get("position")
     if pos is not None and (isinstance(pos, bool) or not isinstance(pos, int) or pos < 0):
         raise bad("position must be a whole number of 0 or more")
@@ -1846,7 +1891,7 @@ def add_meal_item(meal_id: int, user: CurrentUser, body: dict = Body(...)):
             food_id = food["id"]
             undelete(c, user["id"], food_id)
         cur = c.execute("INSERT INTO meal_items(meal_id, food_id, amount, unit, position, src_text, src_amount, src_unit, src_name, src_note,"
-                        " skipped, needs_check) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                        " item_pkg_amount, item_pkg_unit, skipped, needs_check) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (meal_id, food_id, amount, unit, len(ids), *src, int(body.get("skipped") is True), int(body.get("check") is True)))
         ids.insert(len(ids) if pos is None else min(pos, len(ids)), cur.lastrowid)
         c.executemany("UPDATE meal_items SET position=? WHERE id=?", [(i, x) for i, x in enumerate(ids)])

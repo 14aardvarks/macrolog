@@ -116,7 +116,7 @@ test('amountText for serving, pct and other units', () => {
   assert.equal(amountText(0.4, 'serving'), '1/3 serving');
   assert.equal(amountText(25, 'pct'), '25% of a serving');
   assert.equal(amountText(150, 'pct'), '150% of a serving');
-  assert.equal(amountText(2, 'slice'), '2 slice');
+  assert.equal(amountText(2, 'slice'), '2 slices');
   assert.equal(amountText(30, 'g'), '30 g');
   assert.equal(unitLabel('pct'), '% of serving');
   assert.equal(unitLabel('g'), 'g');

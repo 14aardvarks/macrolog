@@ -16,7 +16,8 @@ test('custom unit text is trimmed, capped, stripped of control characters and ke
   assert.equal(cleanUnitText('  to \n taste\u0000 '), 'to taste');
   assert.equal(cleanUnitText('x'.repeat(50)).length, CUSTOM_UNIT_MAX);
   assert.equal(cleanUnitText(null), '');
-  assert.equal(unitToSave('Pinch'), 'Pinch');
+  assert.equal(unitToSave('Shell'), 'Shell');
+  assert.equal(unitToSave('Pinches'), 'pinch');  // a fuzzy unit is a known unit
   assert.equal(unitToSave('Cups'), 'cup');
   assert.equal(unitToSave('Count'), 'count');
   for (const blank of ['', '  ', '-', 'None', null, undefined]) assert.equal(unitToSave(blank), '');
@@ -56,7 +57,7 @@ test('a review line needs neither amount nor unit', () => {
   assert.deepEqual(r.body.ingredients.map((i) => [i.amount, i.unit, i.name]), [[null, null, 'salt'], [2, 'count', 'egg'], [null, 'tbsp', 'oil']]);
   assert.equal(r.body.ingredients[0].text, 'salt, to taste');
   const blank = { ...d, rows: [{ ...blankRow(), name: 'pepper', unit: 'count', amount: '2' }] };
-  assert.deepEqual(reviewBody(blank).body.ingredients[0], { text: '2 pepper', amount: 2, unit: 'count', name: 'pepper', note: null });
+  assert.deepEqual(reviewBody(blank).body.ingredients[0], { text: '2 pepper', amount: 2, unit: 'count', name: 'pepper', note: null, pkg_amount: null, pkg_unit: null });
   assert.equal(rowText({ ...blankRow(), name: 'water', unit: 'floz', amount: '8' }), '8 fl oz water');
 });
 
@@ -65,8 +66,9 @@ test('matchAmount skips blank amounts and treats blank and Count as a plain coun
   assert.deepEqual(matchAmount(EGG, 2, 'count'), { amount: 2, unit: 'egg', check: false });
   assert.deepEqual(matchAmount(EGG, 2, ''), { amount: 2, unit: 'egg', check: false });
   assert.deepEqual(matchAmount(EGG, 2, null), { amount: 2, unit: 'egg', check: false });
-  assert.deepEqual(matchAmount(FLOUR, 2, 'Count'), { amount: 2, unit: 'serving', check: false });
-  assert.deepEqual(matchAmount(FLOUR, 2, undefined), { amount: 2, unit: 'serving', check: false });
+  const nw = { amount: FLOUR[0].default_amount, unit: FLOUR[0].unit, check: true, reason: 'no_weight' };  // issue #45
+  assert.deepEqual(matchAmount(FLOUR, 2, 'Count'), nw);
+  assert.deepEqual(matchAmount(FLOUR, 2, undefined), nw);
 });
 
 test('amount text with a blank unit or Count has no stray space', () => {
@@ -93,9 +95,9 @@ test('ingredientText shows a count without its unit word and other units as usua
   assert.equal(ingredientText(2, 'serving', 'rice'), '2 servings rice');
 });
 
-test('matchAmount treats an amount with no unit as count for every food and gives no Check Amount', () => {
+test('matchAmount treats an amount with no unit as count, with Check Amount where a count has no weight', () => {
   for (const u of [undefined, null, '', 'count', 'Count']) {
-    assert.deepEqual(matchAmount(FLOUR, 3, u), { amount: 3, unit: 'serving', check: false });
+    assert.deepEqual(matchAmount(FLOUR, 3, u), { amount: FLOUR[0].default_amount, unit: FLOUR[0].unit, check: true, reason: 'no_weight' });
     assert.deepEqual(matchAmount(EGG, 3, u), { amount: 3, unit: 'egg', check: false });
   }
   assert.equal(matchAmount(EGG, null, ''), null);  // no amount, nothing to count

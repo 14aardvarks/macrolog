@@ -1,4 +1,4 @@
-import { sentence, sourceLabel, kcalEstimated, KCAL_ESTIMATE_CUE, isEstimate, sourceNote, CUSTOM_UNIT, CUSTOM_UNIT_LABEL, CUSTOM_UNIT_MAX, CUSTOM_UNIT_HINT, cleanUnitText, unitToSave } from './util.js';
+import { sentence, sourceLabel, kcalEstimated, KCAL_ESTIMATE_CUE, isEstimate, sourceNote, CUSTOM_UNIT, CUSTOM_UNIT_LABEL, CUSTOM_UNIT_MAX, CUSTOM_UNIT_HINT, cleanUnitText, unitToSave, checkList, checkSummary } from './util.js';
 
 // Tiny DOM helpers. Text always goes through textContent / text nodes, never innerHTML.
 
@@ -115,6 +115,21 @@ export function sourceBadge(source, withEstimate) {
 // A small cue after calories that the server estimated them from the macros, or null. The words are always shown.
 export function kcalCue(x) {
   return kcalEstimated(x) ? h('span', { class: 'src-wrap' }, h('span', { class: 'src-est kcal-cue' }, KCAL_ESTIMATE_CUE)) : null;
+}
+
+// The recipe header note on amounts to check (issue #45): "2 ingredients need a check", the first reason under it ("Garlic: no
+// standard weight for clove, enter grams") and the rest in a collapsed list. Text says it all, the chip only repeats it. null when none.
+export function checkBlock(meal) {
+  const list = checkList(meal);
+  if (!list.length) return null;
+  const [first, ...rest] = list;
+  const checks = list.some((x) => x.check);
+  return h('div', { class: 'check-list', role: 'note' },
+    h('p', { class: 'check-summary' }, h('span', { class: 'match-state ' + (checks ? 'match-check' : 'match-est') }, checks ? 'Check Amount' : 'Estimated'),
+      ' ', checkSummary(list)),
+    h('p', { class: 'sub check-first' }, first.text),
+    rest.length ? h('details', { class: 'check-more' }, h('summary', null, 'Show ' + rest.length + ' More'),
+      h('ul', { class: 'sub' }, rest.map((x) => h('li', null, x.text)))) : null);
 }
 
 // A line for the picker and the food form: the badge, and for Claude foods the estimate note.

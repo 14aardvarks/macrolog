@@ -571,3 +571,12 @@ body.has-undo main { padding-bottom: 96px; }  /* room to scroll the last rows ab
 .crop-zoom input { width: 100%; padding: 0; min-height: 44px; border: 0; background: transparent; }
 .crop .row .btn { flex: 1 1 auto; }
 .crop-overlay { align-items: center; }
+
+/* Amounts to check (issue #45): the header list and the reason on each row reuse the Check Amount chip */
+.check-list { margin: 8px 0; padding: 8px 12px; border: 1px solid var(--over); border-radius: 10px; background: var(--warn-bg); }
+.check-list p { margin: 4px 0; }
+.check-more summary { cursor: pointer; font-size: .875rem; }
+.check-more ul { margin: 4px 0 0; padding-left: 18px; }
+.match-est { border-color: var(--line); color: var(--muted); }
+.check-reason { display: block; font-size: .875rem; color: var(--text); margin-top: 2px; }
+.pkg-note { font-size: .8125rem; color: var(--muted); margin: 2px 0 0; }

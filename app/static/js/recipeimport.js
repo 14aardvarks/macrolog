@@ -1,7 +1,8 @@
 // Pure helpers for Import Recipe and Match Ingredients. No DOM access, safe to import from node.
-import { cleanUnitText, plural, parseAmount, amountBoxValue, fmtAmount, qtyText, servingText, amountText, roundTo, matchedAmountText, sentence, centsText, stepsCheck, MEALS, MEAL_LABELS, MICROS, autoMatch } from './util.js';
+import { cleanUnitText, canonUnit, unitWord, printedSize, sizeText, isCountish, checkReasonLine, PACKAGE_UNITS, FUZZY_UNITS, PLAIN_COUNTS, plural, parseAmount, amountBoxValue, fmtAmount, qtyText, servingText, amountText, roundTo, matchedAmountText, sentence, centsText, stepsCheck, MEALS, MEAL_LABELS, MICROS, autoMatch } from './util.js';
 
-// Unit words found at the start of an ingredient line, mapped to the server's canonical units or a count word.
+// Unit words found at the start of an ingredient line, mapped to the server's canonical units. Package and fuzzy units
+// (clove, can, pinch, util.js COUNTISH) are found through canonUnit too, so every plural works ("bunches", "boxes").
 const UNIT_WORDS = {
   cup: 'cup', cups: 'cup', c: 'cup',
   tablespoon: 'tbsp', tablespoons: 'tbsp', tbsp: 'tbsp', tbs: 'tbsp', tbl: 'tbsp', T: 'tbsp',
@@ -15,7 +16,8 @@ const UNIT_WORDS = {
   piece: 'piece', pieces: 'piece', package: 'package', packages: 'package', pkg: 'package', bunch: 'bunch',
   sprig: 'sprig', sprigs: 'sprig', handful: 'handful', jar: 'jar', jars: 'jar', bottle: 'bottle',
 };
-const KNOWN_LINE_UNITS = ['cup', 'tbsp', 'tsp', 'g', 'kg', 'oz', 'lb', 'ml', 'l', 'count'];
+const KNOWN_LINE_UNITS = ['cup', 'tbsp', 'tsp', 'g', 'kg', 'oz', 'lb', 'ml', 'l', 'count', ...PACKAGE_UNITS, ...FUZZY_UNITS];
+const lineUnitOf = (word) => UNIT_WORDS[UNIT_WORDS[word] ? word : word.toLowerCase()] || (isCountish(canonUnit(word)) ? canonUnit(word) : null);
 const TASTE = /\b(?:to taste|as needed)\b/i;
 const TASTE_G = /\b(?:to taste|as needed)\b/gi;
 const FLOZ = /^(?:fl\.?\s*oz\.?|fluid\s+ounces?)\b/i;
@@ -33,11 +35,15 @@ export function servingsFrom(line) {
   return n > 0 && n <= 1000 ? n : null;
 }
 
-// One ingredient line split the way the server stores it: { text, amount, unit, name, note }, or null for a blank line.
-// "1 1/2 cups flour, sifted" -> 1.5 cup flour (sifted). "2-3 cloves garlic" uses the average. "Salt to taste" has no amount.
+// One ingredient line split the way the server stores it: { text, amount, unit, name, note }, plus pkg_amount and pkg_unit when the
+// line prints a package size, or null for a blank line. "1 1/2 cups flour, sifted" -> 1.5 cup flour (sifted). "2-3 cloves garlic"
+// uses the average and keeps clove as the unit. "1 (15 oz) can black beans" -> 1 can black beans (15 oz), 15 oz per can.
+// "Salt to taste" has no amount.
 export function parseIngredientLine(line) {
   const text = String(line == null ? '' : line).replace(/^\s*(?:[-*•▪]|\d+[.)](?=\s))\s*/, '').replace(/\s+/g, ' ').trim();
   if (!text) return null;
+  const printed = printedSize(text);
+  if (printed) return printedRow(text, printed);
   let rest = text;
   let amount = null;
   const m = LEAD.exec(rest);
@@ -50,14 +56,13 @@ export function parseIngredientLine(line) {
     }
   }
   let unit = null;
-  let word = '';  // a unit word the server does not know (clove, can): the line is a count and the word joins the name
   if (amount != null) {
     const fl = FLOZ.exec(rest);
     const w = /^([A-Za-z]+)\.?(?=\s|$)/.exec(rest);
     if (fl) { unit = 'floz'; rest = rest.slice(fl[0].length).trim(); }
-    else if (w && UNIT_WORDS[UNIT_WORDS[w[1]] ? w[1] : w[1].toLowerCase()]) {  // "T" is a tablespoon, "t" a teaspoon
-      unit = UNIT_WORDS[UNIT_WORDS[w[1]] ? w[1] : w[1].toLowerCase()];
-      if (KNOWN_LINE_UNITS.indexOf(unit) < 0) { word = w[1].toLowerCase(); unit = null; }
+    else if (w && lineUnitOf(w[1])) {  // "T" is a tablespoon, "t" a teaspoon
+      unit = lineUnitOf(w[1]);
+      if (KNOWN_LINE_UNITS.indexOf(unit) < 0) unit = null;  // a plain count word (each): a count
       rest = rest.slice(w[0].length).trim();
       if (/^of\s/i.test(rest)) rest = rest.slice(3);
     }
@@ -77,12 +82,19 @@ export function parseIngredientLine(line) {
     const nt = note.replace(/,\s*$/, '');
     return { text: clean + ', ' + nt, amount: null, unit: null, name: clean, note: nt };
   }
-  if (amount != null && !unit) {  // an amount with no known unit is a count (3 carrots); a word like clove stays in the name
-    unit = 'count';
-    if (word && !new RegExp('\\b' + word.replace(/s$/, ''), 'i').test(name)) name = name + ' ' + word;
-  }
+  if (amount != null && !unit) unit = 'count';  // an amount with no known unit is a count (3 carrots)
   const note = notes.filter(Boolean).join(', ') || null;
   return { text, amount, unit, name, note };
+}
+
+// A line with a printed package size: the package count and unit stay, the size is exact per package and shows in the note.
+function printedRow(text, p) {
+  const notes = [sizeText(p.size, p.sizeUnit)];
+  let rest = p.rest.replace(/^of\s+/i, '').replace(/\(([^)]*)\)/g, (_, inner) => { if (inner.trim()) notes.push(inner.trim()); return ' '; });
+  const comma = rest.indexOf(',');
+  if (comma >= 0) { notes.push(rest.slice(comma + 1).trim()); rest = rest.slice(0, comma); }
+  const name = rest.replace(/\s+/g, ' ').trim() || text;
+  return { text, amount: p.amount, unit: p.unit, name, note: notes.filter(Boolean).join(', '), pkg_amount: p.size, pkg_unit: p.sizeUnit };
 }
 
 // Pasted text split locally (no Claude): headings and blank lines are dropped, "Serves 4" sets servings.
@@ -150,7 +162,8 @@ export function reviewDraft(recipe, extra) {
     name: r.name || '', servings: r.servings == null ? '' : fmtAmount(r.servings), servingsExact: r.servings == null ? null : r.servings, servingsShown: r.servings == null ? '' : fmtAmount(r.servings), meals: [], warnings: [], cost: null,
     rows: (r.ingredients || []).map((i) => {
       const amount = i.amount == null ? '' : qtyText(i.amount, i.unit);
-      return { amount, shown: amount, exact: i.amount == null ? null : i.amount, unit: i.unit || '', name: i.name || '', note: i.note || '', text: i.text || '' };
+      return { amount, shown: amount, exact: i.amount == null ? null : i.amount, unit: i.unit || '', name: i.name || '', note: i.note || '', text: i.text || '',
+        pkgAmount: i.pkg_amount == null ? null : i.pkg_amount, pkgUnit: i.pkg_unit || null };
     }),
     steps: (r.steps || []).filter((x) => typeof x === 'string'),
     sourceUrl: r.source_url || null,
@@ -161,12 +174,33 @@ export function reviewDraft(recipe, extra) {
 // The unit choices of a review row: count first, then the measures, then Custom (made by dom.js unitControl) for any word of the
 // recipe's own (clove, pinch) or the user's. Blank is Custom left empty, so nothing is guessed or lost.
 export const IMPORT_UNITS = [['count', 'count'], ['g', 'g'], ['kg', 'kg'], ['oz', 'oz'], ['lb', 'lb'], ['ml', 'ml'], ['l', 'l'],
-  ['floz', 'fl oz'], ['cup', 'cup'], ['tbsp', 'tbsp'], ['tsp', 'tsp']];
+  ['floz', 'fl oz'], ['cup', 'cup'], ['tbsp', 'tbsp'], ['tsp', 'tsp'], ...PACKAGE_UNITS.map((u) => [u, u]), ...FUZZY_UNITS.map((u) => [u, u])];
 export function importUnitOptions() {
   return IMPORT_UNITS.map(([value, label]) => ({ value, label }));
 }
 
-export const blankRow = () => ({ amount: '', unit: '', name: '', note: '', text: '' });
+export const blankRow = () => ({ amount: '', unit: '', name: '', note: '', text: '', pkgAmount: null, pkgUnit: null });
+
+// The printed size a review row still carries: only on a package or fuzzy unit (or count) with an amount, else null.
+export function rowPkg(row) {
+  const u = canonUnit(row.unit);
+  if (!(Number(row.pkgAmount) > 0) || !row.pkgUnit || !(u === 'count' || isCountish(u))) return null;
+  return { amount: Number(row.pkgAmount), unit: row.pkgUnit };
+}
+// "15 oz per can, exact" under a review row with a printed size, else ''.
+export function pkgNote(row) {
+  const p = rowPkg(row);
+  return p ? sizeText(p.amount, p.unit) + ' per ' + unitWord(canonUnit(row.unit), 1) + ', exact' : '';
+}
+// The warning under a review row whose package or fuzzy unit has no printed size: "Can size not printed, pick a size or enter grams",
+// "No standard weight for clove, enter grams". '' for every other row. A matched food can still know the weight (1 clove (3 g)).
+export function reviewFlag(row) {
+  const u = canonUnit(row.unit);
+  if (!String(row.amount || '').trim() || !isCountish(u) || PLAIN_COUNTS.indexOf(u) >= 0 || rowPkg(row)) return '';
+  return checkReasonLine(PACKAGE_UNITS.indexOf(u) >= 0 ? 'no_size' : 'no_weight', u);
+}
+// Use Grams on a flagged review row: the amount is cleared for the grams, the unit becomes g and the printed size goes.
+export const useGrams = (row) => Object.assign(row, { amount: '', shown: '', exact: null, unit: 'g', pkgAmount: null, pkgUnit: null });
 
 // A row's amount: the exact number it was filled from while the box text is untouched (shown is the text the box was built with),
 // else what was typed.
@@ -176,7 +210,7 @@ function rowAmount(row) { return amountBoxValue(row.amount, row.shown, row.exact
 export function rowText(row) {
   const a = rowAmount(row);
   const unit = cleanUnitText(row.unit);
-  const head = [a == null ? '' : qtyText(a, row.unit), unit === 'floz' ? 'fl oz' : unit === 'count' ? '' : unit, String(row.name || '').trim()].filter(Boolean).join(' ');
+  const head = [a == null ? '' : qtyText(a, row.unit), unit === 'count' ? '' : unitWord(unit, a), String(row.name || '').trim()].filter(Boolean).join(' ');
   return head + (String(row.note || '').trim() ? ', ' + row.note.trim() : '');
 }
 
@@ -201,7 +235,8 @@ export function reviewBody(draft) {
     if (raw && amount == null) return { error: 'Check the amount of ' + nm + '.' };
     const unit = cleanUnitText(r.unit) || (amount != null ? 'count' : null);  // an amount with no unit is a count
     const note = String(r.note || '').trim() || null;
-    ingredients.push({ text: rowText(r).slice(0, 300), amount, unit, name: nm, note });
+    const pkg = amount != null ? rowPkg({ ...r, unit }) : null;  // null tells the server not to read a size from the text again
+    ingredients.push({ text: rowText(r).slice(0, 300), amount, unit, name: nm, note, pkg_amount: pkg ? pkg.amount : null, pkg_unit: pkg ? pkg.unit : null });
   }
   const st = stepsCheck(draft.steps);
   if (st.error) return st;

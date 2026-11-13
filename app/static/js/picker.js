@@ -5,7 +5,7 @@ import { microGrid } from './micros.js';
 import { refreshControl } from './refresh.js';
 import {
   MEALS, MEAL_LABELS, canRefresh, parseAmount, fmtNum, fmtAmount, indexFromScroll, debounce, guessMeal,
-  CUSTOM_UNIT_LABEL, CUSTOM_UNIT_MAX, CUSTOM_UNIT_HINT, cleanUnitText, unitToSave, unitChoices, initialPick, startPreset, convertAmount, gramsFor, SERVING, PCT, amountText, amountLabel, amountValues, withValue, rowAmountText, qtyText, amountMemo, roundTo, aiMicrosText,
+  CUSTOM_UNIT_LABEL, CUSTOM_UNIT_MAX, CUSTOM_UNIT_HINT, CUSTOM_NO_WEIGHT, cleanUnitText, unitToSave, unitChoices, initialPick, startPreset, convertAmount, gramsFor, SERVING, PCT, amountText, amountLabel, amountValues, withValue, rowAmountText, qtyText, amountMemo, roundTo, aiMicrosText,
 } from './util.js';
 
 const ROW = 44;
@@ -222,7 +222,9 @@ export async function renderPicker(root, params, ctx) {
   function paintGrams() {
     paintSub();
     const g = st.unit === '' ? null : gramsFor(units, st.amount, st.unit);  // a typed unit has no known weight
-    gramLine.textContent = g == null ? '' : '= ' + fmtNum(g, g >= 10 ? 0 : 1) + ' g';
+    // A typed unit on a measure label (100 g, 1 cup) has no weight of its own: say plainly that each counts as one label serving.
+    const noWeight = st.unit === '' && !units.some((x) => x.unit === 'count');
+    gramLine.textContent = noWeight ? CUSTOM_NO_WEIGHT : g == null ? '' : '= ' + fmtNum(g, g >= 10 ? 0 : 1) + ' g';
   }
 
   async function runPreview() {

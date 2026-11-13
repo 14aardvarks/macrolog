@@ -195,7 +195,9 @@ def test_match_falls_back_to_a_label_serving_and_handles_missing_rows(env):
     env["reply"] = reply(recipe_ai.MATCH_TOOL_NAME, {"matches": [
         {"row": 1, "choice": 1, "amount": 3, "unit": "pinch", "estimate": None, "note": None}, "junk"]})
     p = env["c"].post(f"/api/recipes/{m['id']}/match", json={"item_ids": ids}).json()["proposals"]
-    assert (p[0]["amount"], p[0]["unit"], p[0]["check"]) == (3, "serving", False)  # Claude never produces a custom unit: pinch counts (one serving per 1 on a cup label)
+    # a pinch of a cup label food has no known weight: one label serving, flagged, never 3 servings
+    assert (p[0]["amount"], p[0]["unit"], p[0]["check"], p[0]["grams"], p[0]["check_reason"]) == (1, "cup", True, None, "no_weight")
+    assert p[0]["warnings"] == [recipe_ai.NO_WEIGHT_WARNING]
     assert p[1]["kind"] == "none" and "did not answer" in p[1]["note"]
 
 
@@ -275,11 +277,11 @@ def test_match_amounts_come_from_the_recipe_line(env):
     ids = [i["id"] for i in m["items"]]
     env["reply"] = reply(recipe_ai.MATCH_TOOL_NAME, {"matches": [
         {"row": 1, "choice": 1, "amount": 250, "unit": "g", "estimate": None, "note": None},  # the line's own unit wins
-        {"row": 2, "choice": 1, "amount": 2, "unit": "can", "estimate": None, "note": None},  # an unknown unit: count
+        {"row": 2, "choice": 1, "amount": 2, "unit": "can", "estimate": None, "note": None},  # a can has no known weight here
         {"row": 3, "choice": 1, "amount": None, "unit": None, "estimate": None, "note": None}]})
     p = env["c"].post(f"/api/recipes/{m['id']}/match", json={"item_ids": ids}).json()["proposals"]
     assert (p[0]["amount"], p[0]["unit"], p[0]["check"], p[0]["grams"]) == (2, "cup", False, 250)
-    assert (p[1]["amount"], p[1]["unit"], p[1]["check"]) == (1, "serving", False)  # can is not a known unit: count
+    assert (p[1]["amount"], p[1]["unit"], p[1]["check"], p[1]["grams"]) == (1, "cup", True, None)  # no weight for a can: Check Amount
     assert (p[2]["amount"], p[2]["unit"], p[2]["check"], p[2]["grams"]) == (3, "egg", False, 150)
     # Accept of a Check Amount proposal attaches the food with the flag
     r = env["c"].patch(f"/api/meals/{m['id']}/items/{ids[1]}", json={"food_id": p[1]["food"]["id"], "amount": 1, "unit": "cup", "check": True}).json()

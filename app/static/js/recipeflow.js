@@ -3,18 +3,18 @@
 // but only Save makes it count as saved: Back writes the state of the last save back after asking Discard Changes?.
 // Matching is optional: Save always saves. Rows still not matched are kept (to finish later) or removed, the user's choice.
 import { api } from './api.js';
-import { h, clear, field, message, show, select, sourceBadge, unitControl, kcalCue, extLink } from './dom.js';
+import { h, clear, field, message, show, select, sourceBadge, unitControl, kcalCue, extLink, checkBlock } from './dom.js';
 import { toJpeg } from './ai.js';
 import { importPhotoChoice, loadPhotoConfig } from './photo.js';
 import { confirmClaude } from './notice.js';
 import { chips } from './saved.js';
 import { stepsEditor } from './steps.js';
-import { unitChoices, fmtNum, fmtAmount, servingText, centsText, sentence, amountMemo, rowAmountText, matchedAmountText, MICROS, microValue, aiFeature, aiFeatureOff, effectiveAutoMatch, CLAUDE_CAP_NOTE, recipeTextCostLine } from './util.js';
+import { unitChoices, fmtNum, fmtAmount, servingText, centsText, sentence, amountMemo, rowAmountText, matchedAmountText, MICROS, microValue, aiFeature, aiFeatureOff, effectiveAutoMatch, CLAUDE_CAP_NOTE, recipeTextCostLine, checkReasonLine, ESTIMATE_SOURCES } from './util.js';
 import {
   parseIngredientText, parseIngredientLine, reviewDraft, reviewBody, blankRow, matchState, matchCountText, toggleAll, toggleId,
   proposalText, matchWhat, importWhat, matchSnapshot, restoreBody, changedSince, nextUnmatched, pendingProposals,
   acceptAllText, notMatchedText, saveChoice, canSaveWithout, SAVE_WITHOUT_NONE, unmatchedIds, photoPick, PHOTOS_TEXT, MATCH_METHODS, matchMethod, matchRunText, methodBatch, matchDoneText, proposalHead,
-  importUnitOptions, AUTO_MATCH_LOADING, AUTO_MATCH_FAILED, autoMatchIds, autoMatchResult, autoMatchPlan, autoClaudeBatch, claudeKeep, claudeOffNote, previousCountText, PREVIOUS_CUE, AUTO_CLAUDE_FAILED, AUTO_CLAUDE_CANCELLED, rateLimitNote,
+  importUnitOptions, reviewFlag, pkgNote, useGrams, AUTO_MATCH_LOADING, AUTO_MATCH_FAILED, autoMatchIds, autoMatchResult, autoMatchPlan, autoClaudeBatch, claudeKeep, claudeOffNote, previousCountText, PREVIOUS_CUE, AUTO_CLAUDE_FAILED, AUTO_CLAUDE_CANCELLED, rateLimitNote,
   urlCheck, urlImportOn, recipeUrlCostLine, sourceLink, URL_TEXT, URL_MAX,
 } from './recipeimport.js';
 import { servingSizeEditor } from './servingsize.js';
@@ -172,13 +172,33 @@ export function renderReview(root, ctx) {
       return f;
     };
     const unitSel = unitControl(importUnitOptions(), String(r.unit == null ? '' : r.unit).trim(), { 'aria-label': 'Unit of ingredient ' + (i + 1) });
-    unitSel.addEventListener('change', () => { r.unit = unitSel.value; });
     const unitBox = h('label', { class: 'field import-unit' }, h('span', null, 'Unit'), unitSel);
+    // A package or fuzzy unit with no printed size: the reason, and Use Grams to type grams at once (or pick another unit).
+    const flagText = h('span', null);
+    const flag = h('p', { class: 'check-reason import-flag', id: 'flag-' + i },
+      h('span', { class: 'match-state match-check' }, 'Check Amount'), ' ', flagText, ' ',
+      h('button', { class: 'link-btn', type: 'button', onclick: () => { useGrams(r); paintRows(); focusRow(i, '.import-amount input'); } }, 'Use Grams'));
+    const pkg = h('p', { class: 'pkg-note' });
+    const paintFlag = () => {
+      const t = reviewFlag(r);
+      flagText.textContent = t;
+      flag.hidden = !t;
+      pkg.textContent = pkgNote(r);
+      pkg.hidden = !pkg.textContent;
+    };
+    unitSel.addEventListener('change', () => { r.unit = unitSel.value; paintFlag(); });
+    const fields = h('div', { class: 'import-fields' }, box('amount', 'Amount', { inputmode: 'decimal' }), unitBox,
+      box('name', 'Ingredient'), box('note', 'Note'));
+    fields.querySelector('.import-amount input').addEventListener('input', paintFlag);
+    paintFlag();
     return h('li', { class: 'import-row' },
-      h('div', { class: 'import-fields' }, box('amount', 'Amount', { inputmode: 'decimal' }), unitBox,
-        box('name', 'Ingredient'), box('note', 'Note')),
+      h('div', null, fields, flag, pkg),
       h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Remove ingredient ' + (i + 1) + (r.name ? ', ' + r.name : ''),
         onclick: () => { draft.rows.splice(i, 1); paintRows(); } }, '×'));
+  }
+  function focusRow(i, sel) {
+    const el = list.children[i] && list.children[i].querySelector(sel);
+    if (el) el.focus();
   }
   function paintRows(focusLast) {
     clear(list);
@@ -237,7 +257,12 @@ function foodLine(it) {
   return h('span', { class: 'item-sub' }, (f.brand ? f.name + ' (' + f.brand + ')' : f.name) + ' ', sourceBadge(f.source, true),
     ' - ' + matchedAmountText(it.amount, it.unit, it.grams) + (it.check ? '' : ' - ' + fmtNum(it.kcal, 0) + ' kcal'),
     it.check ? null : kcalCue(it),
-    it.estimated && !it.check ? [' ', h('span', { class: 'src-est' }, 'Estimated Conversion')] : null);
+    it.estimated && !it.check ? [' ', h('span', { class: 'src-est', title: 'From ' + (ESTIMATE_SOURCES[it.estimate_source] || ESTIMATE_SOURCES.guess) }, 'Estimated Conversion')] : null);
+}
+
+// Why a Check Amount row needs one, in words next to its chip: "No standard weight for clove, enter grams".
+function reasonLine(it) {
+  return h('span', { class: 'check-reason' }, checkReasonLine(it.check_reason, (it.src && it.src.unit) || it.unit));
 }
 
 // params: { mealId, saved? (just saved by Import, shows Step 2 of 2), edit? (opened to change a finished recipe: the same page,
@@ -260,6 +285,7 @@ export async function renderMatch(root, params, ctx) {
   const limitNote = h('div', { 'aria-live': 'polite' });  // the quiet USDA rate limit note, kept above the rows until the next search
   let busy = false;  // Auto-Match After Import is running
   const count = h('p', { class: 'match-count', 'aria-live': 'polite' });
+  const checks = h('div');  // the amounts to check, with each reason
   const list = h('ul', { class: 'list match-list' });
   const totals = h('div');
   const allBox = h('input', { type: 'checkbox', id: 'match-all', onchange: () => { selected = toggleAll(meal.items, selected); keepSel(); paintRows(); } });
@@ -523,7 +549,7 @@ export async function renderMatch(root, params, ctx) {
       h('p', { class: 'proposal-head' }, proposalHead(p) + ' ', p.food ? sourceBadge(p.food.source, true) : null,
         p.kind === 'candidate' && !bySearch && !p.from_previous ? h('span', { class: 'src-est' }, ' Database Match') : null,
         p.from_previous ? h('span', { class: 'src-est previous-cue' }, ' ' + PREVIOUS_CUE) : null),
-      h('p', null, proposalText(p) + (p.food ? kcal : '')),
+      h('p', null, proposalText(p) + (p.food ? kcal : ''), p.estimated ? [' ', h('span', { class: 'src-est' }, 'Estimated Conversion')] : null),
       p.food && p.note && !p.from_previous ? h('p', { class: 'sub' }, sentence(p.note)) : null,
       est && !p.food.id ? h('p', { class: 'sub' }, 'No database food fitted, so this is an estimate. Accept saves it as a Claude food.') : null,
       p.warnings && p.warnings.length ? h('ul', { class: 'warnings' }, p.warnings.map((w) => h('li', null, sentence(w)))) : null,
@@ -548,7 +574,9 @@ export async function renderMatch(root, params, ctx) {
     const unitBox = h('label', { class: 'field unit-field' }, h('span', null, 'Unit'), h('span', { class: 'sub' }, 'Loading...'));
     const save = h('button', { class: 'btn small primary', type: 'button', disabled: true }, item.check ? 'Confirm Amount' : 'Save Amount');
     let unitSel = null;
+    let hasGrams = false;
     unitsOf(item.food_id).then((units) => {
+      hasGrams = units.some((u) => u.unit === 'g');
       unitSel = unitControl(unitChoices(units).map((u) => ({ value: u.value, label: u.label + (u.estimated ? ' (estimated)' : '') })), item.unit, { 'aria-label': 'Unit of ' + name });
       unitBox.replaceChild(unitSel, unitBox.lastChild);
       save.disabled = false;
@@ -561,11 +589,18 @@ export async function renderMatch(root, params, ctx) {
       apply(item.id, { food_id: item.food_id, amount: a, unit: unitSel.value });
     });
     const noAmount = item.check && item.src && item.src.amount == null;
+    // Enter Grams: the quick way out of a missing weight, the unit goes to g and the amount box is cleared for typing.
+    const grams = h('button', { class: 'btn small', type: 'button', onclick: () => {
+      if (!unitSel || !hasGrams) { amt.input.focus(); return; }
+      unitSel.value = 'g';
+      amt.input.value = '';
+      amt.input.focus();
+    } }, 'Enter Grams');
     return h('div', { class: 'amount-check', role: 'group', 'aria-label': (item.check ? 'Check amount of ' : 'Amount of ') + name },
       item.check ? h('p', { class: 'sub' }, noAmount ? 'The recipe gives no amount here. Enter one, or leave it empty to keep plain text.'
-        : 'The recipe amount could not be converted for this food. Enter the amount, then tap Confirm Amount.') : null,
+        : 'The recipe amount could not be converted for this food. Enter the amount, or tap Enter Grams, then tap Confirm Amount.') : null,
       h('p', { class: 'sub' }, 'Leave the amount empty to keep the line as plain text.'),
-      h('div', { class: 'amount-edit' }, amt, unitBox, save,
+      h('div', { class: 'amount-edit' }, amt, unitBox, save, item.check && !noAmount ? grams : null,
         item.check ? null : h('button', { class: 'btn small ghost', type: 'button', onclick: () => { delete editing[item.id]; paintRows(); } }, 'Cancel')));
   }
 
@@ -576,7 +611,7 @@ export async function renderMatch(root, params, ctx) {
       onchange: () => { selected = toggleId(selected, item.id); keepSel(); paintHead(); } }) : null;
     const chip = (text) => h('span', { class: 'match-state match-' + state }, text);
     const stateNode = state === 'matched' ? foodLine(item)
-      : state === 'check' ? h('span', { class: 'match-text' }, h('span', { class: 'item-sub' }, chip('Check Amount')), foodLine(item))
+      : state === 'check' ? h('span', { class: 'match-text' }, h('span', { class: 'item-sub' }, chip('Check Amount')), reasonLine(item), foodLine(item))
         : h('span', { class: 'item-sub' }, chip(state === 'skipped' ? 'Skipped' : 'Unmatched'));
     const p = props[item.id];
     return h('li', { class: 'match-row' + (i === current ? ' current' : ''), id: 'ing-' + item.id, tabindex: '-1',
@@ -601,6 +636,7 @@ export async function renderMatch(root, params, ctx) {
 
   function paintHead() {
     count.textContent = matchCountText(meal);
+    show(checks, checkBlock(meal));
     const open = meal.items.filter((i) => matchState(i) === 'unmatched').map((i) => i.id);
     allBox.checked = open.length > 0 && open.every((id) => selected.indexOf(id) >= 0);
     matchBtn.disabled = busy || !selected.length;
@@ -641,7 +677,7 @@ export async function renderMatch(root, params, ctx) {
     h('p', { class: 'sub' }, params.edit
       ? 'Change any ingredient: search again, scan a barcode, edit the amount, skip it or remove it, or add a new one. Matching is optional. Tap Save when you are done. Back leaves without the changes made since you opened this page.'
       : 'The recipe is saved. Match the ingredients you want counted, or leave some for later. Tap Save when you are done. Back leaves without the changes made since you opened this page.'),
-    h('h2', null, meal.name), count,
+    h('h2', null, meal.name), count, checks,
     h('div', { class: 'match-jump' }, jumpBtn),
     acceptRow,
     h('div', { class: 'row wrap match-bulk' }, h('label', { class: 'check', for: 'match-all' }, allBox, ' Select All')),

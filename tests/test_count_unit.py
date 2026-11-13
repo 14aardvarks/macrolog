@@ -6,14 +6,16 @@ from tests.test_core import BREAD, PB, a, b, env, food  # noqa: F401
 from tests.test_recipe_match import imported
 from tests.test_units import EGG, FLOUR_CUP, FLOUR_G, food as unit_food
 
-SALT_LINE = {"name": "salt", "note": "to taste"}
+SALT_LINE = {"name": "salt", "note": "to taste", "pkg_amount": None, "pkg_unit": None}
 
 
-def test_every_food_offers_count_and_none_last():
-    for f in (FLOUR_G, FLOUR_CUP, EGG, unit_food(2, "serving")):
+def test_count_is_offered_only_where_one_thing_has_a_weight():
+    for f in (EGG, unit_food(2, "slice"), unit_food(1, "piece", g=40)):
         us = [u["unit"] for u in units.available_units(f)]
         assert us[-1] == "count" and "" not in us  # the blank choice is now the Custom fill-in, made by the client
-    labels = {u["unit"]: u["label"] for u in units.available_units(FLOUR_G)}
+    for f in (FLOUR_G, FLOUR_CUP, unit_food(2, "serving")):  # a measure label knows no count weight (issue #45)
+        assert "count" not in [u["unit"] for u in units.available_units(f)]
+    labels = {u["unit"]: u["label"] for u in units.available_units(EGG)}
     assert labels["count"] == "count"  # lowercase everywhere
 
 
@@ -39,8 +41,9 @@ def test_match_amount_skips_blank_amount_and_handles_blank_unit_and_count():
         assert units.match_amount(FLOUR_G, amount, "") is None
     assert units.match_amount(EGG, 2, "count") == {"amount": 2, "unit": "egg", "check": False}
     assert units.match_amount(EGG, 2, "") == {"amount": 2, "unit": "egg", "check": False}
-    assert units.match_amount(FLOUR_G, 2, "Count") == {"amount": 2, "unit": "serving", "check": False}
-    assert units.match_amount(FLOUR_G, 2, None) == {"amount": 2, "unit": "serving", "check": False}
+    no_weight = {"amount": 30, "unit": "g", "check": True, "reason": "no_weight"}  # never 2 label servings (issue #45)
+    assert units.match_amount(FLOUR_G, 2, "Count") == no_weight and units.match_amount(FLOUR_G, 2, None) == no_weight
+    assert units.grams(FLOUR_G, 2, "count") is None and units.grams(FLOUR_G, 2, "") is None
     assert units.match_amount(unit_food(2, "slice"), 4, "count") == {"amount": 4, "unit": "slice", "check": False}
 
 
@@ -61,7 +64,7 @@ def test_import_keeps_blank_amount_and_unit_as_plain_text(a):
     m = imported(a, [{"name": "bread", "amount": 2, "unit": "slice"}, SALT_LINE, {"text": "a pinch of salt", "name": "salt"},
                      {"name": "oil", "amount": 1}])
     src = [i["src"] for i in m["items"]]
-    assert src[1] == {"text": "salt, to taste", "amount": None, "unit": None, "name": "salt", "note": "to taste"}
+    assert src[1] == {"text": "salt, to taste", "amount": None, "unit": None, "name": "salt", "note": "to taste", "pkg_amount": None, "pkg_unit": None}
     assert src[2]["text"] == "a pinch of salt" and src[2]["amount"] is None
     assert src[3]["amount"] == 1 and src[3]["unit"] == "count"  # an amount with no unit is a count
     assert m["needed"] == 4
@@ -96,14 +99,14 @@ def test_claude_import_keeps_missing_units_blank():
     for v in (None, "", "  ", "-", "none", "None"):
         assert recipe_ai.clean_unit(v) is None
     assert recipe_ai.clean_unit("Count") == "count" and recipe_ai.clean_unit("Tbsp.") == "tbsp"
-    draft, _ = recipe_ai.clean_recipe({"name": "R", "ingredients": [{"text": "salt to taste", "amount": None, "unit": None, "name": "salt", "note": "to taste"}]})
+    draft, _ = recipe_ai.clean_recipe({"name": "R", "ingredients": [{"text": "salt to taste", "amount": None, "unit": None, "name": "salt", "note": "to taste", "pkg_amount": None, "pkg_unit": None}]})
     assert draft["ingredients"][0]["amount"] is None and draft["ingredients"][0]["unit"] is None
 
 
 # ---------- typed units (issue #36) ----------
 
 def test_unit_or_blank_keeps_a_typed_unit_as_typed():
-    assert units.unit_or_blank("Pinch") == "Pinch"
+    assert units.unit_or_blank("Shell") == "Shell" and units.unit_or_blank("Pinches") == "pinch"  # a fuzzy unit is a known unit
     assert units.unit_or_blank("  to   taste ") == "to taste"
     assert units.unit_or_blank("pi\x00nch\x07") == "pinch"
     assert units.unit_or_blank("Cups") == "cup" and units.unit_or_blank("Count") == "count"
@@ -120,10 +123,12 @@ def test_typed_units_scale_like_count_and_know_no_weight():
     assert "pinch" not in [u["unit"] for u in units.available_units(FLOUR_G)]
 
 
-def test_match_amount_keeps_a_typed_unit_without_a_check():
-    for unit in ("pinch", "can", "to taste", "Clove"):
-        assert units.match_amount(FLOUR_G, 2, unit) == {"amount": 2, "unit": unit, "check": False}
+def test_match_amount_keeps_a_typed_unit_only_with_a_count_weight():
+    for unit in ("shell", "to taste"):
+        assert units.match_amount(FLOUR_G, 2, unit) == {"amount": 30, "unit": "g", "check": True, "reason": "no_weight"}
         assert units.match_amount(EGG, 2, unit) == {"amount": 2, "unit": unit, "check": False}
+    for unit, reason in (("pinch", "no_weight"), ("Clove", "no_weight"), ("can", "no_size")):  # not the label's own word
+        assert units.match_amount(EGG, 2, unit) == {"amount": 1, "unit": "egg", "check": True, "reason": reason}
     assert units.match_amount(EGG, 2, "large") == {"amount": 2, "unit": "egg", "check": False}  # still a plain count
     assert units.match_amount(FLOUR_G, None, "pinch") is None
 
