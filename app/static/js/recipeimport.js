@@ -121,6 +121,47 @@ export function parseIngredientText(text) {
 
 // ---------- review draft ----------
 
+// ---------- Note For Claude and Rerun With Notes (issue #46) ----------
+// After Claude reads a recipe, Rerun With Notes goes back to the import input with everything still filled in and runs the same
+// read again with a note. The review that was showing is never replaced until the new read succeeds, so Back, Cancel and a failed
+// run all leave it as it was, edits included. Nothing is saved before Save and Continue.
+
+export const NOTE_MAX = 500;  // same as recipe_ai.NOTE_MAX on the server
+export const NOTE_LABEL = 'Note For Claude';
+export const NOTE_HINT = sentence('Optional. Tell Claude how to read the recipe');
+export const NOTE_EXAMPLES = 'Examples: amounts are in grams, ignore the sauce, split into two recipes';
+export const RERUN_LABEL = 'Rerun With Notes';
+export const RERUN_TEXT = sentence('Claude reads the same input again with your note. The previous result stays until the new one replaces it, so Back or Cancel keeps it');
+
+// The typed note checked like recipe_ai.clean_note: { note } (spaces folded, '' when blank) or { error }.
+export function noteCheck(text) {
+  const v = String(text == null ? '' : text);
+  if (/[\u0000-\u001f\u007f-\u009f]/.test(v)) return { error: 'The note must not contain control characters.' };
+  const note = v.split(/\s+/).filter(Boolean).join(' ');
+  if (note.length > NOTE_MAX) return { error: 'Keep the note to ' + NOTE_MAX + ' characters or fewer.' };
+  return { note };
+}
+
+// Only a result Claude read can be rerun (Split Lines Without Claude has nothing to send again).
+export const canRerun = (draft) => !!(draft && draft.claude === true);
+
+// The input the rerun screen opens with: everything kept (text, photos, web address, the previous note), on the source Claude read.
+export function rerunInput(input, draft) {
+  const kind = draft && draft.source ? draft.source : input && input.kind;
+  return { ...(input || {}), kind: kind || 'text' };
+}
+
+// One Claude read of any source: send(note) is the API call. { draft } on success (the note is not part of the draft, it stays on the
+// input), { error, status } on failure. The caller replaces its current draft only when a draft comes back, so a failed rerun keeps
+// the previous result.
+export async function claudeRead(kind, rawNote, send, extra) {
+  const n = noteCheck(rawNote);
+  if (n.error) return { error: n.error };
+  let r;
+  try { r = await send(n.note); } catch (e) { return { error: e && e.message ? e.message : 'Claude could not read the recipe.', status: e && e.status }; }
+  return { draft: reviewDraft(r.recipe, { warnings: r.warnings, cost: r.cost, claude: true, source: kind, ...(extra || {}) }) };
+}
+
 // ---------- Import Recipe from a web address ----------
 // Anthropic's web fetch tool reads the page for Claude. This server never opens the address, so these checks are input hygiene only.
 

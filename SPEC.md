@@ -345,10 +345,13 @@ Recipe import and ingredient matching with Claude, through ai._ask (same key res
 and cost fields as /api/ai/label, one request each, strict tool schemas). Page text, recipe text and ingredient names are data
 in tags, never instructions.
 ```
-POST /api/recipes/import/text   {"text": 1..20000 chars, "note"?: ..300} -> {"recipe": {"name","servings","ingredients":[{text,amount,unit,name,note}],"steps":[str]}, "warnings", usage fields}
+POST /api/recipes/import/text   {"text": 1..20000 chars, "note"?: ..500} -> {"recipe": {"name","servings","ingredients":[{text,amount,unit,name,note}],"steps":[str]}, "warnings", usage fields}
+     # note (all three import routes, issue #46, `recipe_ai.clean_note`): optional text, spaces folded, at most 500 characters, no control
+     # characters (a line break or tab included); otherwise 400 before any key, cap or request. It goes into the prompt only as
+     # <note>..</note> (angle brackets dropped) after the instruction that it is data, never instructions; no tag when empty.
      # the import tool has one optional property, steps (a plain array of strings): the method only, no ingredient lists, ads or comments;
      # cut to core's limits with a warning
-POST /api/recipes/import/photos multipart images (1 to 3, same limits as /label), hint? -> same   # nothing is saved
+POST /api/recipes/import/photos multipart images (1 to 3, same limits as /label), note? (..500; hint is the older name, note wins) -> same   # nothing is saved
 POST /api/recipes/{meal_id}/match {"item_ids": [1..15 ids of my recipe]} -> {"proposals":[{item_id, kind: candidate|estimate|none,
      food (candidate: saved with id; estimate: source ai draft without id), amount, unit, check, grams, note, warnings, preview}], usage fields}
      # amount and unit: units.match_amount on the recipe line, else on Claude's amount and unit, else one label serving with check true
@@ -358,7 +361,7 @@ POST /api/recipes/{meal_id}/match {"item_ids": [1..15 ids of my recipe]} -> {"pr
 GET /api/ai/status?recipe_chars=N | recipe_images=N | match_rows=N | micros=N (1..10)   # cost estimates for those requests
      # every status also carries action_costs (Full Claude Use table, see below)
 ```
-POST /api/recipes/import/url {"url": str, "note"?: ..300} -> same reply as /import/text, plus recipe.source_url   # nothing is saved
+POST /api/recipes/import/url {"url": str, "note"?: ..500} -> same reply as /import/text, plus recipe.source_url   # nothing is saved
      # url (core.clean_source_url, input hygiene only): text, http or https with a host, no user name or password, no whitespace,
      # control characters or angle brackets, at most 2000 characters; else 400 before the switches. Then 403 when ai_allow_recipe or
      # ai_allow_recipe_url is off, 503 no key, 429 cap. The page is fetched by Anthropic's server side web fetch tool, never by
@@ -495,8 +498,9 @@ Screens: Login, Today, Add, Recipes, Picker, Claude fallback, Settings. Bottom n
   ai_allow_recipe and ai_allow_recipe_url on; input type url, Enter or Read With Claude, `urlCheck` mirrors the server checks inline,
   the confirm notice asks /api/ai/status?recipe_url=1 and says "Estimated cost up to about ... This is an upper estimate" from est_upper;
   Full Claude Use sends at once with `recipeUrlCostLine`; errors inline; v67), then a review
-  screen (name, servings, ingredient rows with amount, unit, name and note, add and remove, Steps, meal tag chips, Save and Continue, Cancel;
-  a URL import shows "Source example.com" and sends source_url). meals.source_url (TEXT, null = none; added in place by core.init) is
+  screen (name, servings, ingredient rows with amount, unit, name and note, add and remove, Steps, meal tag chips, Save and Continue, Rerun With Notes, Cancel;
+  a URL import shows "Source example.com" and sends source_url). The input screen has a Note For Claude box (optional, 500 characters, hint and examples: amounts are in grams, ignore the sauce, split into two recipes), `noteCheck` mirrors the server.
+  Rerun With Notes (v75, issue #46; only on a result Claude read, draft.claude): opens the import screen again (history entry params.rerun, no URL of its own) titled Rerun With Notes, with the pasted text, the chosen photos (flow.input.files), the web address and the previous note still filled in, on the source Claude read (draft.source). Read With Claude sends the same request as a normal import with the note (same cost notice or Full Claude Use line, confirm rule, monthly cap and key; no extra confirm), checked before the notice. ctx.flow.draft is replaced only by a successful read (`claudeRead` returns a draft or an error), then ctx.back() shows the new review; Back, Cancel or a failed read (error inline on the input screen) leave the previous review exactly as it was, edits included. Split Lines Without Claude is hidden there. Nothing is saved before Save and Continue. meals.source_url (TEXT, null = none; added in place by core.init) is
   validated by core.clean_source_url on POST /api/meals/import, returned by meal_dict and copied by Duplicate. The recipe screen shows it
   under the per serving line as recipeflow.js `sourceNode`: a link (target _blank, rel noopener noreferrer, the site name as text,
   "opens in a new tab" in its label) only for http and https addresses (recipeimport.js `sourceLink`).

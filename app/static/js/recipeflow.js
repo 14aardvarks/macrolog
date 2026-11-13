@@ -16,6 +16,7 @@ import {
   acceptAllText, notMatchedText, saveChoice, canSaveWithout, SAVE_WITHOUT_NONE, unmatchedIds, photoPick, PHOTOS_TEXT, MATCH_METHODS, matchMethod, matchRunText, methodBatch, matchDoneText, proposalHead,
   importUnitOptions, reviewFlag, pkgNote, useGrams, AUTO_MATCH_LOADING, AUTO_MATCH_FAILED, autoMatchIds, autoMatchResult, autoMatchPlan, autoClaudeBatch, claudeKeep, claudeOffNote, previousCountText, PREVIOUS_CUE, AUTO_CLAUDE_FAILED, AUTO_CLAUDE_CANCELLED, rateLimitNote,
   urlCheck, urlImportOn, recipeUrlCostLine, sourceLink, URL_TEXT, URL_MAX,
+  NOTE_MAX, noteCheck, NOTE_LABEL, NOTE_HINT, NOTE_EXAMPLES, RERUN_LABEL, RERUN_TEXT, canRerun, rerunInput, claudeRead,
 } from './recipeimport.js';
 import { servingSizeEditor } from './servingsize.js';
 
@@ -25,8 +26,12 @@ const costLine = (cost, what) => (cost == null ? null : h('p', { class: 'sub' },
 
 // ---------- step 1: source ----------
 
-// ctx.flow.input keeps { kind, text, note } for the visit, so Back from the review screen finds the text again.
-export async function renderImport(root, ctx) {
+// ctx.flow.input keeps { kind, text, url, files, note } for the visit, so Back from the review screen finds them again.
+// params.rerun (Rerun With Notes on the review screen): the same screen with everything still filled in. The review in ctx.flow.draft
+// is not replaced until the new read succeeds, so Back, Cancel and a failed read leave it exactly as it was.
+export async function renderImport(root, ctx, params) {
+  const rerun = !!(params && params.rerun && canRerun(ctx.flow.draft));
+  if (rerun) Object.assign(ctx.flow.input, rerunInput(ctx.flow.input, ctx.flow.draft));
   const input = ctx.flow.input;
   let st = null;
   try { st = await api.aiStatus(); } catch (e) { st = { enabled: false }; }
@@ -39,6 +44,7 @@ export async function renderImport(root, ctx) {
   const capped = direct && !(st.remaining > 0);
   const status = h('div', { 'aria-live': 'polite' });
   const panel = h('div');
+  const cancelRerun = rerun ? h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Cancel') : null;
   // Web Address shows only when the administrator allows URL import and Claude is usable for this user.
   const urlOn = urlImportOn(st);
   if (input.kind === 'url' && !urlOn) input.kind = 'text';
@@ -56,17 +62,20 @@ export async function renderImport(root, ctx) {
   const area = h('textarea', { rows: '10', maxlength: String(MAX_TEXT), autocomplete: 'off', placeholder: 'Paste the recipe or just its ingredient list' });
   area.value = input.text || '';
   area.addEventListener('input', () => { input.text = area.value; });
-  const note = field('Note for Claude (optional)', { autocomplete: 'off', value: input.note || '', maxlength: '300', placeholder: 'e.g. use the second recipe on the page' });
+  const note = field(NOTE_LABEL, { autocomplete: 'off', value: input.note || '', maxlength: String(NOTE_MAX), 'aria-describedby': 'import-note-help' });
   note.input.addEventListener('input', () => { input.note = note.input.value; });
+  const noteBox = h('div', { class: 'import-note' }, note, h('p', { class: 'sub', id: 'import-note-help' }, NOTE_HINT + ' ', NOTE_EXAMPLES));
+  let chosen = input.files || [];  // the photos stay chosen when the screen comes back (Back from review, Rerun With Notes)
   const files = h('input', { type: 'file', accept: 'image/*', multiple: '', class: 'visually-hidden', onchange: onFiles });
   const fileList = h('p', { class: 'sub' }, 'No photos chosen.');
+  const fileText = () => (chosen.length ? chosen.length + (chosen.length === 1 ? ' photo: ' : ' photos: ') + chosen.map((f) => f.name).join(', ') : 'No photos chosen.');
+  fileList.textContent = fileText();
   const photoNote = h('div', { 'aria-live': 'polite' });
-  let chosen = [];
 
   const readText = h('button', { class: 'btn primary', type: 'button', onclick: sendText, disabled: capped, 'aria-describedby': direct ? 'import-direct' : null }, 'Read With Claude');
   const directNote = direct ? h('p', { class: 'sub', id: 'import-direct' }, capped ? CLAUDE_CAP_NOTE : recipeTextCostLine(st)) : null;
   const splitText = h('button', { class: 'btn', type: 'button', onclick: splitLocal }, 'Split Lines Without Claude');
-  const readPhotos = h('button', { class: 'btn primary', type: 'button', disabled: true, onclick: sendPhotos }, 'Read With Claude');
+  const readPhotos = h('button', { class: 'btn primary', type: 'button', disabled: capped || !chosen.length, onclick: sendPhotos }, 'Read With Claude');
   const noAi = aiOn ? null : message((aiFeatureOff(st, 'recipe') ? 'Claude recipe import is turned off on this server' : 'Claude is not set up for you')
     + ', so paste the ingredient list and split the lines without Claude.');
 
@@ -74,72 +83,89 @@ export async function renderImport(root, ctx) {
     tabs.querySelectorAll('button').forEach((b) => b.setAttribute('aria-selected', b.dataset.kind === input.kind ? 'true' : 'false'));
     show(status, null);
     if (input.kind === 'url') {
-      show(panel, h('div', null, urlBox, urlHelp, note, h('div', { class: 'row wrap' }, readUrl), urlDirect));
+      show(panel, h('div', null, urlBox, urlHelp, noteBox, h('div', { class: 'row wrap' }, readUrl, cancelRerun), urlDirect));
     } else if (input.kind === 'photos') {
       show(panel, h('div', null,
         h('p', { class: 'sub' }, PHOTOS_TEXT),
-        aiOn ? [h('label', { class: 'btn' }, 'Choose or Take Photos', files), fileList, photoNote, note, h('div', { class: 'row wrap' }, readPhotos), capped ? h('p', { class: 'sub' }, CLAUDE_CAP_NOTE) : null] : noAi));
+        aiOn ? [h('label', { class: 'btn' }, 'Choose or Take Photos', files), fileList, photoNote, noteBox, h('div', { class: 'row wrap' }, readPhotos, cancelRerun), capped ? h('p', { class: 'sub' }, CLAUDE_CAP_NOTE) : null] : noAi));
     } else {
       show(panel, h('div', null,
         h('label', { class: 'field' }, h('span', null, 'Recipe text'), area),
         h('p', { class: 'sub' }, 'Split Lines Without Claude reads one ingredient per line and costs nothing. Claude copes with whole pages.'),
-        aiOn ? note : noAi, h('div', { class: 'row wrap' }, aiOn ? readText : null, splitText), directNote));
+        aiOn ? noteBox : noAi, h('div', { class: 'row wrap' }, aiOn ? readText : null, rerun ? null : splitText, cancelRerun), directNote));
     }
   }
   function onFiles() {
     const pick = photoPick(Array.prototype.slice.call(files.files || []));
     chosen = pick.files;
+    input.files = chosen;
     show(photoNote, pick.warning ? message(pick.warning, 'error') : null);
-    fileList.textContent = chosen.length ? chosen.length + (chosen.length === 1 ? ' photo: ' : ' photos: ') + chosen.map((f) => f.name).join(', ') : 'No photos chosen.';
+    fileList.textContent = fileText();
     readPhotos.disabled = capped || !chosen.length;
   }
-  const done = (recipe, extra) => { ctx.flow.draft = reviewDraft(recipe, extra); ctx.go('importreview'); };
+  const done = (draft) => {
+    ctx.flow.draft = draft;
+    if (rerun) ctx.back();  // the review this rerun came from shows the new result in its place
+    else ctx.go('importreview');
+  };
   function splitLocal() {
     const r = parseIngredientText(area.value);
     if (!r.ingredients.length) { show(status, message('Paste at least one ingredient line first.', 'error')); return; }
-    done(r, { warnings: [] });
+    done(reviewDraft(r, { warnings: [] }));
+  }
+  // One Claude read: a failure shows inline here and the review (if any) stays as it was; only a result replaces it.
+  async function read(kind, send, extra) {
+    const out = await claudeRead(kind, note.input.value, send, extra);
+    if (out.error) { show(status, message(out.status === 429 && direct ? CLAUDE_CAP_NOTE : out.error, 'error')); return; }
+    done(out.draft);
+  }
+  // The note is checked before the cost notice, so nobody confirms a request that would be refused.
+  function noteOk() {
+    const n = noteCheck(note.input.value);
+    if (n.error) { show(status, message(n.error, 'error')); note.input.focus(); }
+    return !n.error;
   }
   async function sendText() {
     const text = area.value;
     if (!text.trim()) { show(status, message('Paste the recipe text first.', 'error')); return; }
+    if (!noteOk()) return;
     readText.disabled = true;
     try {
       if (!direct && !(await confirmClaude(ctx.settings, { what: importWhat('text', text.length), query: { recipe_chars: text.length } }))) return;
       show(status, message('Claude is reading the recipe...'));
-      const r = await api.recipeFromText(text, note.input.value.trim());
-      done(r.recipe, { warnings: r.warnings, cost: r.cost });
-    } catch (e) { show(status, message(e.status === 429 && direct ? CLAUDE_CAP_NOTE : e.message, 'error')); } finally { readText.disabled = capped; }
+      await read('text', (n) => api.recipeFromText(text, n));
+    } finally { readText.disabled = capped; }
   }
   async function sendUrl() {
     if (readUrl.disabled) return;
     const c = urlCheck(urlBox.input.value);
     if (c.error) { show(status, message(c.error, 'error')); urlBox.input.focus(); return; }
+    if (!noteOk()) return;
     readUrl.disabled = true;
     try {
       if (!direct && !(await confirmClaude(ctx.settings, { what: importWhat('url'), query: { recipe_url: 1 } }))) return;
       show(status, message('Claude is reading the page...'));
-      const r = await api.recipeFromUrl(c.url, note.input.value.trim());
-      done(r.recipe, { warnings: r.warnings, cost: r.cost });
-    } catch (e) { show(status, message(e.status === 429 && direct ? CLAUDE_CAP_NOTE : e.message, 'error')); } finally { readUrl.disabled = capped; }
+      await read('url', (n) => api.recipeFromUrl(c.url, n));
+    } finally { readUrl.disabled = capped; }
   }
   async function sendPhotos() {
+    if (!noteOk()) return;
     readPhotos.disabled = true;
     try {
       if (!direct && !(await confirmClaude(ctx.settings, { what: importWhat('photos', chosen.length), query: { recipe_images: chosen.length } }))) return;
       show(status, message('Preparing photos...'));
-      const form = new FormData();
-      for (let i = 0; i < chosen.length; i++) form.append('images', await toJpeg(chosen[i]), 'recipe' + (i + 1) + '.jpg');
-      if (note.input.value.trim()) form.append('hint', note.input.value.trim());
+      const forms = new FormData();
+      for (let i = 0; i < chosen.length; i++) forms.append('images', await toJpeg(chosen[i]), 'recipe' + (i + 1) + '.jpg');
       show(status, message('Claude is reading the recipe...'));
-      const r = await api.recipeFromPhotos(form);
-      done(r.recipe, { warnings: r.warnings, cost: r.cost, photoFiles: chosen.slice() });  // offered as the recipe photo on review
-    } catch (e) { show(status, message(e.status === 429 && direct ? CLAUDE_CAP_NOTE : e.message, 'error')); } finally { readPhotos.disabled = capped || !chosen.length; }
+      await read('photos', (n) => { if (n) forms.append('note', n); return api.recipeFromPhotos(forms); }, { photoFiles: chosen.slice() });  // offered as the recipe photo on review
+    } catch (e) { show(status, message(e.message, 'error')); } finally { readPhotos.disabled = capped || !chosen.length; }
   }
 
-  root.appendChild(h('section', { class: 'screen import' }, bar(ctx), h('h1', null, 'Import Recipe'),
-    h('p', { class: 'sub' }, 'Step 1 of 2. Bring in the ingredient list, then match each ingredient to a food.'),
+  root.appendChild(h('section', { class: 'screen import' }, bar(ctx), h('h1', null, rerun ? RERUN_LABEL : 'Import Recipe'),
+    h('p', { class: 'sub' }, rerun ? RERUN_TEXT : 'Step 1 of 2. Bring in the ingredient list, then match each ingredient to a food.'),
     tabs, panel, status));
   paint();
+  if (rerun) note.input.focus();
 }
 
 // ---------- step 1: review ----------
@@ -263,7 +289,9 @@ export function renderReview(root, ctx) {
     chips(draft.meals, (m) => { draft.meals = m; }, status),
     importPhotoChoice(draft),
     status,
-    h('div', { class: 'row wrap' }, save, h('button', { class: 'btn ghost', type: 'button', onclick: ctx.flow.cancel }, 'Cancel'))));
+    h('div', { class: 'row wrap' }, save,
+      canRerun(draft) ? h('button', { class: 'btn', type: 'button', onclick: () => ctx.go('import', { rerun: true }) }, RERUN_LABEL) : null,
+      h('button', { class: 'btn ghost', type: 'button', onclick: ctx.flow.cancel }, 'Cancel'))));
   paintRows();
 }
 

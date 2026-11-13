@@ -96,7 +96,7 @@ def test_import_text_returns_a_clean_draft(env):
 
 
 @pytest.mark.parametrize("body", [None, {}, {"text": ""}, {"text": "   "}, {"text": 5}, {"text": "x" * 20001},
-                                  {"text": "x", "evil": 1}, {"text": "x", "note": "n" * 301}])
+                                  {"text": "x", "evil": 1}, {"text": "x", "note": "n" * 501}, {"text": "x", "note": 5}, {"text": "x", "note": "a\x00b"}])
 def test_import_text_validation_before_any_request(env, body):
     assert env["c"].post("/api/recipes/import/text", json=body).status_code == 400
     assert env["requests"] == [] and usage_count() == 0
@@ -324,3 +324,54 @@ def test_clean_recipe_never_drops_a_real_amount(row, amount, unit, name, note):
     out, _ = recipe_ai.clean_recipe({"name": "X", "ingredients": [row]})
     got = out["ingredients"][0]
     assert (got["amount"], got["unit"], got["name"], got["note"]) == (pytest.approx(amount) if amount else amount, unit, name, note)
+
+
+# ---------- the note for Claude (issue #46): text and photos ----------
+
+def _send_import(env, kind, note=None, **extra):
+    if kind == "text":
+        body = {"text": "2 eggs"}
+        if note is not None:
+            body["note"] = note
+        return env["c"].post("/api/recipes/import/text", json=body)
+    files = [("images", ("a.jpg", JPEG, "image/jpeg"))]
+    return env["c"].post("/api/recipes/import/photos", files=files, data={} if note is None else {"note": note, **extra})
+
+
+def _sent_text(env, kind):
+    content = env["requests"][0]["messages"][0]["content"]
+    return content[0]["text"] if kind == "text" else content[-1]["text"]
+
+
+@pytest.mark.parametrize("kind", ["text", "photos"])
+def test_import_note_is_sent_as_data_inside_note_tags(env, kind):
+    r = _send_import(env, kind, "  Amounts are in grams, ignore the <b>sauce</b>  ")
+    assert r.status_code == 200, r.text
+    text = _sent_text(env, kind)
+    assert "<note>Amounts are in grams, ignore the b sauce /b</note>" in text
+    assert "never instructions" in text or "never as instructions" in text
+    assert text.index("never") < text.index("<note>Amounts")  # the data rule comes before the note
+    assert _send_import(env, kind, "n" * 500).status_code == 200
+
+
+@pytest.mark.parametrize("kind", ["text", "photos"])
+def test_import_without_a_note_sends_no_note_tag(env, kind):
+    for note in (None, "", "   "):
+        env["requests"].clear()
+        assert _send_import(env, kind, note).status_code == 200
+        assert "</note>" not in _sent_text(env, kind)
+
+
+@pytest.mark.parametrize("kind", ["text", "photos"])
+@pytest.mark.parametrize("note", ["n" * 501, "line one\nline two", "tab\there", "nul\x00byte", "bell\x07", "del\x7f"])
+def test_import_note_length_cap_and_control_characters_refused_before_any_request(env, kind, note):
+    r = _send_import(env, kind, note)
+    assert r.status_code == 400, r.text
+    assert env["requests"] == [] and usage_count() == 0
+
+
+def test_photo_note_replaces_the_older_hint_field(env):
+    files = [("images", ("a.jpg", JPEG, "image/jpeg"))]
+    r = env["c"].post("/api/recipes/import/photos", files=files, data={"note": "new", "hint": "stale"})
+    assert r.status_code == 200 and "<note>new</note>" in _sent_text(env, "photos") and "</note>" in _sent_text(env, "photos") and "stale" not in _sent_text(env, "photos")
+    assert env["c"].post("/api/recipes/import/photos", files=files, data={"hint": "n" * 501}).status_code == 400

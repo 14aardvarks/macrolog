@@ -964,7 +964,7 @@ const SCREENS = {
   picker: (root, p) => (state.recipe && state.recipe.match && p.adjust && p.entryId == null ? autoMatch(root, p) : renderPicker(root, p, ctx)),
   scan: (root, p) => { const auto = !!p.autostart; p.autostart = false; return renderScan(root, ctx, { autostart: auto }); },
   ai: (root, p) => renderAi(root, p, ctx),
-  import: (root) => renderImport(root, ctx),
+  import: (root, p) => renderImport(root, ctx, p),
   importreview: (root) => renderReview(root, ctx),
   match: (root, p) => { if (state.recipe && state.recipe.match) state.recipe = null; return renderMatch(root, p, ctx); },
   manual: (root, p) => renderFoodForm(root, { barcode: p.barcode }, ctx),

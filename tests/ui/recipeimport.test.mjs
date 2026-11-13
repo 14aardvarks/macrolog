@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   parseIngredientLine, parseIngredientText, servingsFrom, isHeading, reviewDraft, reviewBody, rowText, blankRow,
   matchState, matchCountText, recipeSubText, nextUnmatched, selectableIds, toggleAll, toggleId, matchBatch, proposalText, matchWhat, importWhat,
+  NOTE_MAX, NOTE_LABEL, NOTE_HINT, NOTE_EXAMPLES, RERUN_LABEL, noteCheck, canRerun, rerunInput, claudeRead,
 } from '../../app/static/js/recipeimport.js';
 
 const parts = (line) => { const r = parseIngredientLine(line); return r && [r.amount, r.unit, r.name, r.note]; };
@@ -231,4 +232,91 @@ test('issue 47: a real amount is never blanked by to taste or as needed, fractio
     assert.equal(got.length, 4, line);
     got.forEach((v, i) => (typeof v === 'number' ? assert.ok(Math.abs(v - want[i]) < 1e-9, line) : assert.equal(v, want[i], line)));
   }
+});
+
+// ---------- Note For Claude and Rerun With Notes (issue #46) ----------
+
+const READ = { recipe: { name: 'Pancakes', servings: 4, ingredients: [{ text: '1 cup flour', amount: 1, unit: 'cup', name: 'flour', note: null }], steps: ['Mix.'] },
+  warnings: ['Claude is unsure.'], cost: 0.002 };
+
+test('the note box wording and limits', () => {
+  assert.equal(NOTE_LABEL, 'Note For Claude');
+  assert.equal(RERUN_LABEL, 'Rerun With Notes');
+  assert.equal(NOTE_MAX, 500);
+  assert.equal(NOTE_HINT, 'Optional. Tell Claude how to read the recipe.');
+  for (const e of ['amounts are in grams', 'ignore the sauce', 'split into two recipes']) assert.ok(NOTE_EXAMPLES.includes(e));
+  assert.ok(!/[\u2014\u2013]/.test(NOTE_HINT + NOTE_EXAMPLES));
+});
+
+test('noteCheck folds spaces, allows 500 characters and refuses more or control characters', () => {
+  assert.deepEqual(noteCheck('  amounts   are in grams '), { note: 'amounts are in grams' });
+  assert.deepEqual(noteCheck(''), { note: '' });
+  assert.deepEqual(noteCheck(null), { note: '' });
+  assert.deepEqual(noteCheck('   '), { note: '' });
+  assert.equal(noteCheck('n'.repeat(500)).note.length, 500);
+  assert.match(noteCheck('n'.repeat(501)).error, /500 characters/);
+  for (const bad of ['a\nb', 'a\tb', 'a\u0000b', 'a\u001bb', 'a\u007fb']) assert.match(noteCheck(bad).error, /control characters/);
+});
+
+test('only a recipe Claude read can be rerun', () => {
+  assert.equal(canRerun(null), false);
+  assert.equal(canRerun(reviewDraft(READ.recipe, { warnings: [] })), false);  // Split Lines Without Claude
+  assert.equal(canRerun({ claude: true }), true);
+});
+
+test('the rerun input keeps the pasted text, photos, web address and previous note', () => {
+  const files = [{ name: 'a.jpg' }, { name: 'b.jpg' }];
+  const input = { kind: 'text', text: 'Pancakes\n1 cup flour', url: 'https://example.com/p', files, note: 'use grams' };
+  const draft = { claude: true, source: 'photos' };
+  const next = rerunInput(input, draft);
+  assert.deepEqual(next, { kind: 'photos', text: 'Pancakes\n1 cup flour', url: 'https://example.com/p', files, note: 'use grams' });
+  assert.equal(next.files, files);
+  assert.equal(rerunInput(input, { claude: true }).kind, 'text');
+  assert.equal(input.kind, 'text');  // the stored input is not changed by asking
+});
+
+test('claudeRead passes the checked note to the request and builds a Claude draft', async () => {
+  const seen = [];
+  const out = await claudeRead('url', '  ignore   the sauce ', async (n) => { seen.push(n); return READ; }, { photoFiles: [1] });
+  assert.deepEqual(seen, ['ignore the sauce']);
+  assert.equal(out.error, undefined);
+  assert.equal(out.draft.claude, true);
+  assert.equal(out.draft.source, 'url');
+  assert.equal(out.draft.cost, 0.002);
+  assert.deepEqual(out.draft.warnings, ['Claude is unsure.']);
+  assert.deepEqual(out.draft.photoFiles, [1]);
+  assert.equal(out.draft.rows[0].name, 'flour');
+  assert.equal(canRerun(out.draft), true);
+  const none = [];
+  await claudeRead('text', '   ', async (n) => { none.push(n); return READ; });
+  assert.deepEqual(none, ['']);  // an empty note is passed as nothing
+});
+
+test('claudeRead refuses a bad note without sending anything', async () => {
+  let sent = 0;
+  for (const bad of ['x'.repeat(501), 'a\nb']) {
+    const out = await claudeRead('text', bad, async () => { sent++; return READ; });
+    assert.ok(out.error);
+    assert.equal(out.draft, undefined);
+  }
+  assert.equal(sent, 0);
+});
+
+test('a failed rerun returns no draft, so the previous review is kept exactly as edited', async () => {
+  const flow = { input: { kind: 'text', text: 'x', note: '' }, draft: reviewDraft(READ.recipe, { claude: true, source: 'text' }) };
+  flow.draft.name = 'My Pancakes';  // an edit made on the review screen
+  flow.draft.rows[0].amount = '2';
+  const before = flow.draft;
+  const snapshot = JSON.stringify(before);
+  const out = await claudeRead('text', 'grams', async () => { const e = new Error('Claude is busy. Try again soon.'); e.status = 502; throw e; });
+  assert.equal(out.error, 'Claude is busy. Try again soon.');
+  assert.equal(out.status, 502);
+  assert.equal(out.draft, undefined);
+  if (out.draft) flow.draft = out.draft;  // what the screen does: only a result replaces the draft
+  assert.equal(flow.draft, before);
+  assert.equal(JSON.stringify(flow.draft), snapshot);
+  const ok = await claudeRead('text', 'grams', async () => READ);
+  if (ok.draft) flow.draft = ok.draft;
+  assert.notEqual(flow.draft, before);  // a success replaces it
+  assert.equal(flow.draft.name, 'Pancakes');
 });
