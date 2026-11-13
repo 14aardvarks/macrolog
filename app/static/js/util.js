@@ -726,7 +726,9 @@ export function noticeLines(st, what, requests) {
   const lines = ['Sends ' + what + ' to Claude.'];
   const n = requests > 1 ? requests : 1;
   lines.push((n > 1 ? 'Uses up to ' + n : 'Uses 1') + ' of your ' + st.cap + ' monthly requests (' + st.remaining + ' left).');
-  lines.push(st.est_cost_label == null ? 'Cost not available.' : 'Estimated cost about ' + centsText(st.est_cost_label) + '.');
+  lines.push(st.est_cost_label == null ? 'Cost not available.' : st.est_upper
+    ? 'Estimated cost up to about ' + centsText(st.est_cost_label) + '. This is an upper estimate, for a page at the size limit.'
+    : 'Estimated cost about ' + centsText(st.est_cost_label) + '.');
   const warn = st.remaining <= LOW_REQUESTS ? 'Only ' + st.remaining + ' left this month.' : '';
   return { blocked, lines, warn };
 }

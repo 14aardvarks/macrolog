@@ -3,7 +3,7 @@
 // but only Save makes it count as saved: Back writes the state of the last save back after asking Discard Changes?.
 // Matching is optional: Save always saves. Rows still not matched are kept (to finish later) or removed, the user's choice.
 import { api } from './api.js';
-import { h, clear, field, message, show, select, sourceBadge, unitControl, kcalCue } from './dom.js';
+import { h, clear, field, message, show, select, sourceBadge, unitControl, kcalCue, extLink } from './dom.js';
 import { toJpeg } from './ai.js';
 import { confirmClaude } from './notice.js';
 import { chips } from './saved.js';
@@ -14,6 +14,7 @@ import {
   proposalText, matchWhat, importWhat, matchSnapshot, restoreBody, changedSince, nextUnmatched, pendingProposals,
   acceptAllText, notMatchedText, saveChoice, canSaveWithout, SAVE_WITHOUT_NONE, unmatchedIds, photoPick, PHOTOS_TEXT, MATCH_METHODS, matchMethod, matchRunText, methodBatch, matchDoneText, proposalHead,
   importUnitOptions, AUTO_MATCH_LOADING, AUTO_MATCH_FAILED, autoMatchIds, autoMatchResult, autoMatchPlan, autoClaudeBatch, claudeKeep, claudeOffNote, previousCountText, PREVIOUS_CUE, AUTO_CLAUDE_FAILED, AUTO_CLAUDE_CANCELLED, rateLimitNote,
+  urlCheck, urlImportOn, recipeUrlCostLine, sourceLink, URL_TEXT, URL_MAX,
 } from './recipeimport.js';
 import { servingSizeEditor } from './servingsize.js';
 
@@ -36,8 +37,19 @@ export async function renderImport(root, ctx) {
   const capped = direct && !(st.remaining > 0);
   const status = h('div', { 'aria-live': 'polite' });
   const panel = h('div');
-  const tabs = h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Recipe source' }, [['text', 'Paste Text'], ['photos', 'Photos']].map(([k, label]) =>
+  // Web Address shows only when the administrator allows URL import and Claude is usable for this user.
+  const urlOn = urlImportOn(st);
+  if (input.kind === 'url' && !urlOn) input.kind = 'text';
+  const kinds = [['text', 'Paste Text'], ['photos', 'Photos'], ...(urlOn ? [['url', 'Web Address']] : [])];
+  const tabs = h('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Recipe source' }, kinds.map(([k, label]) =>
     h('button', { type: 'button', role: 'tab', 'data-kind': k, onclick: () => { input.kind = k; paint(); } }, label)));
+  const urlBox = field('Recipe web address', { type: 'url', inputmode: 'url', autocomplete: 'url', spellcheck: 'false', value: input.url || '',
+    maxlength: String(URL_MAX), placeholder: 'https://example.com/pancakes', 'aria-describedby': 'import-url-help' });
+  urlBox.input.addEventListener('input', () => { input.url = urlBox.input.value; });
+  urlBox.input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); sendUrl(); } });
+  const urlHelp = h('p', { class: 'sub', id: 'import-url-help' }, URL_TEXT + ' ' + sentence('No photo is imported'));
+  const readUrl = h('button', { class: 'btn primary', type: 'button', onclick: sendUrl, disabled: capped, 'aria-describedby': direct ? 'import-url-direct' : null }, 'Read With Claude');
+  const urlDirect = direct ? h('p', { class: 'sub', id: 'import-url-direct' }, capped ? CLAUDE_CAP_NOTE : recipeUrlCostLine(st)) : null;
 
   const area = h('textarea', { rows: '10', maxlength: String(MAX_TEXT), autocomplete: 'off', placeholder: 'Paste the recipe or just its ingredient list' });
   area.value = input.text || '';
@@ -59,7 +71,9 @@ export async function renderImport(root, ctx) {
   function paint() {
     tabs.querySelectorAll('button').forEach((b) => b.setAttribute('aria-selected', b.dataset.kind === input.kind ? 'true' : 'false'));
     show(status, null);
-    if (input.kind === 'photos') {
+    if (input.kind === 'url') {
+      show(panel, h('div', null, urlBox, urlHelp, note, h('div', { class: 'row wrap' }, readUrl), urlDirect));
+    } else if (input.kind === 'photos') {
       show(panel, h('div', null,
         h('p', { class: 'sub' }, PHOTOS_TEXT),
         aiOn ? [h('label', { class: 'btn' }, 'Choose or Take Photos', files), fileList, photoNote, note, h('div', { class: 'row wrap' }, readPhotos), capped ? h('p', { class: 'sub' }, CLAUDE_CAP_NOTE) : null] : noAi));
@@ -94,6 +108,18 @@ export async function renderImport(root, ctx) {
       done(r.recipe, { warnings: r.warnings, cost: r.cost });
     } catch (e) { show(status, message(e.status === 429 && direct ? CLAUDE_CAP_NOTE : e.message, 'error')); } finally { readText.disabled = capped; }
   }
+  async function sendUrl() {
+    if (readUrl.disabled) return;
+    const c = urlCheck(urlBox.input.value);
+    if (c.error) { show(status, message(c.error, 'error')); urlBox.input.focus(); return; }
+    readUrl.disabled = true;
+    try {
+      if (!direct && !(await confirmClaude(ctx.settings, { what: importWhat('url'), query: { recipe_url: 1 } }))) return;
+      show(status, message('Claude is reading the page...'));
+      const r = await api.recipeFromUrl(c.url, note.input.value.trim());
+      done(r.recipe, { warnings: r.warnings, cost: r.cost });
+    } catch (e) { show(status, message(e.status === 429 && direct ? CLAUDE_CAP_NOTE : e.message, 'error')); } finally { readUrl.disabled = capped; }
+  }
   async function sendPhotos() {
     readPhotos.disabled = true;
     try {
@@ -115,6 +141,15 @@ export async function renderImport(root, ctx) {
 }
 
 // ---------- step 1: review ----------
+
+// "Source example.com" as a link that opens in a new tab, for http and https addresses only. Exported for the recipe screen.
+export function sourceNode(url) {
+  const l = sourceLink(url);
+  if (!l) return null;
+  const a = extLink(l.href, l.text);
+  a.setAttribute('aria-label', 'Source, ' + l.text + ', opens in a new tab');
+  return h('p', { class: 'sub source-line' }, 'Source ', a);
+}
 
 export function renderReview(root, ctx) {
   const draft = ctx.flow.draft;
@@ -159,6 +194,7 @@ export function renderReview(root, ctx) {
   root.appendChild(h('section', { class: 'screen import' }, bar(ctx), h('h1', null, 'Check the Recipe'),
     h('p', { class: 'sub' }, 'Step 1 of 2. Fix anything that looks wrong. Nothing is saved until you tap Save and Continue.'),
     costLine(draft.cost, 'This read'),
+    sourceNode(draft.sourceUrl),
     warns.length ? h('ul', { class: 'warnings', role: 'alert' }, warns) : null,
     name, servings,
     h('h2', null, 'Ingredients'), list,

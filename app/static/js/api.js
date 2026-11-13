@@ -111,6 +111,7 @@ export const api = {
   deleteUncounted: (mealId) => request('DELETE', '/api/meals/' + mealId + '/uncounted'),
   matchItems: (mealId, items) => send('PATCH', '/api/meals/' + mealId + '/items', { items }),
   recipeFromText: (text, note) => send('POST', '/api/recipes/import/text', note ? { text, note } : { text }),
+  recipeFromUrl: (url, note) => send('POST', '/api/recipes/import/url', note ? { url, note } : { url }),
   recipeFromPhotos: (form) => request('POST', '/api/recipes/import/photos', { form }),
   matchSearch: (mealId, ids, source) => send('POST', '/api/recipes/' + mealId + '/match-search', source ? { item_ids: ids, source } : { item_ids: ids }),
   matchIngredients: (mealId, ids) => send('POST', '/api/recipes/' + mealId + '/match', { item_ids: ids }),

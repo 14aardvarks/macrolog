@@ -11,7 +11,7 @@ const form = (over) => ({ key: '', cap: '100', model: '', priceIn: '', priceOut:
 test('every Claude admin field has a hint with its default, written as sentences without em dashes', () => {
   const keys = CLAUDE_SPECS.map((s) => s.key);
   assert.deepEqual(keys, ['ai_global_key', 'ai_model', 'ai_monthly_cap', 'ai_price_in_per_mtok', 'ai_price_out_per_mtok',
-    'ai_allow_label', 'ai_allow_lookup', 'ai_allow_recipe']);
+    'ai_allow_label', 'ai_allow_lookup', 'ai_allow_recipe', 'ai_allow_recipe_url', 'ai_recipe_url_max_tokens']);
   for (const s of CLAUDE_SPECS) {
     assert.ok(s.hint && /by default/.test(s.hint), s.key);
     assert.equal(sentence(s.hint), s.hint, s.key);
@@ -30,7 +30,14 @@ test('every Claude admin field has a hint with its default, written as sentences
   assert.equal(by.ai_allow_label.label, 'Allow Claude Photo Label Reading');
   assert.equal(by.ai_allow_lookup.label, 'Allow Claude Typed Search');
   assert.equal(by.ai_allow_recipe.label, 'Allow Claude Recipe Import');
-  for (const k of ['ai_allow_label', 'ai_allow_lookup', 'ai_allow_recipe']) assert.equal(by[k].kind, 'bool');
+  for (const k of ['ai_allow_label', 'ai_allow_lookup', 'ai_allow_recipe', 'ai_allow_recipe_url']) assert.equal(by[k].kind, 'bool');
+  assert.equal(by.ai_allow_recipe_url.label, 'Allow Recipe Import From URLs');
+  assert.match(by.ai_allow_recipe_url.hint, /^Off by default\./);
+  assert.match(by.ai_allow_recipe_url.hint, /Anthropic fetches the page/);
+  assert.match(by.ai_allow_recipe_url.hint, /costs input tokens/);
+  assert.match(by.ai_allow_recipe_url.hint, /size limit/);
+  assert.equal(by.ai_recipe_url_max_tokens.kind, 'int');
+  assert.match(by.ai_recipe_url_max_tokens.hint, /^30000 by default, from 2000 to 100000\./);
 });
 
 test('feature switches send only what changed', () => {

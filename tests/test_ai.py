@@ -83,8 +83,8 @@ def test_status(env, monkeypatch):
                         "key_source": "global", "personal_key_set": False, "personal_key_unreadable": False,
                         "can_use_global": True, "personal_cap": 100, "personal_used_this_month": 0,
                         "server_model": "claude-haiku-5-5", "personal_model": "", "personal_price_in": None,
-                        "personal_price_out": None, "personal_cap_default": 100,
-                        "features": {"label": True, "lookup": True, "recipe": True}}
+                        "personal_price_out": None, "personal_cap_default": 100, "est_upper": False, "recipe_url_max_tokens": 30000,
+                        "features": {"label": True, "lookup": True, "recipe": True, "recipe_url": False}}
     assert SECRET not in r.text
 
 

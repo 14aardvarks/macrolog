@@ -1,5 +1,5 @@
 // Pure helpers for Import Recipe and Match Ingredients. No DOM access, safe to import from node.
-import { cleanUnitText, plural, parseAmount, amountBoxValue, fmtAmount, qtyText, servingText, amountText, roundTo, matchedAmountText, sentence, stepsCheck, MEALS, MEAL_LABELS, MICROS, autoMatch } from './util.js';
+import { cleanUnitText, plural, parseAmount, amountBoxValue, fmtAmount, qtyText, servingText, amountText, roundTo, matchedAmountText, sentence, centsText, stepsCheck, MEALS, MEAL_LABELS, MICROS, autoMatch } from './util.js';
 
 // Unit words found at the start of an ingredient line, mapped to the server's canonical units or a count word.
 const UNIT_WORDS = {
@@ -86,6 +86,46 @@ export function parseIngredientText(text) {
 
 // ---------- review draft ----------
 
+// ---------- Import Recipe from a web address ----------
+// Anthropic's web fetch tool reads the page for Claude. This server never opens the address, so these checks are input hygiene only.
+
+export const URL_MAX = 2000;  // same as core.SOURCE_URL_MAX on the server
+export const URL_TEXT = sentence('Claude reads the page through Anthropic, never through this server. Long pages are cut at a size limit');
+
+// The typed address checked like core.clean_source_url: { url } or { error }.
+export function urlCheck(text) {
+  const v = String(text == null ? '' : text).trim();
+  if (!v) return { error: 'Enter the web address of the recipe.' };
+  if (v.length > URL_MAX) return { error: 'Keep the web address to ' + URL_MAX + ' characters or fewer.' };
+  if (/[\s\u0000-\u001f\u007f-\u009f<>]/.test(v)) return { error: 'The web address must not contain spaces, control characters or angle brackets.' };
+  const m = /^(https?):\/\/([^/?#]*)/i.exec(v);
+  if (!m) return { error: 'Enter a web address that starts with http:// or https://.' };
+  if (m[2].indexOf('@') >= 0) return { error: 'Remove the user name or password from the web address.' };
+  if (!m[2].replace(/:\d*$/, '')) return { error: 'Enter a web address that starts with http:// or https://.' };
+  return { url: v };
+}
+
+// URL import shows only when Claude is usable for this user, recipe import is allowed and the URL switch is on.
+export const urlImportOn = (st) => !!(st && st.enabled && st.features && st.features.recipe !== false && st.features.recipe_url === true);
+
+// The line under Read With Claude with Full Claude Use on: the upper cost, the size limit and the requests left.
+export function recipeUrlCostLine(st) {
+  const c = st && st.action_costs;
+  const cost = c && Number.isFinite(c.recipe_url) ? 'Up to about ' + centsText(c.recipe_url) + ' per import' + (c.sample ? ' at sample prices' : '') + ', an upper estimate. ' : '';
+  const left = st && Number.isFinite(st.remaining) ? st.remaining + ' of ' + st.cap + ' Claude requests left this month.' : '';
+  return ('Full Claude Use is on, so Read With Claude sends the address at once. ' + cost + left).trim();
+}
+
+// The source of a saved recipe as a link: { href, text } for http and https only (text is the site name), else null.
+export function sourceLink(url) {
+  const v = String(url == null ? '' : url).trim();
+  if (!/^https?:\/\//i.test(v)) return null;
+  let host = '';
+  try { host = new URL(v).hostname; } catch (e) { return null; }
+  if (!host) return null;
+  return { href: v, text: host.replace(/^www\./i, '') };
+}
+
 // A server or local recipe as the editable review draft. Amounts become text so the boxes keep what the person typed.
 export function reviewDraft(recipe, extra) {
   const r = recipe || {};
@@ -96,6 +136,7 @@ export function reviewDraft(recipe, extra) {
       return { amount, shown: amount, exact: i.amount == null ? null : i.amount, unit: i.unit || '', name: i.name || '', note: i.note || '', text: i.text || '' };
     }),
     steps: (r.steps || []).filter((x) => typeof x === 'string'),
+    sourceUrl: r.source_url || null,
     ...(extra || {}),
   };
 }
@@ -147,7 +188,9 @@ export function reviewBody(draft) {
   }
   const st = stepsCheck(draft.steps);
   if (st.error) return st;
-  return { body: { name, servings, meals: draft.meals || [], ingredients, steps: st.steps } };
+  const body = { name, servings, meals: draft.meals || [], ingredients, steps: st.steps };
+  if (draft.sourceUrl) body.source_url = draft.sourceUrl;
+  return { body };
 }
 
 // ---------- match state ----------
@@ -294,6 +337,7 @@ export function proposalText(p) {
 // What "ingredients" means in the Claude notice, for example "3 ingredients and their database matches".
 export function matchWhat(n) { return n + (n === 1 ? ' ingredient' : ' ingredients') + ' with database candidates'; }
 export function importWhat(kind, n) {
+  if (kind === 'url') return 'a web address';
   return kind === 'photos' ? n + (n === 1 ? ' photo' : ' photos') + ' of a recipe' : 'your recipe text (' + n + ' characters)';
 }
 

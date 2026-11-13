@@ -72,6 +72,8 @@ FEATURES = {
     "label": ("ai_allow_label", "Claude photo label reading is turned off on this server. Enter the food manually."),
     "lookup": ("ai_allow_lookup", "Claude typed search is turned off on this server. Search a food database instead."),
     "recipe": ("ai_allow_recipe", "Claude recipe import is turned off on this server. Split the lines without Claude and match each ingredient by search."),
+    # Off by default: the page is fetched by Anthropic's web fetch tool (never by this server) and its text costs input tokens.
+    "recipe_url": ("ai_allow_recipe_url", "Claude recipe import from a web address is turned off on this server. Paste the recipe text instead."),
 }
 
 MICRO_FIELDS = {"sugars": "Total sugars in grams", "saturated_fat": "Saturated fat in grams", "sodium": "Sodium in mg",
@@ -169,7 +171,8 @@ def model() -> str:
 
 
 def feature_on(name: str) -> bool:
-    """Whether the administrator allows this Claude feature (label, lookup or recipe). On by default."""
+    """Whether the administrator allows this Claude feature (label, lookup, recipe or recipe_url). recipe_url is off by default,
+    the others on."""
     return config.flag(FEATURES[name][0])
 
 
@@ -263,6 +266,23 @@ def estimate_recipe_tokens(chars: int = 0, images: int = 0) -> tuple[int, int]:
     return EST_TOKENS_RECIPE_PROMPT + math.ceil(min(RECIPE_TEXT_MAX, max(0, chars)) / 4), EST_TOKENS_RECIPE_OUT
 
 
+# Recipe import from a URL: Anthropic's web fetch tool reads the page, so the page text is input too, up to the admin's limit.
+RECIPE_URL_MAX = 2000  # characters of the URL itself (input hygiene only; the web fetch tool takes at most 250)
+EST_TOKENS_RECIPE_URL_PROMPT = 1200  # instruction, URL, both tool definitions and the fetch call
+EST_TOKENS_FETCH_WRAP = 300  # the fetch result block around the page text
+
+
+def recipe_url_max_tokens() -> int:
+    """max_content_tokens for the web fetch tool: setting ai_recipe_url_max_tokens, kept inside its admin bounds."""
+    spec = config.MANAGED["ai_recipe_url_max_tokens"]
+    return int(min(spec.hi, max(spec.lo, config.integer("ai_recipe_url_max_tokens"))))
+
+
+def estimate_recipe_url_tokens() -> tuple[int, int]:
+    """Upper estimate for one URL import: the prompt is read twice (before and after the fetch) plus a page at the full limit."""
+    return 2 * EST_TOKENS_RECIPE_URL_PROMPT + EST_TOKENS_FETCH_WRAP + recipe_url_max_tokens(), EST_TOKENS_RECIPE_OUT + 100
+
+
 def estimate_match_tokens(rows: int) -> tuple[int, int]:
     n = min(RECIPE_MATCH_MAX, max(1, rows))
     return EST_TOKENS_RECIPE_PROMPT + n * EST_TOKENS_MATCH_ROW_IN, n * EST_TOKENS_MATCH_ROW_OUT
@@ -291,7 +311,8 @@ def action_tokens() -> dict:
     a typed lookup at the full 200 characters, a recipe text import of 8000 characters, a Claude match of 15 rows and one
     micronutrient fill."""
     return {"label": estimate_label_tokens(1), "lookup": estimate_text_tokens(MAX_TEXT),
-            "recipe_text": estimate_recipe_tokens(chars=8000), "match": estimate_match_tokens(RECIPE_MATCH_MAX),
+            "recipe_text": estimate_recipe_tokens(chars=8000), "recipe_url": estimate_recipe_url_tokens(),
+            "match": estimate_match_tokens(RECIPE_MATCH_MAX),
             "micros": estimate_micros_tokens()}
 
 
@@ -620,15 +641,21 @@ def _key_state(c: sqlite3.Connection, user_id: int) -> dict:
 
 
 def with_model(payload: dict, model_name: str) -> dict:
-    """The request with its model (and the tool choice that model needs) set. Every request has exactly one tool."""
+    """The request with its model (and the tool choice that model needs) set. Every request has exactly one client tool. A
+    request that also carries a server tool (web fetch, which has a "type") gets "auto", because forcing the client tool would
+    stop Claude from calling the server tool first."""
     tools = payload.get("tools") or []
+    if any("type" in t for t in tools):
+        return {**payload, "model": model_name, "tool_choice": {"type": "auto"}}
     name = tools[0]["name"] if tools else TOOL_NAME
     return {**payload, "model": model_name, "tool_choice": tool_choice(name, model_name)}
 
 
-def _status(user_id: int, images: int = 1, chars: Optional[int] = None, est: Optional[tuple[int, int]] = None) -> dict:
+def _status(user_id: int, images: int = 1, chars: Optional[int] = None, est: Optional[tuple[int, int]] = None,
+            upper: bool = False) -> dict:
     """chars set: the cost estimate is for a text lookup of that many characters, else for a label read of `images` photos.
-    est: explicit (input, output) tokens for the estimate (recipe import and matching)."""
+    est: explicit (input, output) tokens for the estimate (recipe import and matching). upper: the estimate is an upper bound
+    (a URL import, whose page size is unknown until Claude reads it)."""
     with db.conn() as c:
         ks = _key_state(c, user_id)
         p_cap, p_used = personal_cap(c, user_id), used_this_month(c, "user", user_id)
@@ -642,7 +669,8 @@ def _status(user_id: int, images: int = 1, chars: Optional[int] = None, est: Opt
     return {"enabled": ks["source"] is not None, "key_source": SOURCE_NAMES.get(ks["source"]),
             "used_this_month": used, "cap": limit, "remaining": max(0, limit - used),
             "model": model_for(active, user_id), "price_known": p is not None,
-            "est_cost_label": cost_usd(est_in, est_out, p), "cost_this_month": cost_usd(tin, tout, p),
+            "est_cost_label": cost_usd(est_in, est_out, p), "est_upper": upper,
+            "recipe_url_max_tokens": recipe_url_max_tokens(), "cost_this_month": cost_usd(tin, tout, p),
             "server_model": model(), "personal_model": mine["model"],
             "personal_price_in": mine["price_in"], "personal_price_out": mine["price_out"],
             "personal_cap_default": DEFAULT_PERSONAL_CAP, "features": features(),
@@ -673,11 +701,15 @@ def status(user: CurrentUser, images: int = Query(1, ge=1, le=MAX_IMAGES),
            recipe_chars: Optional[int] = Query(None, ge=0, le=RECIPE_TEXT_MAX),
            recipe_images: Optional[int] = Query(None, ge=1, le=MAX_IMAGES),
            match_rows: Optional[int] = Query(None, ge=1, le=RECIPE_MATCH_MAX),
-           micros: Optional[int] = Query(None, ge=1, le=MICROS_BATCH_MAX)):
-    """images: photos for a label read estimate. chars: characters of text for a text lookup estimate (wins when given).
+           micros: Optional[int] = Query(None, ge=1, le=MICROS_BATCH_MAX),
+           recipe_url: bool = Query(False)):
+    """recipe_url: an upper estimate for a recipe import from a web address (the page at the full content limit).
+    images: photos for a label read estimate. chars: characters of text for a text lookup estimate (wins when given).
     recipe_chars or recipe_images: a recipe import; match_rows: ingredients matched in one request; micros: that many
     micronutrient fills (one request each). These win over the rest."""
     est = None
+    if recipe_url:
+        return _status(user["id"], images, chars, estimate_recipe_url_tokens(), upper=True)
     if micros is not None:
         i, o = estimate_micros_tokens()
         est = (i * micros, o * micros)
@@ -791,10 +823,13 @@ async def label(user: CurrentUser,
     return {"draft": draft, "warnings": warnings, **out}
 
 
-async def _ask(user_id: int, source: str, key: str, payload: dict, what: str, unreadable: str, tool: str = TOOL_NAME) -> dict:
+async def _ask(user_id: int, source: str, key: str, payload: dict, what: str, unreadable: str, tool: str = TOOL_NAME,
+               inspect=None) -> dict:
     """Reserve one request against the source's monthly cap, call Claude, record the tokens, and return the tool input
     with the usage fields every Claude route answers with. The reservation is released once on any failure before
-    Claude answered; a call that returned keeps its row."""
+    Claude answered; a call that returned keeps its row. inspect(body), when given, sees the whole reply after the tokens are
+    recorded and before the tool input is read: it may raise an HTTPException (a server tool error) or return a value, which
+    comes back as "inspected"."""
     with db.conn() as c:
         limit = personal_cap(c, user_id) if source == "user" else cap()
     payload = with_model(payload, model_for(source, user_id))  # the personal model on the user's own key
@@ -814,10 +849,12 @@ async def _ask(user_id: int, source: str, key: str, payload: dict, what: str, un
     except Exception:  # noqa: BLE001
         log.exception("Could not record AI usage for row %s", row)  # the call was made, so the row stays counted
     tin, tout = _tokens(usage, "input_tokens"), _tokens(usage, "output_tokens")
+    seen = inspect(body) if inspect is not None else None
     data = tool_input(body, tool)
     if data is None:
         raise HTTPException(502, unreadable)
-    return {"data": data, "used_this_month": get_used(source, user_id), "cap": limit,
+    extra = {"inspected": seen} if inspect is not None else {}
+    return {"data": data, **extra, "used_this_month": get_used(source, user_id), "cap": limit,
             "input_tokens": tin, "output_tokens": tout, "cost": cost_usd(tin, tout, p),
             "key_source": SOURCE_NAMES[source]}
 

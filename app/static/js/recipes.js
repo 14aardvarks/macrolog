@@ -7,6 +7,7 @@ import { MEALS, MEAL_LABELS, fmtNum, pageOf, PAGE_SIZE, matchedAmountText, steps
   ownerEmptyText, groupRecipesByMeal, pageGroups } from './util.js';
 import { recipeListSub, notCounted, notCountedText, matchState, servingsText, perServingText, tagsText, portionUnits, portionFraction, portionAmount, yieldText } from './recipeimport.js';
 import { servingSizeEditor } from './servingsize.js';
+import { sourceNode } from './recipeflow.js';
 import { chips, renameRecipe, deleteRecipe } from './saved.js';
 import { stepsList, stepsEditor } from './steps.js';
 import { deletedHint, deletedTitle, daysLeftText, deleteForeverConfirm, restoredText, purgedText, sortDeleted, withoutDeleted } from './trash.js';
@@ -246,7 +247,7 @@ export async function renderRecipeView(root, params, ctx) {
     h('div', { class: 'bar' }, h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back')),
     h('h1', null, meal.name),
     owned ? h('p', { class: 'owner-line' }, owned) : null,
-    sub, per,
+    sub, per, sourceNode(meal.source_url),
     h('h2', null, 'Log'),
     h('label', { class: 'field' }, h('span', null, 'Meal'), mealSel),
     h('div', { class: 'grid2 recipe-log' }, amount, h('label', { class: 'field' }, h('span', null, 'Of the recipe'), unitSel)),

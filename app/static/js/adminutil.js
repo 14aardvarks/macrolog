@@ -194,6 +194,10 @@ export const CLAUDE_SPECS = [
     hint: 'On by default. Turn off to remove Claude from the Source choice on Add and refuse typed lookups for everyone.' },
   { key: 'ai_allow_recipe', kind: 'bool', label: 'Allow Claude Recipe Import',
     hint: 'On by default. Turn off to stop Claude reading recipes and matching ingredients for everyone. Split Lines Without Claude and Search still work.' },
+  { key: 'ai_allow_recipe_url', kind: 'bool', label: 'Allow Recipe Import From URLs',
+    hint: 'Off by default. Turn on to add Web Address to Import Recipe. Anthropic fetches the page for Claude, never this server. The page text costs input tokens, up to the size limit below.' },
+  { key: 'ai_recipe_url_max_tokens', kind: 'int', label: 'Recipe Page Size Limit (Tokens)',
+    hint: '30000 by default, from 2000 to 100000. The most page text Claude reads for one web address, about 4 characters per token. Longer pages are cut off, and the cost estimate assumes a page at this limit.' },
 ];
 export const FOOD_SPECS = [
   { key: 'fdc_api_key', kind: 'secret', label: 'USDA API key',

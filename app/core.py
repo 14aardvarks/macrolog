@@ -12,6 +12,7 @@ import math
 import re
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
+from urllib.parse import urlsplit
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, HTTPException
@@ -158,6 +159,8 @@ def init(c: sqlite3.Connection) -> None:
         c.execute("ALTER TABLE meals ADD COLUMN shared INTEGER NOT NULL DEFAULT 0")
     if "deleted_at" not in {r[1] for r in c.execute("PRAGMA table_info(meals)")}:  # databases made before Recently Deleted: none deleted
         c.execute("ALTER TABLE meals ADD COLUMN deleted_at TEXT")
+    if "source_url" not in {r[1] for r in c.execute("PRAGMA table_info(meals)")}:  # databases made before URL import (null = none)
+        c.execute("ALTER TABLE meals ADD COLUMN source_url TEXT")
     purge_deleted(c)  # at startup: recipes deleted more than RECIPE_PURGE_DAYS ago go for good
     if "user_id" not in {r[1] for r in c.execute("PRAGMA table_info(recipe_logs)")}:  # who logged it; null (older logs) means the owner
         c.execute("ALTER TABLE recipe_logs ADD COLUMN user_id INTEGER")
@@ -1293,7 +1296,7 @@ def meal_dict(c, row, user: dict | None = None) -> dict:
             "checks": sum(1 for i in needed if i["check"]), "steps": read_steps(row["steps"]),
             "complete": complete, "yield": yld, "portions": portions(servings, yld),
             "ingredient_grams": ingredient_grams(items, complete),
-            "shared": bool(row["shared"]), "mine": mine, "can_edit": mine or bool(user and user.get("is_admin")),
+            "shared": bool(row["shared"]), "source_url": row["source_url"] if "source_url" in row.keys() else None, "mine": mine, "can_edit": mine or bool(user and user.get("is_admin")),
             "owner": {"id": row["user_id"], "name": owner_name(c, row["user_id"])}}
 
 
@@ -1575,14 +1578,15 @@ def purge_meal(meal_id: int, user: CurrentUser):
 @router.post("/meals/{meal_id}/duplicate")
 def duplicate_meal(meal_id: int, user: CurrentUser, body: dict | None = Body(None)):
     """Copy a recipe I can read (mine or shared) into a new private recipe of mine: every row (matched, unmatched, skipped,
-    Check Amount and its imported line), tags, servings, yield and steps. Logs and counts are not copied. name defaults to
+    Check Amount and its imported line), tags, servings, yield, steps and source URL. Logs and counts are not copied. name defaults to
     the recipe's name plus " (Copy)"."""
     body = body or {}
     with db.conn() as c:
         row = visible_meal(c, user["id"], meal_id)
         name = meal_name(body) if "name" in body else (row["name"] + " (Copy)")[:200]
-        cur = c.execute("INSERT INTO meals(user_id, name, meal, servings, steps, yield_amount, yield_unit, shared) VALUES(?,?,?,?,?,?,?,0)",
-                        (user["id"], name, row["meal"], row["servings"], row["steps"], row["yield_amount"], row["yield_unit"]))
+        cur = c.execute("INSERT INTO meals(user_id, name, meal, servings, steps, yield_amount, yield_unit, shared, source_url) "
+                        "VALUES(?,?,?,?,?,?,?,0,?)", (user["id"], name, row["meal"], row["servings"], row["steps"], row["yield_amount"],
+                                                       row["yield_unit"], row["source_url"]))
         new = cur.lastrowid
         c.execute("INSERT INTO recipe_tags(meal_id, meal) SELECT ?, meal FROM recipe_tags WHERE meal_id=?", (new, meal_id))
         c.execute("INSERT INTO meal_items(meal_id, food_id, amount, unit, position, src_text, src_amount, src_unit, src_name, src_note, "
@@ -1624,6 +1628,31 @@ def short_text(v, name: str, limit: int, required: bool = False):
 
 
 MAX_IMPORT_ROWS = 100
+SOURCE_URL_MAX = 2000
+
+
+def clean_source_url(v) -> str:
+    """A web address a recipe came from, checked for input hygiene only: text, http or https with a host, no user name or
+    password, no spaces, control characters or angle brackets, at most SOURCE_URL_MAX characters. This server never fetches it."""
+    if not isinstance(v, str):
+        raise bad("Enter the web address as text")
+    v = v.strip()
+    if not v:
+        raise bad("Enter the web address of the recipe")
+    if len(v) > SOURCE_URL_MAX:
+        raise bad(f"Keep the web address to {SOURCE_URL_MAX} characters or fewer")
+    if any(ch.isspace() or ord(ch) < 0x20 or 0x7F <= ord(ch) <= 0x9F or ch in "<>" for ch in v):
+        raise bad("The web address must not contain spaces, control characters or angle brackets")
+    try:
+        parts = urlsplit(v)
+        host = parts.hostname
+    except ValueError:
+        raise bad("Enter a web address that starts with http:// or https://") from None
+    if parts.scheme.lower() not in ("http", "https") or not host:
+        raise bad("Enter a web address that starts with http:// or https://")
+    if parts.username is not None or parts.password is not None or "@" in parts.netloc:
+        raise bad("Remove the user name or password from the web address")
+    return v
 
 
 def import_row(raw) -> tuple:
@@ -1653,6 +1682,7 @@ def import_meal(user: CurrentUser, body: dict = Body(...)):
     if len(raw) > MAX_IMPORT_ROWS:
         raise bad(f"A recipe can have at most {MAX_IMPORT_ROWS} ingredients")
     steps = clean_steps(body.get("steps"))
+    source_url = None if body.get("source_url") in (None, "") else clean_source_url(body["source_url"])
     rows = []
     for i, it in enumerate(raw, 1):
         try:
@@ -1660,8 +1690,8 @@ def import_meal(user: CurrentUser, body: dict = Body(...)):
         except HTTPException as e:
             raise HTTPException(400, f"ingredient {i}: {e.detail}")
     with db.conn() as c:
-        cur = c.execute("INSERT INTO meals(user_id, name, meal, servings, steps) VALUES(?,?,?,?,?)",
-                        (user["id"], name, tags[0] if tags else None, servings, steps_json(steps)))
+        cur = c.execute("INSERT INTO meals(user_id, name, meal, servings, steps, source_url) VALUES(?,?,?,?,?,?)",
+                        (user["id"], name, tags[0] if tags else None, servings, steps_json(steps), source_url))
         c.executemany("INSERT INTO recipe_tags(meal_id, meal) VALUES(?,?)", [(cur.lastrowid, m) for m in tags])
         c.executemany("INSERT INTO meal_items(meal_id, position, src_text, src_amount, src_unit, src_name, src_note) VALUES(?,?,?,?,?,?,?)",
                       [(cur.lastrowid, i, *r) for i, r in enumerate(rows)])

@@ -148,9 +148,10 @@ def turn_off(name):
 
 
 def test_features_default_on_in_status(env):
-    assert env["a"].get("/api/ai/status").json()["features"] == {"label": True, "lookup": True, "recipe": True}
+    assert env["a"].get("/api/ai/status").json()["features"] == {"label": True, "lookup": True, "recipe": True, "recipe_url": False}
     for key in ("ai_allow_label", "ai_allow_lookup", "ai_allow_recipe"):
         assert config.MANAGED[key].kind == "bool" and config.MANAGED[key].default == "1"
+    assert config.MANAGED["ai_allow_recipe_url"].kind == "bool" and config.MANAGED["ai_allow_recipe_url"].default == "0"
 
 
 def test_label_switch_refuses(env):

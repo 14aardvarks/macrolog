@@ -36,7 +36,7 @@ h2 { font-size: 1.05rem; margin: 20px 0 8px; }
 label:focus-within { outline: 3px solid var(--accent); outline-offset: 2px; }
 
 input, select, button { font: inherit; color: inherit; }
-input[type=text], input[type=search], input[type=password], select {
+input[type=text], input[type=search], input[type=password], input[type=url], select {
   width: 100%; min-height: 44px; padding: 8px 12px; background: var(--card);
   border: 1px solid var(--line); border-radius: 10px;
 }
@@ -250,7 +250,7 @@ nav button[aria-current=page] { color: var(--accent); box-shadow: inset 0 3px 0 
 @media (min-width: 600px) { .overlay { align-items: center; } }
 
 /* admin, setup, claude key */
-input[type=text], input[type=search], input[type=password], input[type=email], select { max-width: 100%; }
+input[type=text], input[type=search], input[type=password], input[type=email], input[type=url], select { max-width: 100%; }
 .field .row { margin: 0; }
 .field > label > span { display: block; margin-bottom: 4px; }
 .field .row > input { flex: 1; min-width: 0; }

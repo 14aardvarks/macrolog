@@ -72,6 +72,9 @@ MANAGED: dict[str, Setting] = {
     "ai_allow_label": Setting("AI_ALLOW_LABEL", "bool", "1"),
     "ai_allow_lookup": Setting("AI_ALLOW_LOOKUP", "bool", "1"),
     "ai_allow_recipe": Setting("AI_ALLOW_RECIPE", "bool", "1"),
+    # Recipe import from a URL: the page is fetched by Anthropic's web fetch tool, never by this server. Off by default.
+    "ai_allow_recipe_url": Setting("AI_ALLOW_RECIPE_URL", "bool", "0"),
+    "ai_recipe_url_max_tokens": Setting("AI_RECIPE_URL_MAX_CONTENT_TOKENS", "int", "30000", lo=2000, hi=100000),
     "fdc_api_key": Setting("FDC_API_KEY", "secret", "DEMO_KEY", max_len=256),
 }
 

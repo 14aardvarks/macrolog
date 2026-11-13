@@ -304,7 +304,8 @@ def resolve_key(user_id) -> (source, key)  # source "user" | "global" | None
 GET  /api/ai/status -> {"enabled","key_source": "personal"|"global"|null,"used_this_month","cap","remaining","model","price_known",
                         "est_cost_label","cost_this_month","personal_key_set","personal_key_unreadable","can_use_global",
                         "personal_cap","personal_used_this_month","server_model","personal_model","personal_price_in",
-                        "personal_price_out","personal_cap_default","features": {"label","lookup","recipe": bool}}
+                        "personal_price_out","personal_cap_default","est_upper","recipe_url_max_tokens",
+                        "features": {"label","lookup","recipe","recipe_url": bool}}
                         # cap/used/remaining/cost/model/price_known refer to the active source (global if none)
 PUT  /api/ai/key {"key"?: str, "cap"?: int 1..10000, "model"?: str ..100, "price_in"?, "price_out"?: number 0..10000}
      -> status    # at least one; key 20..512 printable chars, never sent to the API; model, price_in, price_out: "" or null clears
@@ -313,7 +314,8 @@ PUT  /api/ai/key {"key"?: str, "cap"?: int 1..10000, "model"?: str ..100, "price
      # server's model, tool choice follows that model) and personal prices for cost and status (empty = no cost, no fallback).
      # Shared key users always get the admin model and prices.
 # Feature switches (config, bool, default on): ai_allow_label (AI_ALLOW_LABEL) for /label, ai_allow_lookup (AI_ALLOW_LOOKUP)
-# for /lookup (checked after body validation), ai_allow_recipe (AI_ALLOW_RECIPE) for recipe import and Match With Claude.
+# for /lookup (checked after body validation), ai_allow_recipe (AI_ALLOW_RECIPE) for recipe import and Match With Claude,
+# ai_allow_recipe_url (AI_ALLOW_RECIPE_URL, default OFF) for /api/recipes/import/url (which also needs ai_allow_recipe).
 # Off answers 403 with a clear message before the key, the cap or any request; can_ask_ai is false while label reading is off.
 DELETE /api/ai/key -> status
 POST /api/ai/label  multipart: images (1 to 3 files, jpeg/png/webp, each <= 5 MB), optional barcode (text), optional hint (text)
@@ -354,7 +356,25 @@ POST /api/recipes/{meal_id}/match {"item_ids": [1..15 ids of my recipe]} -> {"pr
 GET /api/ai/status?recipe_chars=N | recipe_images=N | match_rows=N | micros=N (1..10)   # cost estimates for those requests
      # every status also carries action_costs (Full Claude Use table, see below)
 ```
-A URL source is not built (no server side fetching). It would be one more import route here feeding the text path.
+POST /api/recipes/import/url {"url": str, "note"?: ..300} -> same reply as /import/text, plus recipe.source_url   # nothing is saved
+     # url (core.clean_source_url, input hygiene only): text, http or https with a host, no user name or password, no whitespace,
+     # control characters or angle brackets, at most 2000 characters; else 400 before the switches. Then 403 when ai_allow_recipe or
+     # ai_allow_recipe_url is off, 503 no key, 429 cap. The page is fetched by Anthropic's server side web fetch tool, never by
+     # this server: no outbound request to the URL, no allow or block list. Request: tools [{"type": "web_fetch_20250910",
+     # "name": "web_fetch", "max_uses": 1, "max_content_tokens": ai_recipe_url_max_tokens, "url_sources": {"user_input": all,
+     # "client_tool_results": none, "server_tool_results": none}}, URL_IMPORT_TOOL], tool_choice auto (ai.with_model gives auto to
+     # any request with a server tool, since a forced client tool would skip the fetch); the URL sits in <url> tags in the user
+     # message (the tool fetches only URLs from user messages). URL_IMPORT_TOOL is the strict import tool plus a required boolean
+     # cut_off (five nullable unions, under the limit of 16). A web_fetch_tool_result_error maps to: url_not_accessible,
+     # unsupported_content_type, url_too_long (the tool takes 250 characters), other codes 422; content_too_large 413;
+     # too_many_requests, unavailable 502. No fetch result 422; no record_recipe 502; no ingredients 422 ("Claude found no recipe
+     # on that page"), or 413 when cut off. Cut off (cut_off true, or page text at 95 percent of 4 characters per token of the
+     # limit) with ingredients adds a warning. Every message suggests pasting the text. Errors after Claude answered keep the
+     # usage row (tokens were spent); failures before it release it. No photo is imported.
+GET /api/ai/status?recipe_url=true   # est_cost_label for one URL import as an upper estimate (est_upper true):
+     # 2 x 1200 prompt + 300 fetch wrapper + the content limit in, 1800 out. action_costs.recipe_url is the same figure.
+     # Tests: tests/test_recipe_url.py (the httpx clients are spied on: only api.anthropic.com is ever requested),
+     # tests/ui/recipeurl.test.mjs. Shell cache macrolog-shell-v67.
 
 ## config.py (live settings store)
 
@@ -362,7 +382,8 @@ Table `app_config(key PK, value, secret, updated_at)`. `get(key, default)` resol
 Managed keys (env fallback): local_login (LOCAL_LOGIN), oidc_issuer, oidc_client_id, oidc_client_secret*, oidc_name, oidc_allow_signup,
 ai_global_key* (ANTHROPIC_API_KEY), ai_model, ai_monthly_cap (AI_MONTHLY_REQUEST_CAP, 0..100000), ai_price_in_per_mtok,
 ai_price_out_per_mtok (0..10000), ai_allow_label (AI_ALLOW_LABEL), ai_allow_lookup (AI_ALLOW_LOOKUP), ai_allow_recipe
-(AI_ALLOW_RECIPE) (bools, default on), fdc_api_key*. Starred keys are secrets: Fernet encrypted with a key derived from SECRET_KEY by
+(AI_ALLOW_RECIPE) (bools, default on), ai_allow_recipe_url (AI_ALLOW_RECIPE_URL, bool, default off), ai_recipe_url_max_tokens
+(AI_RECIPE_URL_MAX_CONTENT_TOKENS, int 2000..100000, default 30000; read values are clamped to those bounds), fdc_api_key*. Starred keys are secrets: Fernet encrypted with a key derived from SECRET_KEY by
 HKDF-SHA256 (info `macrolog/secret-store/v1`); never returned, logged or put in exceptions; APIs report `{"set": bool}`. An undecryptable
 secret counts as unset (env fallback) and is flagged `unreadable`. Empty string stored = explicitly empty; deleting the row = use env.
 Environment only, never stored: SECRET_KEY, DB_PATH, PUBLIC_URL, TRUST_PROXY, COOKIE_SECURE. Also `user_secrets(user_id, name,
@@ -468,8 +489,15 @@ Screens: Login, Today, Add, Recipes, Picker, Claude fallback, Settings. Bottom n
   unit editor (Confirm Amount); matched rows have Edit Amount for the same editor. Check Amount rows count for nothing until confirmed.
 - Import Recipe (Recipes tab button next to New Recipe; Read With Claude and Match With Claude hidden while ai_allow_recipe is off, js/recipeflow.js with pure helpers in js/recipeimport.js): step 1 is Paste Text
   (Read With Claude, or Split Lines Without Claude which parses locally and uses no credit) or Photos ("Choose up to 3 photos", toJpeg;
-  choosing more keeps the first 3 and says so, the server refuses more than 3), then a review
-  screen (name, servings, ingredient rows with amount, unit, name and note, add and remove, Steps, meal tag chips, Save and Continue, Cancel).
+  choosing more keeps the first 3 and says so, the server refuses more than 3), or Web Address (only when `urlImportOn(st)`: Claude usable,
+  ai_allow_recipe and ai_allow_recipe_url on; input type url, Enter or Read With Claude, `urlCheck` mirrors the server checks inline,
+  the confirm notice asks /api/ai/status?recipe_url=1 and says "Estimated cost up to about ... This is an upper estimate" from est_upper;
+  Full Claude Use sends at once with `recipeUrlCostLine`; errors inline; v67), then a review
+  screen (name, servings, ingredient rows with amount, unit, name and note, add and remove, Steps, meal tag chips, Save and Continue, Cancel;
+  a URL import shows "Source example.com" and sends source_url). meals.source_url (TEXT, null = none; added in place by core.init) is
+  validated by core.clean_source_url on POST /api/meals/import, returned by meal_dict and copied by Duplicate. The recipe screen shows it
+  under the per serving line as recipeflow.js `sourceNode`: a link (target _blank, rel noopener noreferrer, the site name as text,
+  "opens in a new tab" in its label) only for http and https addresses (recipeimport.js `sourceLink`).
   Save and Continue posts /api/meals/import and opens Match Ingredients ("Saved", "Step 2 of 2"): per row the line and its state, Search
   and Scan Barcode (the ingredient finder in ingredient mode; a picked food is matched at once by autoMatch, no picker), Ask Claude,
   Edit Amount or the Check Amount editor, Skip or Unskip; checkboxes, Select All

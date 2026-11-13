@@ -103,6 +103,10 @@ export const GUIDE = [
   { heading: 'Importing a Recipe', bullets: [
     'On the Recipes tab, tap Import Recipe.',
     'Paste the text, or choose up to 3 photos or screenshots.',
+    'If the administrator allows it, Web Address reads a recipe page with Claude.',
+    'Anthropic fetches the page, never this server. Long pages are cut off.',
+    'The cost shown first is an upper estimate. No photo is imported.',
+    'A recipe from a web address shows its Source link.',
     'Split Lines Without Claude reads one ingredient per line and costs nothing.',
     'Check the name, servings, ingredients and steps, then tap Save and Continue.',
     'Claude also copies the method steps. Split Lines Without Claude leaves them empty.',
