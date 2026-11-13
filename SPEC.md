@@ -217,7 +217,7 @@ POST /api/foods/{id}/refresh-nutrients -> {"food","filled":[nutrient...],"messag
         # changes name, calories or macros, so it works on foods already in logs or recipes. Empty filled means the source had no more data.
         # 400 no source id or barcode, 403 custom or ai food of someone else (off and fdc foods are shared), 404, 409 serving cannot be compared,
         # 429 source rate limit (USDA included), 502 source unreachable. lookup.refresh(food) and lookup.refresh_kind(food) do the network part.
-GET  /api/foods/missing-nutrients?date=YYYY-MM-DD&claude=1 -> {"ids":[food id...],"total"}   # claude=1: see Full Claude Use
+GET  /api/foods/missing-nutrients?date=YYYY-MM-DD&claude=1 -> {"ids":[food id...],"total"}   # claude=1: Search Then Claude, see Refresh Nutrients mode
         # my logged foods (that day, or ever without date) with a null micronutrient, a lookup source (lookup.refresh_kind) and that I may refresh
         # (custom or ai foods only when I created them); distinct, oldest food first; 400 on a bad date. The client refreshes them one by one.
 DELETE /api/foods/{id} -> {"deleted": id, "everyone": bool}   # soft delete, never a 409: any food, including one in a log entry or a recipe
@@ -277,12 +277,13 @@ GET/PUT /api/goals   {"kcal","carb_pct","protein_pct","fat_pct"}  pcts total 100
         targets: carbs g = kcal*pct/4, protein same, fat g = kcal*pct/9. Goals are per user.
 GET/PUT /api/settings {"start_screen": "today"|"scan"|"search"|"ai", "default_meal": ..., "use_last", "confirm_ai", "full_claude": bool, "amount_format"}   # per user, validated
         # full_claude is Full Claude Use (column settings.full_claude INTEGER NOT NULL DEFAULT 0, added in place; true or false only, else 400). See "Full Claude Use" below
-GET/PUT /api/settings/display {"show_macros","show_micros","show_split","show_macro_bar","show_table","group_recipes","micros_open": bool, "micros_shown": [nutrient...], "today_view": "list"|"table", "search_source": "all"|"off"|"fdc"|"ai", "auto_match": "search"|"claude"|"search_claude"|"off", "recipe_owner": "mine"|"shared"|"all"}
+GET/PUT /api/settings/display {"show_macros","show_micros","show_split","show_macro_bar","show_table","group_recipes","micros_open": bool, "micros_shown": [nutrient...], "today_view": "list"|"table", "search_source": "all"|"off"|"fdc"|"ai", "auto_match": "search"|"claude"|"search_claude"|"off", "recipe_owner": "mine"|"shared"|"all", "refresh_mode": "search"|"search_claude"}
         # per user, stored in the settings table (micros_hidden comma list). PUT takes any subset, booleans only (today_view is the string list or table), 400 otherwise.
         # today_view is the Today tab's view, column settings.today_view TEXT NOT NULL DEFAULT 'list', added in place by core.init.
         # Defaults: everything shown, micros_open false (the new section starts collapsed), so existing users see no change.
         # search_source is the Default Search Source (column settings.search_source TEXT NOT NULL DEFAULT 'all', added in place).
         # auto_match is Auto-Match After Import (column settings.auto_match TEXT NOT NULL DEFAULT 'search', added in place; core.AUTO_MATCHES = search, claude, search_claude, off, a plain TEXT column so new values need no migration;
+        # refresh_mode is Refresh Nutrients (column settings.refresh_mode TEXT NOT NULL DEFAULT 'search', added in place; core.REFRESH_MODES = search, search_claude; PUT 400 on any other value, a bad stored value reads as search; per user).
         # anything else is 400, a bad stored value reads as search). See "Auto-Match After Import" below.
 GET/PUT /api/goals/micros  GET -> {"micros": [{"key","label","unit","kind": "goal"|"limit","default","target"}]}
         PUT {"targets": {nutrient: number > 0 and <= 100000}} (any subset). Table micro_targets(user_id, nutrient, target).
@@ -491,7 +492,7 @@ Screens: Login, Today, Add, Recipes, Picker, Claude fallback, Settings. Bottom n
   the rows, PATCH servings and yield) before leaving. Leaving by the bottom nav or the browser back keeps the changes. Accepted Claude
   estimates stay as foods. Recipes on the Recipes tab, Add and Saved show "N of M matched" for partial recipes and open and log like complete ones; the recipe screen and the Add checklist add the quiet sentence "N ingredients are not counted.".
 - Saved (Settings, then Saved): Favorites, Recipes and My foods lists with meal tag chips, rename, delete, recipe item editing, Remove From My Lists, and the food form for My foods.
-  Refresh Nutrients (js/refresh.js) is a button in the food edit form (shown for every edited food, with a hint when it has no barcode) and in the picker (only when the food can be looked up and has a blank nutrient); it fills the blank boxes and never overwrites. My Foods also has Refresh All Missing, at most 10 foods per tap, one after another, stopping at a rate limit, with a summary of how many were done and how many are left.
+  Refresh Nutrients (js/refresh.js), each button with the Search Only or Search Then Claude control above it (issue #42), is a button in the food edit form (shown for every edited food, with a hint when it has no barcode) and in the picker (only when the food can be looked up and has a blank nutrient); it fills the blank boxes and never overwrites. My Foods also has Refresh All Missing, at most 10 foods per tap, one after another, stopping at a rate limit, with a summary of how many were done and how many are left.
   Refresh logged foods (refreshLoggedControl in js/refresh.js): Today has a Refresh Nutrients button under Micro Nutrients (the logged foods of the viewed day, hidden when nothing needs it) and Settings has Refresh All Logged Foods (every food ever logged). Both take ids from /api/foods/missing-nutrients, say how many foods will be checked, run at most 10 per tap one after another, stop at once on a 429 with a rate limit message, skip foods without a source, remember which foods were already checked this visit so tapping again continues, and report foods checked, values filled and foods left. Today repaints after a batch.
   A search box filters all three sections by name (every word must match, case ignored). The Meal filter (All, Breakfast, Lunch, Dinner, Snack, Dessert, Untagged) uses the tags and applies to Favorites and Recipes only, strictly (an untagged item is not shown under a meal here). Each section shows 20 items with a Show More button. Remove and delete reload in place, so the search and filter stay.
 - Source labels (util.js `sourceLabel`, dom.js `sourceBadge` and `sourceLine`): foods carry `source` (off, fdc, custom, ai), shown as a tiny text badge (Open Food Facts, USDA, Custom, Claude) in the sub line of Add lists and search results, on the Saved rows, under the name in the picker and on the food edit form. Claude foods get a filled badge plus an Estimate word in rows and the note "Values are estimates from Claude." in the picker, the draft form and the Ask Claude screen, which also says it is not a database search. Regular sources get no note. Today shows it too: `/api/day` entries carry `source` (a LEFT JOIN on foods, null when the food row is missing), as a badge in the list row's sub line and under the food name in the pinned Food column of the table.
@@ -778,7 +779,16 @@ POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log i
      Without a source (no id or barcode) and with Claude allowed the food is still refreshed by Claude, and
      GET /api/foods/missing-nutrients?claude=1 then lists such foods too. Today's and Settings' bulk buttons ask once per batch
      ("Uses up to 10 of your ... requests", status micros=N) and stop asking Claude for the rest of a batch at the cap.
-     A source rate limit or outage still answers 429 or 502 as before. Off, the claude flag is ignored.
+     A source rate limit or outage still answers 429 or 502 as before. Without claude=1 (Search Only) Claude is never called, with Full Claude Use on or off.
+     Issue #42: the claude flag no longer needs Full Claude Use, because Search Then Claude is chosen per run; it is still ignored when the switch, the key or
+     the cap does not allow it (`core.claude_fill_ready`). Every Refresh Nutrients entry point shows a two option control (segmented buttons,
+     `modeControl` in js/refresh.js, next to the button; it hides with the button): Today, Settings Refresh All Logged Foods, Saved Refresh All Missing,
+     the picker and the food form. The choice is display.refresh_mode (default search). util.js `resolveRefreshMode(setting, full, session, st)`:
+     Search Only by default; Full Claude Use makes Search Then Claude the default (a saved plain search cannot be told from a choice, as for
+     Auto-Match), and a pick of Search Only under Full Claude Use lasts for the visit and is not saved; a pick of Search Then Claude is saved.
+     Search Then Claude is disabled with a reason when `refreshClaudeReason(st)` is not empty (no key, administrator switch ai_allow_lookup off, monthly
+     cap reached, in that order) and the run is Search Only. The cost notice and confirm follow `refreshClaudePlan`: the usual notice when Confirm before
+     using Claude is on, nothing when off, one quiet note at the cap. The hint states both defaults. Claude values stay estimates (foods.ai_micros).
   4. Import Recipe, Read With Claude (ai_allow_recipe), text and photos (v61, issue #35), sends at once without the confirm notice, and
      the Auto-Match After Import Claude step right after it runs with no confirm and no extra tap. The line under the text button shows
      the cost beforehand ("Up to about 0.11 cents per import ... N of M Claude requests left this month."); at the cap the buttons are

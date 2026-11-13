@@ -1,6 +1,6 @@
 import { api } from './api.js';
 import { h } from './dom.js';
-import { noticeLines, autoClaudePlan, CLAUDE_CAP_NOTE } from './util.js';
+import { noticeLines, autoClaudePlan, refreshClaudePlan, CLAUDE_CAP_NOTE } from './util.js';
 
 // Ask before anything goes to Claude. Resolves true to go ahead, false to cancel.
 // opts: { what: "1 photo of a label", images: 1 } for a label read, or { what, chars: text length } for a text lookup. With "Confirm before using Claude" off it resolves true at once.
@@ -46,6 +46,15 @@ export async function confirmClaude(settings, opts) {
 // otherwise the usual confirm with the estimated cost when Confirm before using Claude is on, or nothing when it is off.
 export async function autoClaude(settings, st, feature, opts) {
   const plan = autoClaudePlan(settings, st, feature);
+  if (plan === 'off') return { go: false, note: '' };
+  if (plan === 'cap') return { go: false, note: CLAUDE_CAP_NOTE };
+  if (plan === 'run') return { go: true, note: '' };
+  return { go: await confirmClaude(settings, opts), note: '' };
+}
+
+// Search Then Claude chosen for a Refresh Nutrients run. Same result as autoClaude, but the choice itself replaces the Full Claude Use check.
+export async function refreshClaude(settings, st, opts) {
+  const plan = refreshClaudePlan(settings, st);
   if (plan === 'off') return { go: false, note: '' };
   if (plan === 'cap') return { go: false, note: CLAUDE_CAP_NOTE };
   if (plan === 'run') return { go: true, note: '' };

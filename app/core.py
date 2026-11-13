@@ -107,6 +107,7 @@ CREATE TABLE IF NOT EXISTS micro_targets(
 DISPLAY_FLAGS = {"show_macros": 1, "show_micros": 1, "show_split": 1, "show_macro_bar": 1, "show_table": 1, "micros_open": 0, "group_recipes": 1}
 TODAY_VIEWS = ("list", "table")  # the Today tab's default view, stored as settings.today_view
 START_SOURCES = ("all", "off", "fdc", "ai")  # the Add search Source to start with, stored as settings.search_source
+REFRESH_MODES = ("search", "search_claude")  # Refresh Nutrients: Search Only (source lookups, free) or Search Then Claude; stored as settings.refresh_mode (plain TEXT, validated here)
 RECIPE_OWNERS = ("mine", "shared", "all")  # the Recipes tab owner filter: my recipes, recipes others share with me, or both; stored as settings.recipe_owner
 AUTO_MATCHES = ("search", "claude", "search_claude", "off")  # Auto-Match After Import: the free Search (default), Claude, Search then Claude for rows Search left without a proposal, or nothing; stored as settings.auto_match (plain TEXT, validated here, no schema change)
 SCHEMA = SCHEMA.replace("{MEAL_ITEMS_BODY}", MEAL_ITEMS_BODY)
@@ -180,6 +181,8 @@ def init(c: sqlite3.Connection) -> None:
         c.execute("ALTER TABLE settings ADD COLUMN search_source TEXT NOT NULL DEFAULT 'all'")
     if "auto_match" not in cols:  # databases made before Auto-Match After Import
         c.execute("ALTER TABLE settings ADD COLUMN auto_match TEXT NOT NULL DEFAULT 'search'")
+    if "refresh_mode" not in cols:  # databases made before the Refresh Nutrients choice
+        c.execute("ALTER TABLE settings ADD COLUMN refresh_mode TEXT NOT NULL DEFAULT 'search'")
     if "recipe_owner" not in cols:  # databases made before the Recipes owner filter
         c.execute("ALTER TABLE settings ADD COLUMN recipe_owner TEXT NOT NULL DEFAULT 'mine'")
     for table in ("foods", "entries"):  # databases made before estimated calories: all stay as stored (0, a real value)
@@ -461,7 +464,7 @@ def create_food(user: CurrentUser, body: dict = Body(...)):
 def missing_nutrients(user: CurrentUser, date: str | None = None, claude: bool = False):
     """Ids of the foods I have logged (on `date` when given, else ever) that have a blank micronutrient, can be looked up
     again and that I may refresh (custom and AI foods only when I created them). Oldest food first.
-    claude: also foods with no source to look up, when Claude may fill them (Full Claude Use, see refresh_nutrients)."""
+    claude: also foods with no source to look up, when Claude may fill them (Search Then Claude, see refresh_nutrients)."""
     uid = user["id"]
     by_claude = claude and claude_fill_ready(uid)[0] is not None
     where, args = "e.user_id=?", [uid]
@@ -839,7 +842,7 @@ def put_settings(user: CurrentUser, body: dict = Body(...)):
 # ---------- display settings and micronutrient targets ----------
 
 def read_display(c, uid: int) -> dict:
-    row = c.execute(f"SELECT {', '.join(DISPLAY_FLAGS)}, micros_hidden, today_view, search_source, auto_match, recipe_owner FROM settings WHERE user_id=?",
+    row = c.execute(f"SELECT {', '.join(DISPLAY_FLAGS)}, micros_hidden, today_view, search_source, auto_match, recipe_owner, refresh_mode FROM settings WHERE user_id=?",
                     (uid,)).fetchone()
     out = {k: bool(row[k]) if row else bool(v) for k, v in DISPLAY_FLAGS.items()}
     hidden = set((row["micros_hidden"] if row else "").split(","))
@@ -848,6 +851,7 @@ def read_display(c, uid: int) -> dict:
     out["search_source"] = row["search_source"] if row and row["search_source"] in START_SOURCES else "all"
     out["auto_match"] = row["auto_match"] if row and row["auto_match"] in AUTO_MATCHES else "search"
     out["recipe_owner"] = row["recipe_owner"] if row and row["recipe_owner"] in RECIPE_OWNERS else "mine"
+    out["refresh_mode"] = row["refresh_mode"] if row and row["refresh_mode"] in REFRESH_MODES else "search"
     return out
 
 
@@ -860,8 +864,8 @@ def get_display(user: CurrentUser):
 @router.put("/settings/display")
 def put_display(user: CurrentUser, body: dict = Body(...)):
     """Per user show/hide switches. Send any subset; micros_shown is the list of nutrients to show."""
-    if not (set(DISPLAY_FLAGS) | {"micros_shown", "today_view", "search_source", "auto_match", "recipe_owner"}) & body.keys():
-        raise bad("Nothing to update: send " + ", ".join(DISPLAY_FLAGS) + ", micros_shown, today_view, search_source, auto_match or recipe_owner")
+    if not (set(DISPLAY_FLAGS) | {"micros_shown", "today_view", "search_source", "auto_match", "recipe_owner", "refresh_mode"}) & body.keys():
+        raise bad("Nothing to update: send " + ", ".join(DISPLAY_FLAGS) + ", micros_shown, today_view, search_source, auto_match, recipe_owner or refresh_mode")
     with db.conn() as c:
         d = read_display(c, user["id"])
         for key in DISPLAY_FLAGS:
@@ -890,9 +894,13 @@ def put_display(user: CurrentUser, body: dict = Body(...)):
             if body["recipe_owner"] not in RECIPE_OWNERS:
                 raise bad("recipe_owner must be one of " + ", ".join(RECIPE_OWNERS[:-1]) + " or " + RECIPE_OWNERS[-1])
             d["recipe_owner"] = body["recipe_owner"]
-        cols = [*DISPLAY_FLAGS, "micros_hidden", "today_view", "search_source", "auto_match", "recipe_owner"]
+        if "refresh_mode" in body:
+            if body["refresh_mode"] not in REFRESH_MODES:
+                raise bad("refresh_mode must be " + " or ".join(REFRESH_MODES))
+            d["refresh_mode"] = body["refresh_mode"]
+        cols = [*DISPLAY_FLAGS, "micros_hidden", "today_view", "search_source", "auto_match", "recipe_owner", "refresh_mode"]
         vals = [int(d[k]) for k in DISPLAY_FLAGS] + [",".join(k for k in MICROS if k not in d["micros_shown"]), d["today_view"],
-                                                     d["search_source"], d["auto_match"], d["recipe_owner"]]
+                                                     d["search_source"], d["auto_match"], d["recipe_owner"], d["refresh_mode"]]
         c.execute("INSERT OR IGNORE INTO settings(user_id) VALUES(?)", (user["id"],))
         c.execute(f"UPDATE settings SET {', '.join(k + '=?' for k in cols)} WHERE user_id=?", [*vals, user["id"]])
         return read_display(c, user["id"])
@@ -1915,10 +1923,9 @@ CLAUDE_FAIL_NOTE = "Claude could not fill the rest just now"
 
 
 def claude_fill_ready(uid: int) -> tuple:
-    """(source, key) when Claude may fill missing micronutrients for this user on its own: Full Claude Use is on, the
-    administrator allows Claude typed lookups (ai_allow_lookup) and a key is usable. (None, "") otherwise (silent fallback)."""
-    if not full_claude_on(uid):
-        return None, ""
+    """(source, key) when Claude may fill missing micronutrients for this user: the administrator allows Claude typed lookups
+    (ai_allow_lookup) and a key is usable. (None, "") otherwise (silent fallback). Callers only ask when the user chose
+    Search Then Claude for this run (claude=1); Full Claude Use only changes which choice is the default on the client."""
     from . import ai  # lazy: ai is optional
     return ai.auto_ready(uid, "lookup")
 
@@ -1932,8 +1939,9 @@ async def refresh_nutrients(food_id: int, user: CurrentUser, claude: bool = Fals
     """Look a saved food up again in its source and fill ONLY micronutrients that are null. Existing values,
     calories, macros and the name never change, so this is safe for foods already in logs or recipes.
     Foods from Open Food Facts or USDA are shared and any user may refresh them; custom and AI foods only by their creator.
-    claude=1 (Full Claude Use): when the setting is on, the lookup switch is on and a key is usable, Claude estimates what
-    the source left blank (one request, inside the monthly cap), marked in foods.ai_micros. Otherwise it is ignored."""
+    claude=1 (Search Then Claude, chosen per run; the default when Full Claude Use is on): when the lookup switch is on and a key is usable,
+    Claude estimates what the source left blank (one request, inside the monthly cap), marked in foods.ai_micros. Otherwise it is ignored.
+    Without claude=1 Claude is never called (Search Only), even with Full Claude Use on."""
     with db.conn() as c:
         row = c.execute("SELECT id, source FROM foods WHERE id=?", (food_id,)).fetchone()
         if not row:

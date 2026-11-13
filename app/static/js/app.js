@@ -985,5 +985,5 @@ function hideSplash() {
   hideSplash();
 })();
 
-useSettings(() => state.settings);  // Refresh Nutrients reads Full Claude Use and Confirm before using Claude
+useSettings(() => state.settings, () => state.display, (patch) => ctx.saveDisplay(patch));  // Refresh Nutrients reads Full Claude Use, Confirm before using Claude and its Search Only or Search Then Claude choice
 startUpdates();

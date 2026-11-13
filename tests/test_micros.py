@@ -137,7 +137,7 @@ def test_migration_adds_micro_columns_and_display_settings(tmp_path):
     assert set(core.NEW_MICROS) <= {r[1] for r in c.execute("PRAGMA table_info(foods)")}
     assert core.read_display(c, 1) == {**{k: bool(v) for k, v in core.DISPLAY_FLAGS.items()}, "micros_shown": list(core.MICROS),
                                             "today_view": "list", "search_source": "all",
-                                            "auto_match": "search", "recipe_owner": "mine"}
+                                            "auto_match": "search", "recipe_owner": "mine", "refresh_mode": "search"}
     assert c.execute("SELECT start_screen FROM settings").fetchone()[0] == "scan"
 
 
@@ -147,7 +147,7 @@ def test_display_defaults_keep_screens_as_before(a):
     d = a.get("/api/settings/display").json()
     assert d == {"show_macros": True, "show_micros": True, "show_split": True, "show_macro_bar": True, "show_table": True,
                  "group_recipes": True, "micros_open": False, "micros_shown": list(core.MICROS), "today_view": "list",
-                 "search_source": "all", "auto_match": "search", "recipe_owner": "mine"}
+                 "search_source": "all", "auto_match": "search", "recipe_owner": "mine", "refresh_mode": "search"}
 
 
 def test_display_put_partial_per_user_and_other_settings_kept(a, b):
@@ -280,6 +280,41 @@ def test_auto_match_migrates_old_settings_table(tmp_path, monkeypatch):
     for v in core.AUTO_MATCHES:  # every allowed value reads back as stored
         c.execute("UPDATE settings SET auto_match=?", (v,))
         assert core.read_display(c, 1)["auto_match"] == v
+
+
+# ---------- refresh nutrients mode ----------
+
+def test_refresh_mode_default_save_and_isolation(a, b):
+    assert a.get("/api/settings/display").json()["refresh_mode"] == "search"
+    for v in ("search_claude", "search", "search_claude"):
+        assert a.put("/api/settings/display", json={"refresh_mode": v}).json()["refresh_mode"] == v
+    a.put("/api/settings/display", json={"show_split": False, "auto_match": "off"})  # other display saves keep it
+    assert a.get("/api/settings/display").json()["refresh_mode"] == "search_claude"
+    assert b.get("/api/settings/display").json()["refresh_mode"] == "search"
+
+
+@pytest.mark.parametrize("value", ["", None, "claude", "Search", "search claude", "search_claude ", "off", True, 1, ["search"], {"a": 1}])
+def test_refresh_mode_validation(a, value):
+    r = a.put("/api/settings/display", json={"refresh_mode": value})
+    assert r.status_code == 400 and "search_claude" in r.json()["detail"]
+    assert a.get("/api/settings/display").json()["refresh_mode"] == "search"
+
+
+def test_refresh_mode_migrates_and_bad_stored_value_reads_as_default(tmp_path, monkeypatch):
+    import sqlite3
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "old.db"))
+    c = sqlite3.connect(tmp_path / "old.db")
+    c.executescript("CREATE TABLE settings(user_id INTEGER PRIMARY KEY, start_screen TEXT NOT NULL DEFAULT 'today', default_meal TEXT);"
+                    " INSERT INTO settings(user_id) VALUES(1);")
+    c.row_factory = sqlite3.Row
+    core.init(c)
+    core.init(c)
+    assert core.read_display(c, 1)["refresh_mode"] == "search"
+    c.execute("UPDATE settings SET refresh_mode='bogus'")
+    assert core.read_display(c, 1)["refresh_mode"] == "search"
+    for v in core.REFRESH_MODES:
+        c.execute("UPDATE settings SET refresh_mode=?", (v,))
+        assert core.read_display(c, 1)["refresh_mode"] == v
 
 
 def test_display_group_recipes_default_validation_and_per_user(a, b):

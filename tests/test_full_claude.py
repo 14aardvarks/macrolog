@@ -178,12 +178,21 @@ def test_out_of_range_and_unasked_values_are_dropped(env):
     assert body["claude_filled"] == ["calcium"] and body["food"]["sodium"] is None and body["food"]["iron"] is None
 
 
-def test_setting_off_ignores_claude_flag(env):
+def test_search_only_never_calls_claude_even_with_full_claude_on(env):
+    full(env)
     f = saved(SOUP)
-    assert refresh(env, f).status_code == 400  # no source and Claude may not run: as before
+    assert refresh(env, f, claude=False).status_code == 400  # no source and no Claude asked: nothing to do
+    g = saved(SPREAD)
+    body = refresh(env, g, claude=False).json()
+    assert "claude_filled" not in body and env["requests"] == []
+    assert env["a"].get("/api/foods/missing-nutrients").json()["ids"] == []  # only foods with a source count in Search Only
+
+
+def test_search_then_claude_works_per_run_with_full_claude_off(env):
     g = saved(SPREAD)
     body = refresh(env, g).json()
-    assert "claude_filled" not in body and env["requests"] == []
+    assert body["claude_filled"] and len(env["requests"]) == 1
+    assert set(body["food"]["ai_micros"]) == set(body["claude_filled"])
 
 
 def test_switch_off_falls_back_silently(env, monkeypatch):
@@ -238,7 +247,7 @@ def test_missing_nutrients_lists_foods_claude_can_fill(env):
     for f in (soup, spread):
         assert env["a"].post("/api/entries", json={"food_id": f["id"], "amount": 1, "unit": f["serving_unit"]}).status_code == 200
     plain = env["a"].get("/api/foods/missing-nutrients", params={"claude": 1}).json()["ids"]
-    assert plain == [spread["id"]]  # setting off: as before
+    assert plain == [soup["id"], spread["id"]]  # asked per run, no matter the Full Claude Use setting
     full(env)
     assert env["a"].get("/api/foods/missing-nutrients").json()["ids"] == [spread["id"]]
     assert env["a"].get("/api/foods/missing-nutrients", params={"claude": 1}).json()["ids"] == [soup["id"], spread["id"]]

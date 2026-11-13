@@ -812,7 +812,7 @@ export const MICROS = [
 
 // What the screens show before /api/settings/display answers. Matches the server defaults.
 export const DEFAULT_DISPLAY = { show_macros: true, show_micros: true, show_split: true, show_macro_bar: true, show_table: true, group_recipes: true,
-  micros_open: false, micros_shown: MICROS.map((m) => m.key), today_view: 'list', auto_match: 'search', recipe_owner: 'mine' };
+  micros_open: false, micros_shown: MICROS.map((m) => m.key), today_view: 'list', auto_match: 'search', recipe_owner: 'mine', refresh_mode: 'search' };
 
 // The nutrients to list, in order. Empty when the section is switched off.
 export function shownMicros(display) {
@@ -1071,6 +1071,49 @@ export const CLAUDE_CAP_NOTE = sentence('Monthly Claude limit reached, so Claude
 export function effectiveAutoMatch(setting, full) {
   const s = autoMatch(setting);
   return full && s === 'search' ? { value: 'search_claude', forced: true } : { value: s, forced: false };
+}
+
+// ---------- Refresh Nutrients mode ----------
+// Every refresh run is Search Only (source lookups, free, never calls Claude) or Search Then Claude (source first, then Claude fills
+// what is still blank). Saved as display.refresh_mode (same values as core.REFRESH_MODES). Search is the default, and Full Claude Use makes
+// Search Then Claude the default. The saved value cannot tell an explicit Search from the default, so under Full Claude Use a pick of
+// Search Only lasts for the visit (session) and the saved value is only changed by picking Search Then Claude.
+export const REFRESH_MODES = [{ value: 'search', label: 'Search Only' }, { value: 'search_claude', label: 'Search Then Claude' }];
+export const refreshMode = (v) => (REFRESH_MODES.some((o) => o.value === v) ? v : 'search');
+
+export const REFRESH_NO_KEY = sentence('No Claude key is set up');
+export const REFRESH_SWITCH = sentence('The administrator turned Claude lookups off');
+export const REFRESH_CAPPED = sentence('Monthly Claude limit reached');
+
+// Why Search Then Claude cannot be used right now, or '' when it can. st: /api/ai/status (null when unknown, which reads as no key).
+export function refreshClaudeReason(st) {
+  if (!st || !st.enabled) return REFRESH_NO_KEY;
+  if (aiFeatureOff(st, 'lookup')) return REFRESH_SWITCH;
+  if (!(st.remaining > 0)) return REFRESH_CAPPED;
+  return '';
+}
+
+// The mode a run uses. setting: saved display.refresh_mode, full: Full Claude Use, session: the pick made this visit (or null), st: /api/ai/status.
+// value: what the control shows and the run does (Search Only whenever Claude is not available). reason: why Search Then Claude is disabled.
+// forced: Full Claude Use made Search Then Claude the default (the saved value is the plain default).
+export function resolveRefreshMode(setting, full, session, st) {
+  const reason = refreshClaudeReason(st);
+  const saved = refreshMode(setting);
+  const want = session != null ? refreshMode(session) : (full && saved === 'search' ? 'search_claude' : saved);
+  return { value: want === 'search_claude' && !reason ? 'search_claude' : 'search', reason, forced: session == null && full === true && saved === 'search' };
+}
+
+// The line under the choice. States both defaults.
+export function refreshModeHint(full) {
+  return sentence('Search Only is free and never uses Claude') + ' ' + sentence('Search Then Claude asks Claude to fill what is still blank, as estimates') + ' '
+    + sentence(full ? 'Full Claude Use is on, so Search Then Claude is the default' : 'Search Only is the default, and Full Claude Use makes Search Then Claude the default');
+}
+
+// Search Then Claude with a status in hand: 'off' (no key or switch, silent), 'cap' (one quiet note), 'confirm' or 'run' (Confirm before using Claude).
+export function refreshClaudePlan(settings, st) {
+  if (!aiFeature(st, 'lookup')) return 'off';
+  if (!(st.remaining > 0)) return 'cap';
+  return settings && settings.confirm_ai === false ? 'run' : 'confirm';
 }
 
 // Whether an automatic Claude step runs. st: /api/ai/status, feature: label, lookup or recipe.
