@@ -58,7 +58,10 @@ export const GUIDE = [
     'Untagged items show under every meal. Logging with a meal adds its tag.',
   ] },
   { heading: 'Recipes', bullets: [
-    'The Recipes tab lists your recipes with tags, servings and matching progress.',
+    'The Recipes tab shows each recipe as a card with its photo, summary and tags.',
+    'A card lists servings, calories and protein per serving, and the ingredient count.',
+    'Tap a card to open it. The three dot button offers Log, Cooking, Duplicate and Delete.',
+    'Recipes without a photo show a fork and knife in the color of their first tag.',
     'Search by name, filter by meal tag, or sort by name, newest or most used.',
     'Recipes are grouped under a heading for each meal tag, also on Add.',
     'A recipe with several tags shows under each. Untagged ones come last.',

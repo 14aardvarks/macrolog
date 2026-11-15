@@ -242,3 +242,14 @@ def test_saved_screen_lists_only_my_recipes(env):
     m, _ = recipe(env, shared=True)
     assert env["b"].get("/api/saved").json()["recipes"] == []
     assert [r["id"] for r in env["a"].get("/api/saved").json()["recipes"]] == [m["id"]]
+
+
+def test_list_carries_what_the_recipe_cards_show(env):
+    """The Recipes tab cards (#48) need no extra request: per serving numbers, counts, tags, owner and photo are in the list."""
+    m, _ = recipe(env, shared=True)
+    got = {x["id"]: x for x in env["b"].get("/api/meals", params={"owner": "all"}).json()["meals"]}[m["id"]]
+    for key in ("name", "servings", "per_serving", "items", "needed", "matched", "skipped", "complete", "meals", "photo", "owner", "mine", "can_edit", "shared"):
+        assert key in got, key
+    assert set(got["per_serving"]) >= {"kcal", "protein"}
+    assert len(got["items"]) == 2 and got["needed"] == 2 and got["matched"] == 1
+    assert got["mine"] is False and got["can_edit"] is False and got["owner"]["name"] == "Ann"

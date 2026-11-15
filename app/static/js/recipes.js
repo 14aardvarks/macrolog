@@ -12,7 +12,8 @@ import { chips, renameRecipe, deleteRecipe } from './saved.js';
 import { stepsList, stepsEditor } from './steps.js';
 import { deletedHint, deletedTitle, daysLeftText, deleteForeverConfirm, restoredText, purgedText, sortDeleted, withoutDeleted } from './trash.js';
 import { closeUndo } from './undo.js';
-import { loadPhotoConfig, photoThumb, photoSection } from './photo.js';
+import { loadPhotoConfig, photosOn, recipeImage, photoHero, choosePhoto } from './photo.js';
+import { summaryParts, cardChips, cardLabel, cardGridClass, cardMenuItems, menuLabel, menuMove } from './recipecards.js';
 
 // The recipe's ingredients as a read only list: "Wheat flour" over "1 1/2 cup, 188 g". Skipped lines keep their own text. A row
 // whose weight is a unit weight or an estimate shows the Estimated Weight tag; onGrams(item, grams) saves grams typed in it.
@@ -58,6 +59,72 @@ function stepsSection(meal) {
   return h('div', null, box, status);
 }
 
+// The menu of a card: a real button (aria-haspopup, aria-expanded) that opens a list of menuitems below it, or above it
+// near the bottom of the window. Arrow keys, Home and End move, Escape and Tab close, and Escape returns focus to the button.
+// items: [{ key, label }]. onPick(key) runs after the menu closed.
+let openMenu = null;  // the close function of the menu that is open, so only one is open at a time
+function cardMenu(card, items, label, onPick) {
+  const id = 'menu-' + Math.random().toString(36).slice(2, 9);
+  const btn = h('button', { class: 'card-menu-btn', type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false', 'aria-controls': id,
+    'aria-label': label, title: 'More Actions' },
+  h('span', { class: 'dots', 'aria-hidden': 'true' }, h('span'), h('span'), h('span')));
+  const list = h('ul', { class: 'card-menu', role: 'menu', id, 'aria-label': label, hidden: true });
+  const entries = items.map((it) => h('li', { role: 'none' }, h('button', { type: 'button', role: 'menuitem', tabindex: '-1',
+    class: 'card-menu-item' + (it.key === 'delete' ? ' danger-text' : ''), onclick: () => { close(false); onPick(it.key); } }, it.label)));
+  entries.forEach((li) => list.appendChild(li));
+  const buttons = () => Array.prototype.slice.call(list.querySelectorAll('[role=menuitem]'));
+  function outside(e) { if (!list.contains(e.target) && e.target !== btn && !btn.contains(e.target)) close(false); }
+  function close(focusBtn) {
+    if (list.hidden) return;
+    list.hidden = true;
+    btn.setAttribute('aria-expanded', 'false');
+    card.classList.remove('menu-open');
+    document.removeEventListener('pointerdown', outside, true);
+    if (openMenu === close) openMenu = null;
+    if (focusBtn) btn.focus();
+  }
+  function open(at) {
+    if (openMenu) openMenu(false);
+    list.hidden = false;
+    card.classList.add('menu-open');
+    btn.setAttribute('aria-expanded', 'true');
+    const r = btn.getBoundingClientRect();
+    list.classList.toggle('up', window.innerHeight - r.bottom < list.offsetHeight + 72);  // room above the bottom nav
+    document.addEventListener('pointerdown', outside, true);
+    openMenu = close;
+    const b = buttons();
+    (at === 'last' ? b[b.length - 1] : b[0]).focus();
+  }
+  btn.addEventListener('click', () => (list.hidden ? open('first') : close(true)));
+  btn.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); open(e.key === 'ArrowUp' ? 'last' : 'first'); }
+  });
+  list.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(true); return; }
+    if (e.key === 'Tab') { close(false); return; }
+    const b = buttons();
+    const next = menuMove(e.key, b.indexOf(document.activeElement), b.length);
+    if (next != null) { e.preventDefault(); b[next].focus(); }
+  });
+  return h('div', { class: 'card-menu-wrap' }, btn, list);
+}
+
+// One recipe card: the photo or placeholder on the left, the title, the summary and the chips on the right, the whole card
+// one button that opens the recipe, and the menu button at the bottom right. act(key, meal, card) runs a menu action.
+function recipeCard(m, open, act) {
+  const card = h('li', { class: 'rcard' });
+  const chipList = cardChips(m);
+  card.appendChild(h('button', { class: 'rcard-open', type: 'button', 'aria-label': cardLabel(m), onclick: () => open(m) },
+    recipeImage(m, 'rcard-img'),
+    h('span', { class: 'rcard-body' },
+      h('span', { class: 'rcard-title' }, m.name),
+      h('span', { class: 'rcard-sum' }, summaryParts(m).flatMap((t, i) => [i ? ' · ' : null, h('span', { class: 'nowrap' }, t)])),
+      // The bottom row: chips on the left, the menu button (outside this button) at the right edge.
+      h('span', { class: 'rcard-chips' }, chipList.map((c) => h('span', { class: 'tag tag-' + c.kind }, c.label))))));
+  card.appendChild(cardMenu(card, cardMenuItems(m, photosOn()), menuLabel(m), (key) => act(key, m, card)));
+  return card;
+}
+
 // The chosen meal filter and sort stay for the session (this module lives as long as the page); the search text does not.
 const listView = { meal: 'all', sort: 'name', deletedOpen: false };
 
@@ -71,14 +138,24 @@ export async function renderRecipes(root, ctx) {
   let shown = PAGE_SIZE;
   let query = '';
   const open = (m) => ctx.go('recipeview', { mealId: m.id });
-  const row = (m) => {
-    const thumb = photoThumb(m, () => open(m));
-    return h('li', { class: thumb ? 'item has-thumb' : 'item' }, thumb,
-    h('button', { class: 'item-main', type: 'button', onclick: () => open(m) },
-      h('span', { class: 'item-title' }, m.name),
-      h('span', { class: 'item-sub' }, recipeListSub(m, fmtNum(m.kcal, 0))),
-      ownerText(m) ? h('span', { class: 'item-sub owner-line' }, ownerText(m)) : null));
-  };
+  const status = h('div', { class: 'cards-status', 'aria-live': 'polite' });
+  // Menu actions. A failure shows above the list; Delete and a new photo repaint from fresh data.
+  async function act(key, m, card) {
+    show(status, null);
+    const menuBtn = () => { const b = listBox.querySelector('[data-id="' + m.id + '"] .card-menu-btn'); if (b) b.focus(); };
+    try {
+      if (key === 'log') await ctx.go('recipeview', { mealId: m.id, focus: 'log' });
+      else if (key === 'cooking') await ctx.go('cooking', { mealId: m.id });
+      else if (key === 'duplicate') { const d = await api.duplicateMeal(m.id); await ctx.go('recipeview', { mealId: d.id }); }
+      else if (key === 'delete') { if (await deleteRecipe(m, () => ctx.repaint())) await ctx.repaint(); else card.querySelector('.card-menu-btn').focus(); }
+      else if (key === 'photo') {
+        if (await choosePhoto(m, 'meal', (t) => show(status, message(t)))) { show(status, message('Photo saved.')); paint(); menuBtn(); }
+        else card.querySelector('.card-menu-btn').focus();
+      }
+    } catch (e) { show(status, message(e.message, 'error')); }
+  }
+  const row = (m) => { const c = recipeCard(m, open, act); c.setAttribute('data-id', String(m.id)); return c; };
+  const grid = (items) => h('ul', { class: cardGridClass(photosOn()) }, items.map(row));
   const q = h('input', { type: 'search', placeholder: 'Search recipes', 'aria-label': 'Search recipes', autocomplete: 'off', enterkeyhint: 'search' });
   const sortSel = select(RECIPE_SORTS.map((s) => ({ value: s, label: RECIPE_SORT_LABELS[s] })), listView.sort, { 'aria-label': 'Sort recipes' });
   const filterBox = h('div', { class: 'chips', role: 'group', 'aria-label': 'Meal filter' });
@@ -108,23 +185,23 @@ export async function renderRecipes(root, ctx) {
     if (ctx.display && ctx.display.group_recipes === false) {
       const page = pageOf(items, shown);
       more = page.more;
-      listBox.appendChild(h('ul', { class: 'list' }, page.items.map(row)));
+      listBox.appendChild(grid(page.items));
     } else {
       const page = pageGroups(groupRecipesByMeal(items, listView.meal), shown);
       more = page.more > 0;
-      for (const g of page.groups) listBox.appendChild(h('div', { class: 'recipe-group' }, h('h2', { class: 'group' }, g.label), h('ul', { class: 'list' }, g.items.map(row))));
+      for (const g of page.groups) listBox.appendChild(h('div', { class: 'recipe-group' }, h('h2', { class: 'group' }, g.label), grid(g.items)));
     }
-    if (more) listBox.appendChild(h('button', { class: 'btn', type: 'button', onclick: () => { shown += PAGE_SIZE; paint(); } }, 'Show More'));
+    if (more) listBox.appendChild(h('button', { class: 'btn show-more', type: 'button', onclick: () => { shown += PAGE_SIZE; paint(); } }, 'Show More'));
   }
   paint();
   const deleted = recentlyDeleted(trash, async () => { all = (await api.meals('all')).meals; paint(); });
-  root.appendChild(h('section', { class: 'screen recipes' }, h('h1', null, 'Recipes'),
+  root.appendChild(h('section', { class: 'screen recipes wide' }, h('h1', null, 'Recipes'),
     h('div', { class: 'row wrap recipes-actions' },
       h('button', { class: 'btn primary', type: 'button', onclick: ctx.newRecipe }, 'New Recipe'),
       h('button', { class: 'btn', type: 'button', onclick: ctx.importRecipe }, 'Import Recipe')),
     h('p', { class: 'sub' }, 'Tap a recipe to log or edit it. Ingredients that are not matched are not counted.'),
     h('div', { class: 'saved-filter', role: 'search' }, q, ownerBox, filterBox, h('label', { class: 'meal-pick' }, h('span', null, 'Sort'), sortSel)),
-    listBox, deleted));
+    status, listBox, deleted));
 }
 
 // Recently Deleted at the bottom of the Recipes tab: my deleted recipes, newest first, with days left, Restore and Delete
@@ -252,11 +329,11 @@ export async function renderRecipeView(root, params, ctx) {
   const renameBox = h('div');
   root.appendChild(h('section', { class: 'screen recipe-view' },
     h('div', { class: 'bar' }, h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back')),
+    photoHero(meal, edit),
     h('h1', null, meal.name),
     owned ? h('p', { class: 'owner-line' }, owned) : null,
     sub, per, sourceNode(meal.source_url),
-    photoSection(meal, 'meal', meal.can_edit !== false),
-    h('h2', null, 'Log'),
+    h('h2', { id: 'log-head' }, 'Log'),
     h('label', { class: 'field' }, h('span', null, 'Meal'), mealSel),
     h('div', { class: 'grid2 recipe-log' }, amount, h('label', { class: 'field' }, h('span', null, 'Of the recipe'), unitSel)),
     notCounted(meal) ? h('p', { class: 'sub not-counted' }, notCountedText(notCounted(meal))) : null,
@@ -270,6 +347,13 @@ export async function renderRecipeView(root, params, ctx) {
       await again();
     } : null),
     edit ? editTools() : viewOnly()));
+  if (params.focus === 'log') {  // Log from a card menu: the Log section in view with the amount ready, once the screen shows
+    root.addEventListener('mounted', () => setTimeout(() => {
+      const head = root.querySelector('#log-head');
+      if (head && head.scrollIntoView) head.scrollIntoView({ block: 'start' });
+      amount.input.focus({ preventScroll: true });
+    }, 0), { once: true });
+  }
 
   // Someone else's shared recipe: steps to read and Duplicate to make my own private copy.
   function viewOnly() {

@@ -5,6 +5,11 @@
   --bar-near: #c76a1d; --bar-over: #c62828; --cue-near: #8f4a0a; --cue-over: #b3261e;
   --row: 44px;
   --c-carbs: #7b9bd1; --c-protein: #7fb28f; --c-fat: #d98578;
+  --card-shadow: 0 1px 2px rgba(0,0,0,.08), 0 2px 8px rgba(0,0,0,.06); --card-shadow-hover: 0 2px 4px rgba(0,0,0,.1), 0 6px 16px rgba(0,0,0,.1);
+  --ph-bg: #eceff0;
+  --tag-breakfast-bg: #fbeccc; --tag-breakfast-fg: #7a4d00; --tag-lunch-bg: #dff0e4; --tag-lunch-fg: #1f5c37;
+  --tag-dinner-bg: #e3e9fa; --tag-dinner-fg: #2c4787; --tag-snack-bg: #f5e3f1; --tag-snack-fg: #7a2c6b;
+  --tag-dessert-bg: #fce4e0; --tag-dessert-fg: #8c2c20; --tag-owner-bg: #e7ebe9; --tag-owner-fg: #36403b;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -13,6 +18,11 @@
     --over: #f0a05a;
     --bar-near: #f0a05a; --bar-over: #ff6b6b; --cue-near: #f0a05a; --cue-over: #ff8a80;
     --c-carbs: #86a4d8; --c-protein: #84bd96; --c-fat: #e08d80;
+    --card-shadow: 0 1px 2px rgba(0,0,0,.5), 0 4px 12px rgba(0,0,0,.3); --card-shadow-hover: 0 2px 4px rgba(0,0,0,.55), 0 8px 20px rgba(0,0,0,.4);
+    --ph-bg: #242b27;
+    --tag-breakfast-bg: #3a3017; --tag-breakfast-fg: #f2c86e; --tag-lunch-bg: #1c3426; --tag-lunch-fg: #8fd4a9;
+    --tag-dinner-bg: #1f2943; --tag-dinner-fg: #abc0f4; --tag-snack-bg: #37213c; --tag-snack-fg: #e5a9d8;
+    --tag-dessert-bg: #3f2421; --tag-dessert-fg: #f3a499; --tag-owner-bg: #2b332f; --tag-owner-fg: #cbd4ce;
   }
 }
 * { box-sizing: border-box; }
@@ -594,3 +604,83 @@ body.has-undo main { padding-bottom: 96px; }  /* room to scroll the last rows ab
 .weight-tag .weight-err:empty { display: none; }
 .check-notes .check-list.estimates { border-color: var(--line); background: transparent; }
 .import-flag { min-height: 44px; }
+
+/* Recipe cards (issue #48): photo or placeholder on the left, title, summary and chips on the right, the menu at the bottom
+   right. The image box is sized by the card, never by the image, so nothing moves while photos load. */
+.card-grid { list-style: none; margin: 0 0 12px; padding: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+.rcard { position: relative; display: flex; min-width: 0; background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+  box-shadow: var(--card-shadow); transition: box-shadow .15s ease; }
+.rcard:hover { box-shadow: var(--card-shadow-hover); }
+.rcard.menu-open { z-index: 5; }
+.rcard-open { flex: 1; display: flex; align-items: stretch; width: 100%; min-height: 132px; padding: 0; border: 0; border-radius: 13px;
+  background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.rcard-open:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.rcard-img { flex: 0 0 34%; max-width: 200px; border-radius: 13px 0 0 13px; }
+.rcard-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; padding: 12px 12px 6px 14px; }
+.rcard-title { font-weight: 700; font-size: 1.05rem; line-height: 1.3; overflow: hidden; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; max-height: 2.6em; }
+.rcard-sum { color: var(--muted); font-size: .875rem; line-height: 1.35; }
+.rcard-sum .nowrap { white-space: nowrap; }
+.rcard-chips { display: flex; flex-wrap: wrap; align-items: center; align-content: flex-end; gap: 4px; margin-top: auto;
+  min-height: 44px; padding: 4px 44px 2px 0; }
+.compact .rcard-open { min-height: 112px; }
+.compact .rcard-img { flex-basis: 64px; }
+.compact .ph-glyph { width: 28px; }
+.tag { display: inline-block; max-width: 100%; padding: 1px 9px; border-radius: 99px; font-size: .75rem; font-weight: 600; line-height: 1.6;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; background: var(--tag-owner-bg); color: var(--tag-owner-fg); }
+.tag-breakfast { background: var(--tag-breakfast-bg); color: var(--tag-breakfast-fg); }
+.tag-lunch { background: var(--tag-lunch-bg); color: var(--tag-lunch-fg); }
+.tag-dinner { background: var(--tag-dinner-bg); color: var(--tag-dinner-fg); }
+.tag-snack { background: var(--tag-snack-bg); color: var(--tag-snack-fg); }
+.tag-dessert { background: var(--tag-dessert-bg); color: var(--tag-dessert-fg); }
+.tag-partial { background: var(--warn-bg); color: var(--text); border: 1px dashed var(--over); }
+
+/* The placeholder (and the box a photo fills): neutral surface, fork and knife in the meal tone. */
+.photo-ph { position: relative; display: flex; align-items: center; justify-content: center; overflow: hidden; background: var(--ph-bg); color: var(--accent); }
+.photo-ph img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+.ph-glyph { width: 40px; height: 40px; opacity: .85; }
+.tone-breakfast { color: var(--tag-breakfast-fg); }
+.tone-lunch { color: var(--tag-lunch-fg); }
+.tone-dinner { color: var(--tag-dinner-fg); }
+.tone-snack { color: var(--tag-snack-fg); }
+.tone-dessert { color: var(--tag-dessert-fg); }
+.photo-ph.ph-thumb { width: 48px; height: 48px; border-radius: 8px; }
+.ph-thumb .ph-glyph { width: 24px; height: 24px; }
+
+/* The card menu: a 44 px button at the bottom right and a small popup list. */
+.card-menu-btn { position: absolute; right: 2px; bottom: 2px; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center;
+  border: 0; border-radius: 10px; background: transparent; color: var(--muted); cursor: pointer; }
+.card-menu-btn:hover, .card-menu-btn[aria-expanded=true] { background: var(--track); color: var(--text); }
+.dots { display: flex; flex-direction: column; gap: 3px; }
+.dots span { width: 4px; height: 4px; border-radius: 50%; background: currentColor; }
+.card-menu { position: absolute; right: 4px; top: calc(100% - 6px); z-index: 20; min-width: 190px; margin: 0; padding: 4px; list-style: none;
+  background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 8px 24px rgba(0,0,0,.28); }
+.card-menu.up { top: auto; bottom: 48px; }
+.card-menu-item { display: block; width: 100%; min-height: 44px; padding: 0 14px; border: 0; border-radius: 8px; background: transparent;
+  text-align: left; cursor: pointer; }
+.card-menu-item:hover, .card-menu-item:focus { background: var(--track); }
+.card-menu-item.danger-text { color: var(--danger); }
+.cards-status:empty { display: none; }
+.recipes .show-more { width: 100%; }
+
+/* The recipe screen hero: full width, at most about 40vh, cover; a shorter band for the placeholder. Fixed heights, no shift. */
+.hero-wrap { margin: 4px 0 4px; }
+.hero { position: relative; overflow: hidden; border-radius: 14px; border: 1px solid var(--line); background: var(--ph-bg); }
+.hero-box { position: relative; width: 100%; height: 40vh; min-height: 180px; max-height: 420px; }
+.hero-box img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+.hero-empty .hero-box { height: 128px; min-height: 0; }
+.hero-ph { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+.hero-ph .ph-glyph { width: 52px; height: 52px; }
+.hero-actions { position: absolute; right: 8px; bottom: 8px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.hero .btn.hero-btn { background: var(--card); box-shadow: 0 1px 4px rgba(0,0,0,.3); }
+
+@media (min-width: 900px) {
+  .card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  .screen.recipes { max-width: 1100px; }
+  .screen.recipes > .recipes-actions, .screen.recipes > .sub, .screen.recipes > .saved-filter { max-width: 640px; }
+  .recipes .show-more { width: auto; min-width: 240px; }
+}
+@media (min-width: 1300px) {
+  .card-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .screen.recipes { max-width: none; }
+}

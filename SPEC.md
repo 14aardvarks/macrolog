@@ -424,8 +424,7 @@ and an active SSO-linked admin. Every write appends to `admin_log` (no secret va
 
 Mobile first, one-hand use, also fine on desktop. Plain ES modules, under about 1000 lines of JS total, no libraries.
 Screens: Login, Today, Add, Recipes, Picker, Claude fallback, Settings. Bottom nav: Today, Add, Recipes, Settings.
-- Recipes tab (js/recipes.js, helpers in js/recipeimport.js): New Recipe and Import Recipe buttons, then my recipes (and shared ones per the Owner filter, see Shared Recipes) with "3 of 8 matched"
-  or "N items - kcal", servings and meal tags. Above the list: a search box (every word of the name must match), a Meal filter chip row (All, Breakfast, Lunch, Dinner, Snack, Dessert, Untagged; strict, same as Saved, via SAVED_FILTERS and filterSavedItems) and a Sort select (Name (A to Z), Newest, Most Used; util.js `sortRecipes`; Newest is the highest id first, Most Used is the total of the per meal `counts` from GET /api/meals). Group Recipes By Meal (Display setting `group_recipes`, default on): the list shows a real heading (h2 class group) per meal tag in the usual meal order with Untagged last, empty groups hidden, a recipe with several tags under each (util.js `groupRecipesByMeal` built on `groupByMeal`, `pageGroups`); the Meal filter limits the groups to that meal and sort applies within each group; off gives the plain list. The list shows 20 rows with Show More. The chosen filter and sort are kept in memory for the session, the search text is not. Every recipe, partial or complete, opens the recipe screen (a partial one keeps its "3 of 8 matched" badge and shows the quiet sentence "5 ingredients are not counted."): Log
+- Recipes tab (js/recipes.js, helpers in js/recipeimport.js and js/recipecards.js): New Recipe and Import Recipe buttons, then my recipes (and shared ones per the Owner filter, see Shared Recipes) as photo cards (see Recipe Cards). Above the list: a search box (every word of the name must match), a Meal filter chip row (All, Breakfast, Lunch, Dinner, Snack, Dessert, Untagged; strict, same as Saved, via SAVED_FILTERS and filterSavedItems) and a Sort select (Name (A to Z), Newest, Most Used; util.js `sortRecipes`; Newest is the highest id first, Most Used is the total of the per meal `counts` from GET /api/meals). Group Recipes By Meal (Display setting `group_recipes`, default on): the list shows a real heading (h2 class group) per meal tag in the usual meal order with Untagged last, empty groups hidden, a recipe with several tags under each (util.js `groupRecipesByMeal` built on `groupByMeal`, `pageGroups`); the Meal filter limits the groups to that meal and sort applies within each group; off gives the plain list. The list shows 20 rows with Show More. The chosen filter and sort are kept in memory for the session, the search text is not. Every recipe, partial or complete, opens the recipe screen (a partial one keeps its "3 of 8 matched" badge and shows the quiet sentence "5 ingredients are not counted."): Log
   (Meal, Amount and a unit from meal.portions: servings, % of recipe, and the yield units when a yield is set; POST /api/meals/{id}/log
   with amount and unit, so the server scales it), the Ingredients list with Edit Ingredients (opens Match Ingredients with edit true), Meal Tags, Rename, Steps, Serving Size (js/servingsize.js:
   servings, Total yield amount and unit, Use Total of Ingredients when the yield is blank and ingredient_grams is known, which fills it
@@ -1076,10 +1075,37 @@ GET    /api/photos/{name}  -> image/jpeg, Cache-Control "private, max-age=315360
   decorative alt "", lazy, fixed size), photoFigure, cropPhoto (in page dialog, role dialog, focus trapped, Escape cancels; canvas drag with
   pointer events, pinch, wheel, arrow keys and + or -; Zoom slider; Square or Original; Use Photo, Skip Crop, Cancel; output a JPEG through a
   canvas at most 1600 px), importPhotoChoice.
-- Where: recipe screen (under the source line), Edit Food (own foods from Saved), Cooking view (top, larger box), thumbnails on the Recipes tab list,
-  Add's Recipes list and Saved favorites and My Foods. The file input has accept image/* and no capture attribute, so phones offer the camera and the library.
+- Where: recipe screen (hero at the top since v76, see Recipe Cards), Edit Food (own foods from Saved), Cooking view (top, larger box), Recipes tab cards,
+  thumbnails on Add's Recipes list (photo or placeholder) and Saved favorites and My Foods. The file input has accept image/* and no capture attribute, so phones offer the camera and the library.
 - Import: after a screenshot import, the review screen has Recipe Photo with Use As Recipe Photo (Use Photo N when several) opening the crop dialog;
   Save and Continue uploads the cropped photo after the recipe is saved (a failed upload does not block matching). No automatic crop and no Claude call
   for it. URL imports never bring a photo.
 - Shell cache macrolog-shell-v68 (js/photo.js and js/photomath.js added). sw.js never handles /api, so photos never enter the shell cache.
 - Tests: tests/test_photos.py, tests/ui/photo.test.mjs, tests/test_static_shell.py.
+
+## Recipe Cards (v76, issue #48)
+
+- Recipes tab list: `ul.card-grid` of `li.rcard` cards, one column on phones, two from 900 px, three from 1300 px. Group headings (#31), search,
+  Owner and Meal filters, Sort, Show More (20, a recipe in two groups counts twice), Recently Deleted and the Undo notice are unchanged.
+- A card: the image box on the left (34%, at most 200 px, the full card height, object-fit cover; `photo.js recipeImage`: the photo while
+  Allow Photos is on, lazy, decoding async, alt "" since the title is next to it; under it, and alone without a photo or with photos off, the
+  placeholder `photoPlaceholder`: --ph-bg surface with an inline SVG fork and knife in the tone of `placeholderTone`). Right: the name (bold,
+  two lines at most), the summary line, then a bottom row with chips on the left and the menu button at the right edge. No favorite heart:
+  recipes have no favorite concept (favorites are foods). With photos off the grid has class compact (a 64 px placeholder strip).
+- The whole card is one button (`rcard-open`) that opens the recipe, named by `cardLabel` (name, summary and chip labels, so color is never the
+  only cue). The menu button (44 px, aria-haspopup menu, aria-expanded, aria-controls, name "More Actions for <name>") opens a role menu below it
+  (above it near the bottom of the window): Log (recipe screen with the Log section scrolled into view and Amount focused, params.focus log, no
+  URL change), Cooking, Add Photo or Replace Photo (can_edit and photos on; `photo.js choosePhoto`, the same crop dialog and upload), Duplicate
+  (opens the copy) and Delete (can_edit; saved.js `deleteRecipe`, then the tab repaints). Arrow keys, Home and End move, Escape closes and
+  returns focus to the button, Tab or a click outside closes. One menu open at a time.
+- js/recipecards.js (pure, tests/ui/recipecards.test.mjs): `summaryParts`/`recipeSummary` ("4 servings · 520 kcal · 32 g protein · 8 ingredients"
+  from servings and per_serving of GET /api/meals, missing numbers left out), `ingredientCount`, `cardChips` (meal tags in meal order, then
+  `ownerText`, then "3 of 8 matched" for a partial recipe), `cardLabel`, `placeholderTone` (first meal tag, else accent), `cardGridClass`,
+  `cardMenuItems`, `menuLabel`, `menuMove`. GET /api/meals already carries everything (no route change, no extra request per card).
+- Chips (`.tag`) use new theme variables --tag-<meal>-bg and --tag-<meal>-fg, --tag-owner-bg/fg; cards use --card-shadow and
+  --card-shadow-hover; placeholders use --ph-bg; all set for light and dark.
+- Recipe screen: `photo.js photoHero` replaces the Photo section under the Back bar: full width, 40vh (180 to 420 px) with cover, or a 128 px
+  placeholder band; editors get Add Photo, or Replace Photo and Remove Photo, over its bottom right corner. Hidden when photos are off. The
+  Cooking view keeps its photo. Add's Recipes rows show `recipeThumb` (48 px photo or placeholder) while photos are on.
+- Fixed boxes everywhere, so nothing shifts while images load; transitions follow prefers-reduced-motion. Shell cache macrolog-shell-v76
+  (js/recipecards.js added). Tests: tests/ui/recipecards.test.mjs, tests/test_recipe_share.py (list carries the card fields), tests/test_static_shell.py.

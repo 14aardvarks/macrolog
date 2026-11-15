@@ -45,7 +45,7 @@ def test_service_worker_waits_for_the_update_banner():
     install = re.search(r"addEventListener\('install'.*?\n\}\);", sw, re.S).group(0)
     assert "skipWaiting" not in install
     assert "SKIP_WAITING" in sw and "self.skipWaiting()" in sw
-    assert "macrolog-shell-v75" in sw and "'/js/update.js'" in sw
+    assert "macrolog-shell-v76" in sw and "'/js/update.js'" in sw
     assert (STATIC / "js" / "update.js").is_file()
 
 
@@ -89,3 +89,9 @@ def test_photo_modules_are_in_the_shell_and_photos_are_never_cached():
     fetch = re.search(r"addEventListener\('fetch'.*", sw, re.S).group(0)
     skip = fetch.index("url.pathname.indexOf('/api/') === 0")
     assert skip < fetch.index("caches.open(CACHE)")  # /api/photos/... returns before anything is put in the cache
+
+
+def test_recipe_cards_module_is_in_the_shell():
+    sw = (STATIC / "sw.js").read_text()
+    assert "'/js/recipecards.js'" in sw and (STATIC / "js" / "recipecards.js").is_file()
+    assert "macrolog-shell-v76" in sw

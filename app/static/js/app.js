@@ -29,7 +29,7 @@ import { renderRecipeLog } from './recipelog.js';
 import { renderClaudeSection, renderSignIn, renderFullClaude } from './claudekey.js';
 import { refreshLoggedControl, useSettings } from './refresh.js';
 import { startUpdates } from './update.js';
-import { loadPhotoConfig, photoThumb } from './photo.js';
+import { loadPhotoConfig, photoThumb, recipeThumb } from './photo.js';
 import { tabOf, routeUrl, formatRoute, startRoute } from './routes.js';
 
 const main = document.getElementById('main');
@@ -346,10 +346,12 @@ function mealSelect(value) {
 const defaultMeal = () => state.settings.default_meal || guessMeal(new Date().getHours());
 const unitText = amountText;
 
-// tag: a plain text badge instead of a source (Recipe for a logged recipe). photo: an item with a photo for a small thumbnail.
+// tag: a plain text badge instead of a source (Recipe for a logged recipe). photo: an item with a photo for a small thumbnail,
+// or a ready thumbnail node (a recipe's photo or placeholder).
 function foodRow(title, sub, onclick, extra, macros, source, tag, photo) {
   const badge = tag ? h('span', { class: 'src-wrap' }, h('span', { class: 'src src-recipe' }, tag)) : sourceBadge(source, true);
-  const thumb = photo ? photoThumb(photo, onclick) : null;
+  const thumb = photo && photo.nodeType ? photo : photo ? photoThumb(photo, onclick) : null;
+  if (thumb && photo.nodeType && onclick) thumb.addEventListener('click', onclick);
   return h('li', { class: thumb ? 'item has-thumb' : 'item' }, thumb,
     h('button', { class: 'item-main', type: 'button', onclick }, h('span', { class: 'item-title' }, title), h('span', { class: 'item-sub' }, sub, badge ? ' ' : null, badge, kcalCue(macros)), macros && state.display.show_macro_bar !== false ? macroBar(macros) : null),
     extra || null);
@@ -712,7 +714,7 @@ async function recipesList(meal) {  // my recipes and the ones shared with me; o
       try { if (await deleteRecipe(m, () => ctx.repaint())) await go('add', {}, true); } catch (e) { del.parentNode.appendChild(message(e.message, 'error')); }
     } }, '×');
     const open = () => go('meal', { mealId: m.id, meal: chosenMeal() });
-    return foodRow(m.name, [recipeSubText(m, fmtNum(m.kcal, 0)), ownerText(m)].filter(Boolean).join(' · '), open, del, null, null, null, m);
+    return foodRow(m.name, [recipeSubText(m, fmtNum(m.kcal, 0)), ownerText(m)].filter(Boolean).join(' · '), open, del, null, null, null, recipeThumb(m));
   };
   if (meal !== 'all' || state.display.group_recipes === false) return paged(recipes, (page) => h('ul', { class: 'list' }, page.map(rowOf)));
   // With All and Group Recipes By Meal on, headings per meal tag; a recipe with several tags shows under each.

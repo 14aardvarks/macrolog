@@ -2,8 +2,9 @@
 // the top photo of the Cooking view and the crop dialog. The math lives in js/photomath.js. Whether photos are on comes
 // from GET /api/photo-config (the admin switch Allow Photos, off by default); when off nothing here shows.
 import { api } from './api.js';
-import { h, clear, show, message, loadImage } from './dom.js';
+import { h, svg, clear, show, message, loadImage } from './dom.js';
 import { sentence } from './util.js';
+import { placeholderTone } from './recipecards.js';
 import { photoUrl, photoAlt, scaledSize, frameSize, startView, panView, zoomView, reframe, cropRect, viewScale, pointerDistance,
   FRAMES, FRAME_LABELS, ZOOM_MAX, PHOTO_MAX_SIDE } from './photomath.js';
 
@@ -27,6 +28,34 @@ export function photoThumb(item, onclick) {
   if (!url) return null;
   return h('img', { class: 'photo-thumb', src: url, alt: '', 'aria-hidden': 'true', width: '48', height: '48', loading: 'lazy', decoding: 'async',
     onclick: onclick || null, onerror: (e) => { e.currentTarget.hidden = true; } });
+}
+
+// A fork and knife glyph, decorative.
+function forkKnife() {
+  return svg('svg', { viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': '1.6', 'stroke-linecap': 'round',
+    'stroke-linejoin': 'round', 'aria-hidden': 'true', focusable: 'false', class: 'ph-glyph' },
+  svg('path', { d: 'M5 3v5a2.5 2.5 0 0 0 5 0V3M7.5 3v18' }),
+  svg('path', { d: 'M18 21V3c-2.2 1.2-3.5 4-3.5 7.5V14H18' }));
+}
+
+// The recipe placeholder: a neutral surface with the glyph in the tone of the first meal tag (or the accent). Decorative.
+export function photoPlaceholder(meal, extraClass) {
+  return h('span', { class: 'photo-ph tone-' + placeholderTone(meal) + (extraClass ? ' ' + extraClass : ''), 'aria-hidden': 'true' }, forkKnife());
+}
+
+// The recipe image of a card or list row: the photo while photos are on and it has one, else the placeholder. Decorative
+// (the title is next to it), lazy, async decoding, in a box the CSS sizes before anything loads. A photo that fails swaps
+// to the placeholder.
+export function recipeImage(meal, extraClass) {
+  const url = photosOn() && meal ? photoUrl(meal.photo) : null;
+  const box = photoPlaceholder(meal, extraClass);
+  if (url) box.appendChild(h('img', { src: url, alt: '', loading: 'lazy', decoding: 'async', onerror: (e) => { e.currentTarget.remove(); } }));
+  return box;
+}
+
+// The 48 px recipe thumbnail of Add's Recipes list: photo or placeholder while photos are on, null when they are off.
+export function recipeThumb(meal) {
+  return photosOn() ? recipeImage(meal, 'photo-thumb ph-thumb') : null;
 }
 
 // The photo in a fixed 4:3 box (the box is there before the image loads), or null without a photo.
@@ -189,6 +218,62 @@ export function pickPhoto(title) {
   });
 }
 
+// Pick, crop and upload a photo for a food or recipe. Resolves the new photo name, or null when the user cancelled.
+// Throws an Error with a message for the user. say(text) reports progress.
+export async function choosePhoto(item, kind, say) {
+  const blob = await pickPhoto(item.photo ? 'Replace Photo' : 'Add Photo');
+  if (!blob) return null;
+  if (blob.size > cfg.max_mb * 1024 * 1024) throw new Error('That photo is larger than ' + cfg.max_mb + ' MB.');
+  if (say) say('Saving photo...');
+  const r = await (kind === 'food' ? api.foodPhoto(item.id, blob) : api.mealPhoto(item.id, blob));
+  item.photo = r.photo;
+  return r.photo;
+}
+
+// Remove a photo after REMOVE_PHOTO_CONFIRM. Resolves true when removed.
+async function removePhoto(item, kind) {
+  if (!window.confirm(REMOVE_PHOTO_CONFIRM)) return false;
+  await (kind === 'food' ? api.deleteFoodPhoto(item.id) : api.deleteMealPhoto(item.id));
+  item.photo = null;
+  return true;
+}
+
+// The hero at the top of the recipe screen: the photo full width (cover, at most about 40vh tall) or the placeholder, with
+// Add Photo, or Replace Photo and Remove Photo, over its corner for editors. Null when photos are off.
+export function photoHero(meal, canEdit) {
+  if (!photosOn()) return null;
+  const box = h('div', { class: 'hero' });
+  const status = h('div', { 'aria-live': 'polite' });
+  function paint(focus) {
+    clear(box);
+    const url = photoUrl(meal.photo);
+    box.className = 'hero' + (url ? '' : ' hero-empty');
+    box.appendChild(url ? h('div', { class: 'hero-box' }, h('img', { src: url, alt: photoAlt(meal.name), decoding: 'async' }))
+      : h('div', { class: 'hero-box' }, photoPlaceholder(meal, 'hero-ph')));
+    if (!canEdit) return;
+    const add = h('button', { class: 'btn hero-btn', type: 'button', onclick: choose }, url ? 'Replace Photo' : 'Add Photo');
+    const del = url ? h('button', { class: 'btn hero-btn danger-text', type: 'button', onclick: drop }, 'Remove Photo') : null;
+    box.appendChild(h('div', { class: 'hero-actions' }, add, del));
+    if (focus) add.focus();
+  }
+  async function choose() {
+    try {
+      if (!(await choosePhoto(meal, 'meal', (t) => show(status, message(t))))) return;
+      show(status, message('Photo saved.'));
+      paint(true);
+    } catch (e) { show(status, message(e.message, 'error')); }
+  }
+  async function drop() {
+    try {
+      if (!(await removePhoto(meal, 'meal'))) return;
+      show(status, message('Photo removed.'));
+      paint(true);
+    } catch (e) { show(status, message(e.message, 'error')); }
+  }
+  paint(false);
+  return h('div', { class: 'hero-wrap' }, box, status);
+}
+
 // The Photo section of the recipe screen and the food form. kind: 'food' or 'meal'. item: { id, name, photo }.
 // canEdit adds Add Photo (or Replace Photo) and Remove Photo; the server checks the owner or admin rule again.
 // Returns null when photos are off.
@@ -196,8 +281,6 @@ export function photoSection(item, kind, canEdit, onChange) {
   if (!photosOn()) return null;
   const box = h('div', { class: 'photo-section' });
   const status = h('div', { 'aria-live': 'polite' });
-  const upload = (blob) => (kind === 'food' ? api.foodPhoto(item.id, blob) : api.mealPhoto(item.id, blob));
-  const remove = () => (kind === 'food' ? api.deleteFoodPhoto(item.id) : api.deleteMealPhoto(item.id));
   function paint(focus) {
     clear(box);
     const fig = photoFigure(item);
@@ -210,23 +293,16 @@ export function photoSection(item, kind, canEdit, onChange) {
     if (focus) add.focus();
   }
   async function choose() {
-    let blob;
-    try { blob = await pickPhoto(item.photo ? 'Replace Photo' : 'Add Photo'); } catch (e) { show(status, message(e.message, 'error')); return; }
-    if (!blob) return;
-    if (blob.size > cfg.max_mb * 1024 * 1024) { show(status, message('That photo is larger than ' + cfg.max_mb + ' MB.', 'error')); return; }
-    show(status, message('Saving photo...'));
     try {
-      item.photo = (await upload(blob)).photo;
+      if (!(await choosePhoto(item, kind, (t) => show(status, message(t))))) return;
       show(status, message('Photo saved.'));
       paint(true);
       if (onChange) onChange(item.photo);
     } catch (e) { show(status, message(e.message, 'error')); }
   }
   async function drop() {
-    if (!window.confirm(REMOVE_PHOTO_CONFIRM)) return;
     try {
-      await remove();
-      item.photo = null;
+      if (!(await removePhoto(item, kind))) return;
       show(status, message('Photo removed.'));
       paint(true);
       if (onChange) onChange(null);
