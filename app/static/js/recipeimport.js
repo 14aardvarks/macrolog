@@ -1,4 +1,4 @@
-// Pure helpers for Import Recipe and Match Ingredients. No DOM access, safe to import from node.
+// Pure helpers for Import Recipe and matching ingredients on the recipe screen. No DOM access, safe to import from node.
 import { cleanUnitText, canonUnit, unitWord, printedSize, sizeText, isCountish, checkReasonLine, PACKAGE_UNITS, FUZZY_UNITS, PLAIN_COUNTS, plural, parseAmount, amountBoxValue, fmtAmount, qtyText, servingText, amountText, roundTo, matchedAmountText, sentence, centsText, stepsCheck, MEALS, MEAL_LABELS, MICROS, autoMatch } from './util.js';
 
 // Unit words found at the start of an ingredient line, mapped to the server's canonical units. Package and fuzzy units
@@ -124,7 +124,7 @@ export function parseIngredientText(text) {
 // ---------- Note For Claude and Rerun With Notes (issue #46) ----------
 // After Claude reads a recipe, Rerun With Notes goes back to the import input with everything still filled in and runs the same
 // read again with a note. The review that was showing is never replaced until the new read succeeds, so Back, Cancel and a failed
-// run all leave it as it was, edits included. Nothing is saved before Save and Continue.
+// run all leave it as it was, edits included. Nothing is saved before Save Recipe.
 
 export const NOTE_MAX = 500;  // same as recipe_ai.NOTE_MAX on the server
 export const NOTE_LABEL = 'Note For Claude';
@@ -148,7 +148,7 @@ export const canRerun = (draft) => !!(draft && draft.claude === true);
 // The input the rerun screen opens with: everything kept (text, photos, web address, the previous note), on the source Claude read.
 export function rerunInput(input, draft) {
   const kind = draft && draft.source ? draft.source : input && input.kind;
-  return { ...(input || {}), kind: kind || 'text' };
+  return { ...(input || {}), kind: kind || 'text', picked: true };
 }
 
 // One Claude read of any source: send(note) is the API call. { draft } on success (the note is not part of the draft, it stays on the
@@ -183,6 +183,19 @@ export function urlCheck(text) {
 
 // URL import shows only when Claude is usable for this user, recipe import is allowed and the URL switch is on.
 export const urlImportOn = (st) => !!(st && st.enabled && st.features && st.features.recipe !== false && st.features.recipe_url === true);
+
+// The source tabs of Import Recipe: Web Address first when it is available, else Paste Text and Photos.
+export function importKinds(urlOn) {
+  const base = [['text', 'Paste Text'], ['photos', 'Photos']];
+  return urlOn ? [['url', 'Web Address'], ...base] : base;
+}
+// The tab to show: the one the person picked this visit (input.picked), else the first tab; Web Address falls back to Paste Text
+// when it is not available.
+export function startKind(input, urlOn) {
+  const k = input && input.kind;
+  if (input && input.picked && k && (k !== 'url' || urlOn)) return k;
+  return importKinds(urlOn)[0][0];
+}
 
 // The line under Read With Claude with Full Claude Use on: the upper cost, the size limit and the requests left.
 export function recipeUrlCostLine(st) {
@@ -267,6 +280,18 @@ export function rowText(row) {
   return head + (String(row.note || '').trim() ? ', ' + row.note.trim() : '');
 }
 
+// Review One Line (v77): each ingredient is one text box holding rowText. An untouched box keeps every part Claude or the splitter
+// built (amount, unit, name, note, printed size); a box that was edited is split again like a pasted line. Returns the new row.
+export function lineRow(row, text) {
+  const t = String(text == null ? '' : text);
+  if (t === rowText(row)) return row;
+  const p = parseIngredientLine(t);
+  if (!p) return { ...blankRow(), line: t };
+  const amount = p.amount == null ? '' : qtyText(p.amount, p.unit);
+  return { amount, shown: amount, exact: p.amount, unit: p.unit || '', name: p.name || '', note: p.note || '', text: p.text,
+    pkgAmount: p.pkg_amount == null ? null : p.pkg_amount, pkgUnit: p.pkg_unit || null };
+}
+
 // Validate the review draft and build the POST /api/meals/import body. Returns { error } or { body }.
 export function reviewBody(draft) {
   const name = String(draft.name || '').trim();
@@ -318,62 +343,33 @@ export function recipeSubText(meal, kcalText) {
   return plural(n, 'item') + ' - ' + kcalText + ' kcal';
 }
 
-// Index of the next unmatched (not skipped) or Check Amount row after `from`, wrapping round; -1 when every row is done.
-export function nextUnmatched(items, from) {
-  const n = items.length;
-  for (let k = 1; k <= n; k++) {
-    const i = (((from == null ? -1 : from) + k) % n + n) % n;
-    const st = matchState(items[i]);
-    if (st === 'unmatched' || st === 'check') return i;
-  }
-  return -1;
-}
-
-// Rows that can be ticked for Match Selected With Claude: everything not skipped.
-export const selectableIds = (items) => items.filter((i) => !i.skipped).map((i) => i.id);
-
-// Select All ticks the unmatched rows; when they are all ticked already it clears the ticks.
-export function toggleAll(items, selected) {
-  const open = items.filter((i) => matchState(i) === 'unmatched').map((i) => i.id);
-  const all = open.length > 0 && open.every((id) => selected.indexOf(id) >= 0);
-  return all ? [] : open;
-}
-
-export const toggleId = (selected, id) => (selected.indexOf(id) >= 0 ? selected.filter((x) => x !== id) : [...selected, id]);
-
-// One Claude request takes at most `max` rows. The rest stay ticked for the next tap.
+// One Claude request takes at most `max` rows. The rest wait for the next run.
 export function matchBatch(ids, max = 15) { return { send: ids.slice(0, max), rest: ids.slice(max) }; }
 
-// Match Selected works by Search (the default: no Claude, no credit) or by Claude. Rows per request, as the server allows.
-export const MATCH_METHODS = [['search', 'Search'], ['claude', 'Claude']];
+// Matching works by Search (the default: no Claude, no credit) or by Claude. Rows per request, as the server allows.
 export const MATCH_MAX = { search: 40, claude: 15 };  // same as recipe_ai.SEARCH_MAX_ROWS and ai.RECIPE_MATCH_MAX
 
-// The method to use: Claude only when it is on for this user, else Search.
-export const matchMethod = (want, aiOn) => (want === 'claude' && aiOn ? 'claude' : 'search');
-
-export const matchRunText = (method) => 'Match Selected With ' + (method === 'claude' ? 'Claude' : 'Search');
-
-// The rows to send now and the ones left ticked for the next tap.
+// The rows to send now and the ones left for the next run.
 export const methodBatch = (method, ids) => matchBatch(ids, MATCH_MAX[method === 'claude' ? 'claude' : 'search']);
 
-// The note after a run: how many rows are still ticked, and how many Search found nothing for.
+// The note after a run: how many rows Search found nothing for, and how many are left past the cap for the next Match All.
 export function matchDoneText(method, proposals, restCount, costText) {
   const none = (proposals || []).filter((p) => !p.food).length;
   const found = (proposals || []).length - none;
   const lead = method === 'search' && !found ? 'No suggestions were found.' : 'Check the suggestions, then accept them all or one by one.';
   return lead + (method === 'search' && found && none ? ' ' + none + (none === 1 ? ' ingredient had' : ' ingredients had') + ' no match.' : '')
     + (costText ? ' ' + costText : '')
-    + (restCount ? ' ' + restCount + ' more are still ticked. Tap ' + matchRunText(method) + ' again for them.' : '');
+    + (restCount ? ' ' + restCount + (restCount === 1 ? ' more is' : ' more are') + ' still unmatched. Tap Match All again for them.' : '');
 }
 
 // The heading of a waiting proposal: Search suggestions say so, so nobody mistakes them for a Claude answer.
 export const proposalHead = (p) => (p && p.method === 'search' ? (p.food ? 'Suggested Match' : 'Search Result') : 'Claude Suggests');
 
 // ---------- Auto-Match After Import ----------
-// Right after Save and Continue the page runs the free Search once on the unmatched rows (never Claude), so proposals are waiting.
+// Right after Save Recipe the recipe screen runs the setting once on the unmatched rows, so suggestions are waiting on the rows.
 
 export const AUTO_MATCH_LOADING = 'Finding Matches...';
-export const AUTO_MATCH_FAILED = sentence('Suggestions could not be found just now. Match Selected With Search tries again');
+export const AUTO_MATCH_FAILED = sentence('Suggestions could not be found just now. Match All tries again');
 export const RATE_LIMIT_NOTE = sentence('USDA lookup limit reached. Rows below were not searched');
 
 export const AUTO_CLAUDE_OFF = sentence('Claude is not available, so Search ran instead');
@@ -381,8 +377,8 @@ export const AUTO_CLAUDE_OFF = sentence('Claude is not available, so Search ran 
 export const AUTO_CLAUDE_SWITCH = sentence('Claude recipe matching is turned off on this server, so Search ran instead');
 export const AUTO_CLAUDE_NO_KEY = sentence('Claude is not set up for you, so Search ran instead');
 export const claudeOffNote = (st) => (st && st.features && st.features.recipe === false ? AUTO_CLAUDE_SWITCH : AUTO_CLAUDE_NO_KEY);
-export const AUTO_CLAUDE_FAILED = sentence('Claude could not match the rest just now. Match Selected With Claude tries again');
-export const AUTO_CLAUDE_CANCELLED = sentence('Claude was not asked. Match Selected With Claude runs it later');
+export const AUTO_CLAUDE_FAILED = sentence('Claude could not match the rest just now. Match All With Claude tries again');
+export const AUTO_CLAUDE_CANCELLED = sentence('Claude was not asked. Match All With Claude runs it later');
 
 // Auto-Match runs for every setting except Off.
 export const autoMatchOn = (display) => autoMatch(display && display.auto_match) !== 'off';
@@ -397,13 +393,13 @@ export function autoMatchPlan(setting, aiOn) {
   return { search: s !== 'claude' || !claude, claude, note: wantsClaude && !claude ? AUTO_CLAUDE_OFF : '' };
 }
 
-// The rows to search: every unmatched row, up to the Search cap (rows beyond it stay ticked for a manual Match Selected).
+// The rows to search: every unmatched row, up to the Search cap (rows beyond it stay for the next Match All).
 export const autoMatchIds = (items) => methodBatch('search', unmatchedIds(items)).send;
 
 // The rows to ask Claude about: unmatched rows with no proposal (nothing waiting, or a Search Result with no food), up to the Claude
-// cap. all (Full Claude Use): rows Search already proposed a food for are asked too, because Search nearly always finds something
-// and Claude would otherwise never run; only a proposal from a previous recipe is left alone. send: ask now, rest: stay ticked
-// for a manual Match Selected With Claude.
+// cap. all (Full Claude Use, or Match All With Claude): rows Search already proposed a food for are asked too, because Search nearly
+// always finds something and Claude would otherwise never run; only a proposal from a previous recipe is left alone. send: ask now,
+// rest: left for the next Match All.
 export const autoClaudeBatch = (items, proposals, all) =>
   methodBatch('claude', unmatchedIds(items).filter((id) => {
     const p = proposals && proposals[id];
@@ -421,8 +417,8 @@ export function previousCountText(pending) {
 }
 export const PREVIOUS_CUE = 'From Previous Recipe';
 
-// What to do with the answer. Rows that were matched or skipped while it ran are left alone. found: rows that got a food (these
-// are un-ticked); the rest stay ticked. fresh: the proposals to keep waiting.
+// What to do with the answer. Rows that were matched or skipped while it ran are left alone. found: rows that got a food.
+// fresh: the proposals to keep waiting.
 export function autoMatchResult(items, proposals) {
   const open = new Set(unmatchedIds(items));
   const fresh = (proposals || []).filter((p) => open.has(p.item_id));
@@ -479,73 +475,14 @@ export function logAmountText(want, per) {
   return want !== 1 ? 'Amounts are for ' + servingText(want) + ' servings.' : '';
 }
 
-// ---------- Match Ingredients: last saved state, Back and Next ----------
-
-// The part of a row that Match Ingredients can change, with its imported line so a removed row can be put back.
-const rowState = (it) => ({ id: it.id, food_id: it.food_id == null ? null : it.food_id, amount: it.food_id == null ? null : it.amount,
-  unit: it.food_id == null ? null : it.unit, skipped: !!it.skipped, check: !!it.check, src: it.src ? { ...it.src } : null });
-const sameYield = (a, b) => (!a && !b) || (!!a && !!b && a.amount === b.amount && a.unit === b.unit);
-
-// What the recipe looked like at the last save (opening the screen, or Next). Back writes this back.
-export function matchSnapshot(meal) {
-  return { items: (meal.items || []).map(rowState), servings: meal.servings, yield: meal.yield ? { ...meal.yield } : null };
-}
-
-const sameRow = (a, b) => a.food_id === b.food_id && a.amount === b.amount && a.unit === b.unit && a.skipped === b.skipped && a.check === b.check;
-
-// The POST /api/meals/{id}/items body that puts a removed row back at its place.
-const addBody = (b, position) => {
-  const out = { position };
-  if (b.src) out.src = { ...b.src };
-  if (b.food_id != null) { out.food_id = b.food_id; out.amount = b.amount; out.unit = b.unit; if (b.check) out.check = true; }
-  if (b.skipped) out.skipped = true;
-  return out;
-};
-
-// What Back has to write to undo every change since the snapshot: { remove: [row ids added since], add: [bodies of rows
-// removed since, in list order, each with its place], items: [bulk rows], meal: PATCH body or null }. Remove first, then add,
-// then items. Nothing to undo gives empty lists and a null meal.
-export function restoreBody(base, meal) {
-  const now = {};
-  (meal.items || []).forEach((it) => { now[it.id] = rowState(it); });
-  const had = {};
-  base.items.forEach((b) => { had[b.id] = true; });
-  const remove = (meal.items || []).filter((it) => !had[it.id]).map((it) => it.id);
-  const add = [];
-  base.items.forEach((b, i) => { if (!now[b.id]) add.push(addBody(b, i)); });
-  const items = base.items.filter((b) => now[b.id] && !sameRow(b, now[b.id])).map((b) => (b.food_id == null
-    ? { id: b.id, food_id: null, skipped: b.skipped }
-    : { id: b.id, food_id: b.food_id, amount: b.amount, unit: b.unit, check: b.check, skipped: b.skipped }));
-  const patch = {};
-  if (base.servings !== meal.servings) patch.servings = base.servings;
-  if (!sameYield(base.yield, meal.yield)) patch.yield = base.yield;
-  return { remove, add, items, meal: Object.keys(patch).length ? patch : null };
-}
-
-export function changedSince(base, meal) {
-  const r = restoreBody(base, meal);
-  return r.items.length > 0 || r.meal != null || r.remove.length > 0 || r.add.length > 0;
-}
-
 // Rows that do not count: unmatched, skipped and Check Amount rows (the server counts them for nothing).
 export const notCounted = (meal) => Math.max(0, (meal.items || []).length - (meal.matched || 0));
 
-// "5 ingredients are not matched." for the Save Recipe choice, "5 ingredients are not counted." as the quiet note when logging.
+// "5 ingredients are not counted." as the quiet note when logging.
 const ingredientsText = (n, what) => n + (n === 1 ? ' ingredient is not ' : ' ingredients are not ') + what;
-export const notMatchedText = (n) => sentence(ingredientsText(n, 'matched.'));
 export const notCountedText = (n) => sentence(ingredientsText(n, 'counted.'));
 
-// Save on Match Ingredients: what has to be asked. { ask: false } when every row is matched, else { ask: true, n }.
-export function saveChoice(meal) {
-  const n = notCounted(meal);
-  return n > 0 ? { ask: true, n } : { ask: false, n: 0 };
-}
-
-// Save Without Them needs at least one matched row to leave a recipe.
-export const canSaveWithout = (meal) => (meal.matched || 0) > 0;
-export const SAVE_WITHOUT_NONE = 'A recipe needs at least one ingredient. Match one, or keep the others to finish later.';
-
-// Pre-ticked rows when the page opens: every unmatched row.
+// Every unmatched row (no food, not skipped).
 export const unmatchedIds = (items) => items.filter((i) => matchState(i) === 'unmatched').map((i) => i.id);
 
 // Claude suggestions that Accept All would apply: a food was proposed and the row is not skipped.

@@ -1,5 +1,5 @@
 // Serving Size: how many servings a recipe makes and its optional total yield (amount and unit). Used by the recipe
-// screen (Save Serving Size) and by the last step of Match Ingredients (saved as each box changes, undone by Back there).
+// screen (Save Serving Size); the live mode (saved as each box changes) is kept for callers that want it.
 import { api } from './api.js';
 import { h, field, message, show, select } from './dom.js';
 import { fmtAmount, fmtNum, qtyText, amountMemo } from './util.js';

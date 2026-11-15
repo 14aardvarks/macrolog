@@ -313,7 +313,7 @@ export function photoSection(item, kind, canEdit, onChange) {
 }
 
 // Import Recipe review: offer the imported screenshots as the recipe photo. draft.photoFiles are the chosen Files;
-// draft.photoBlob holds the cropped choice until Save and Continue uploads it.
+// draft.photoBlob holds the cropped choice until Save Recipe uploads it.
 export function importPhotoChoice(draft) {
   if (!photosOn() || !draft.photoFiles || !draft.photoFiles.length) return null;
   const box = h('div');

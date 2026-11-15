@@ -65,7 +65,7 @@ export function renameRecipe(rec, body, again, fail) {
 }
 
 // One recipe with its tags, Rename, Edit Ingredients (or Match Ingredients for one still being matched) and Delete.
-// Both open the Match Ingredients page. opts.onDeleted runs after a delete instead of again().
+// Both open the recipe screen at its Ingredients, where rows are matched in place. opts.onDeleted runs after a delete instead of again().
 export function recipeRow(rec, again, ctx, opts) {
   const status = h('div', { 'aria-live': 'polite' });
   const body = h('div');
@@ -77,8 +77,8 @@ export function recipeRow(rec, again, ctx, opts) {
     h('span', { class: 'item-sub' }, recipeSubText(rec, fmtNum(rec.kcal, 0))),
     chips(rec.meals, async (m) => { await api.patchMeal(rec.id, { meals: m }); rec.meals = m; }, status),
     h('div', { class: 'row wrap' }, h('button', { class: 'btn', type: 'button', onclick: () => renameRecipe(rec, body, again, fail) }, 'Rename'),
-      // Every recipe is edited on Match Ingredients, which keeps an imported recipe's own lines.
-      h('button', { class: 'btn', type: 'button', onclick: () => ctx.go('match', { mealId: rec.id, edit: true }) },
+      // Every recipe's ingredients are edited on its recipe screen, which keeps an imported recipe's own lines.
+      h('button', { class: 'btn', type: 'button', onclick: () => ctx.go('recipeview', { mealId: rec.id, focus: 'ingredients' }) },
         rec.complete && !rec.skipped ? 'Edit Ingredients' : 'Match Ingredients'),
       h('button', { class: 'btn', type: 'button', onclick: del }, 'Delete')),
     body, status);

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseIngredientLine, parseIngredientText, servingsFrom, isHeading, reviewDraft, reviewBody, rowText, blankRow,
-  matchState, matchCountText, recipeSubText, nextUnmatched, selectableIds, toggleAll, toggleId, matchBatch, proposalText, matchWhat, importWhat,
+  matchState, matchCountText, recipeSubText, matchBatch, lineRow, proposalText, matchWhat, importWhat,
   NOTE_MAX, NOTE_LABEL, NOTE_HINT, NOTE_EXAMPLES, RERUN_LABEL, noteCheck, canRerun, rerunInput, claudeRead,
 } from '../../app/static/js/recipeimport.js';
 
@@ -103,26 +103,13 @@ test('match state and counts', () => {
   assert.equal(recipeSubText({ complete: true, items: [{}, {}] }, '90'), '2 items - 90 kcal');
 });
 
-test('Save and Next picks the next unmatched row, wrapping, skipping skipped rows', () => {
-  assert.equal(nextUnmatched(items, null), 1);
-  assert.equal(nextUnmatched(items, 1), 3);
-  assert.equal(nextUnmatched(items, 3), 1);
-  assert.equal(nextUnmatched(items, 4), 1);
-  assert.equal(nextUnmatched([{ id: 1, food: {}, skipped: false }, { id: 2, food: null, skipped: true }], 0), -1);
-  assert.equal(nextUnmatched([], null), -1);
+test('a Check Amount row has its own state and count', () => {
   const withCheck = [{ id: 1, food: {}, skipped: false }, { id: 2, food: {}, check: true, skipped: false }];
   assert.equal(matchState(withCheck[1]), 'check');
-  assert.equal(nextUnmatched(withCheck, 0), 1);
   assert.equal(matchCountText({ matched: 1, needed: 2, skipped: 1, checks: 1 }), '1 of 2 matched, 1 to check, 1 skipped');
 });
 
-test('selection helpers', () => {
-  assert.deepEqual(selectableIds(items), [1, 2, 4, 5]);
-  assert.deepEqual(toggleAll(items, []), [2, 4]);
-  assert.deepEqual(toggleAll(items, [2, 4]), []);
-  assert.deepEqual(toggleAll(items, [1]), [2, 4]);
-  assert.deepEqual(toggleId([2], 4), [2, 4]);
-  assert.deepEqual(toggleId([2, 4], 2), [4]);
+test('Claude batches take 15 rows and leave the rest', () => {
   const ids = Array.from({ length: 20 }, (_, i) => i + 1);
   const b = matchBatch(ids);
   assert.equal(b.send.length, 15);
@@ -269,7 +256,7 @@ test('the rerun input keeps the pasted text, photos, web address and previous no
   const input = { kind: 'text', text: 'Pancakes\n1 cup flour', url: 'https://example.com/p', files, note: 'use grams' };
   const draft = { claude: true, source: 'photos' };
   const next = rerunInput(input, draft);
-  assert.deepEqual(next, { kind: 'photos', text: 'Pancakes\n1 cup flour', url: 'https://example.com/p', files, note: 'use grams' });
+  assert.deepEqual(next, { kind: 'photos', text: 'Pancakes\n1 cup flour', url: 'https://example.com/p', files, note: 'use grams', picked: true });  // picked: the rerun opens on the source Claude read, even with Web Address first
   assert.equal(next.files, files);
   assert.equal(rerunInput(input, { claude: true }).kind, 'text');
   assert.equal(input.kind, 'text');  // the stored input is not changed by asking
@@ -319,4 +306,18 @@ test('a failed rerun returns no draft, so the previous review is kept exactly as
   if (ok.draft) flow.draft = ok.draft;
   assert.notEqual(flow.draft, before);  // a success replaces it
   assert.equal(flow.draft.name, 'Pancakes');
+});
+
+test('review lines: an untouched line keeps every part, an edited one is split again', () => {
+  const d = reviewDraft({ name: 'Beans', ingredients: [{ text: '1 (15 oz) can black beans', amount: 1, unit: 'can', name: 'black beans', note: '15 oz', pkg_amount: 15, pkg_unit: 'oz' }] });
+  const row = d.rows[0];
+  assert.equal(lineRow(row, rowText(row)), row);
+  const edited = lineRow(row, '2 cups black beans, rinsed');
+  assert.deepEqual([edited.exact, edited.unit, edited.name, edited.note, edited.pkgAmount], [2, 'cup', 'black beans', 'rinsed', null]);
+  const body = reviewBody({ ...d, rows: [edited] }).body;
+  assert.deepEqual([body.ingredients[0].amount, body.ingredients[0].unit, body.ingredients[0].name], [2, 'cup', 'black beans']);
+  const printed = lineRow(row, '1 (15 oz) can chickpeas');
+  assert.deepEqual([printed.pkgAmount, printed.pkgUnit, printed.name], [15, 'oz', 'chickpeas']);
+  const blank = lineRow(row, '   ');
+  assert.equal(reviewBody({ ...d, rows: [blank, edited] }).body.ingredients.length, 1);
 });

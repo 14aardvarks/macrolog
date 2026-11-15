@@ -22,7 +22,7 @@ import { renderSaved, deleteRecipe } from './saved.js';
 import { renderRecipe } from './recipe.js';
 import { renderRecipes, renderRecipeView } from './recipes.js';
 import { renderCooking } from './cooking.js';
-import { renderImport, renderReview, renderMatch } from './recipeflow.js';
+import { renderImport, renderReview } from './recipeflow.js';
 import { recipeSubText, notCounted, notCountedText, portionUnits, portionFraction, portionItems, portionNote, portionAmount, autoMatchOn,
   isRecipeLog, recipeAmountText, saveRecipeRows, tickedIds, REMOVE_RECIPE_CONFIRM } from './recipeimport.js';
 import { renderRecipeLog } from './recipelog.js';
@@ -35,8 +35,8 @@ import { tabOf, routeUrl, formatRoute, startRoute } from './routes.js';
 const main = document.getElementById('main');
 const nav = document.getElementById('nav');
 const state = { user: null, settings: { start_screen: 'today', default_meal: null, use_last: true, confirm_ai: true, amount_format: 'fraction', full_claude: false }, display: DEFAULT_DISPLAY, cleanup: null, depth: 0, tab: 'favorites', addMeal: null, quickMeal: null, draft: null, recipe: null, source: null, aiSt: null, claude: null, fallback: null,
-  importInput: null, importDraft: null, importBase: 0, proposals: {}, selections: {}, matchFocus: null, matchBase: {}, matchMethod: 'search', autoMatch: null, hold: null };  // Import Recipe and Match Ingredients  // addMeal, source (null = the Default Search Source setting), aiSt (last /api/ai/status) and claude (last Claude estimate) live for the session only
-const FINDER = ['add', 'picker', 'scan', 'lookup', 'manual', 'ai'];  // screens New Recipe and Match Ingredients borrow from Add
+  importInput: null, importDraft: null, importBase: 0, proposals: {}, matchFocus: null, autoMatch: null, hold: null };  // Import Recipe and matching on the recipe screen  // addMeal, source (null = the Default Search Source setting), aiSt (last /api/ai/status) and claude (last Claude estimate) live for the session only
+const FINDER = ['add', 'picker', 'scan', 'lookup', 'manual', 'ai'];  // screens New Recipe and the recipe screen's Search Another borrow from Add
 
 // The bottom bar button to mark: params.nav when a screen is opened from another tab, the Recipes tab while a recipe
 // borrows the food finder, else the screen's own tab (js/routes.js tabOf).
@@ -62,7 +62,7 @@ const ctx = {
     return state.display;
   },
   lookup: (code) => go('lookup', { code }),
-  // Recipes tab buttons. Import remembers where it started so Save and Continue and Cancel come back to the Recipes tab.
+  // Recipes tab buttons. Import remembers where it started so Save Recipe and Cancel come back to the Recipes tab.
   newRecipe: () => { state.recipe = newRecipeDraft(); return go('recipe', {}); },
   importRecipe: () => { state.importBase = state.depth; return go('import', {}); },
   defaultMeal: () => defaultMeal(),
@@ -79,47 +79,29 @@ const ctx = {
     return go('picker', { foodId: r.food_id, adjust: { index: i }, amount: r.amount, unit: r.unit });
   },
   saved() { state.recipe = null; return ctx.back(); },  // back to the Recipes tab, which lists the new recipe
-  // Import Recipe (step 1) and Match Ingredients (step 2). See js/recipeflow.js.
+  // Import Recipe (js/recipeflow.js), then matching on the recipe screen (js/ingrows.js).
   flow: {
     get input() { return state.importInput || (state.importInput = { kind: 'text', text: '', note: '' }); },
     get draft() { return state.importDraft; },
     set draft(d) { state.importDraft = d; },
-    // Save and Continue: the recipe exists now, so the import screens leave history and step 2 opens on top of Add.
+    // Save Recipe: the recipe exists now, so the import screens leave history and the recipe screen opens in their place.
     saved(meal) {
       state.importDraft = null;
       state.importInput = null;
       state.autoMatch = autoMatchOn(state.display) ? meal.id : null;  // Auto-Match After Import runs once, on this opening only
-      backThen(state.depth - state.importBase, () => go('match', { mealId: meal.id, saved: true }));
+      backThen(state.depth - state.importBase, () => go('recipeview', { mealId: meal.id, saved: true }));
     },
     cancel() { state.importDraft = null; state.importInput = null; backThen(state.depth - state.importBase, () => {}); },
-    exit() { return ctx.back(); },  // to wherever matching was opened from: Recipes, Add or Saved
     proposals(id) { return state.proposals[id] || (state.proposals[id] = {}); },
-    selection(id) { return state.selections[id] || []; },
-    setSelection(id, ids) { state.selections[id] = ids; },
-    // Match Selected With: search (default) or claude, kept for the session. searchSource is what Search looks in: the Source
-    // chosen on Add (else the Default Search Source), as all, off or fdc; Claude estimates are not a database source, so ai means all.
-    get method() { return state.matchMethod; },
-    set method(m) { state.matchMethod = m === 'claude' ? 'claude' : 'search'; },
+    // searchSource is what Search looks in: the Source chosen on Add (else the Default Search Source), as all, off or fdc;
+    // Claude estimates are not a database source, so ai means all.
     searchSource() { const s = state.source == null ? state.display.search_source : state.source; return s === 'off' || s === 'fdc' ? s : 'all'; },
     // True once for the recipe that was just imported when Auto-Match After Import is on. Held in memory only, so reopening the recipe
-    // later, a return from the food finder or a reload never searches again.
+    // later, a return from the food finder or a reload never matches again.
     takeAuto(id) { const on = state.autoMatch === id; state.autoMatch = null; return on; },
     takeFocus() { const f = state.matchFocus; state.matchFocus = null; return f; },
-    // One visit of Match Ingredients, kept in its history entry, so a return from the food finder is the same visit.
-    visit(params) {
-      if (!params.visit) {
-        params.visit = 'v' + Date.now() + '-' + Math.floor(Math.random() * 1e6);
-        const hs = history.state;
-        if (hs && hs.name === 'match') history.replaceState({ ...hs, params: { ...hs.params, visit: params.visit } }, '');
-      }
-      return params.visit;
-    },
-    // The last saved state of a visit (matchSnapshot): set on opening and by Next, written back by Back.
-    base(v) { return state.matchBase[v]; },
-    setBase(v, snap) { state.matchBase[v] = snap; return snap; },
-    endVisit(v) { delete state.matchBase[v]; },
-    // Search or Scan for one ingredient. The finder runs in ingredient mode; picking a food skips the amount screen
-    // (autoMatch works the amount out from the recipe line, saves the match and returns to Match Ingredients).
+    // Search Another for one ingredient. The finder runs in ingredient mode (search, Scan Barcode, Enter Manually); picking a food
+    // skips the amount screen (autoMatch works the amount out from the recipe line, saves the match and returns to the recipe).
     find(meal, item, how) {
       const src = item.src || {};
       // line: what the recipe says ("1 cup"), from which the amount is worked out once a food is picked (autoMatch).
@@ -134,7 +116,7 @@ const ctx = {
   // Recipe row adjust: the picker hands back the chosen amount and unit, then the recipe screen is shown again with its draft.
   async finishAdjust(index, amount, unit, food) {
     const r = state.recipe;
-    if (r && r.match) {  // Match Ingredients: save the match, then go back past the finder to the match screen
+    if (r && r.match) {  // a recipe row: save the match, then go back past the finder to the recipe screen
       await api.matchItem(r.match.mealId, r.match.itemId, { food_id: food.id, amount, unit });
       delete ctx.flow.proposals(r.match.mealId)[r.match.itemId];
       const n = stepsBack(state.depth, r.depth);
@@ -167,7 +149,7 @@ function go(name, params, replace, fromUrl) {
   return render(entry);
 }
 
-// The food finder and picker while they serve Create Recipe or Match Ingredients: no URL of their own, a reload goes to the recipe.
+// The food finder and picker while they serve Create Recipe or a recipe row: no URL of their own, a reload goes to the recipe.
 function inRecipeFlow(name, params) {
   const r = state.recipe;
   if (!r) return false;
@@ -860,11 +842,11 @@ async function mealScreen(root, params) {
     h('button', { class: 'btn primary', type: 'button', onclick: log }, 'Log')));
 }
 
-// ---------- Match Ingredients: a picked food goes straight back ----------
+// ---------- a recipe row: a picked food goes straight back ----------
 
 // Instead of the amount screen: the amount and unit come from the recipe line (util.js matchAmount). When they cannot be
 // worked out, or the line has no amount, the food is attached with one label serving and flagged Check Amount, and the
-// row on Match Ingredients asks for the amount. Then back past the finder to Match Ingredients.
+// row on the recipe screen asks for the amount. Then back past the finder to the recipe screen.
 async function autoMatch(root, params) {
   const r = state.recipe;
   const m = r.match;
@@ -959,7 +941,7 @@ const SCREENS = {
   login: loginScreen, admin: (root) => renderAdmin(root, ctx), today: todayScreen, add: addScreen, lookup: lookupScreen, meal: mealScreen, settings: settingsScreen,
   saved: (root) => renderSaved(root, ctx),
   recipes: (root) => renderRecipes(root, ctx),
-  recipeview: (root, p) => renderRecipeView(root, p, ctx),
+  recipeview: (root, p) => { if (state.recipe && state.recipe.match) state.recipe = null; return renderRecipeView(root, p, ctx); },
   cooking: (root, p) => renderCooking(root, p, ctx),
   recipelog: (root, p) => renderRecipeLog(root, p, ctx),
   recipe: (root) => { if (!state.recipe) state.recipe = newRecipeDraft(); state.recipe.depth = state.depth; return renderRecipe(root, ctx); }, editfood: (root, p) => renderFoodForm(root, { edit: p.food }, ctx),
@@ -968,7 +950,8 @@ const SCREENS = {
   ai: (root, p) => renderAi(root, p, ctx),
   import: (root, p) => renderImport(root, ctx, p),
   importreview: (root) => renderReview(root, ctx),
-  match: (root, p) => { if (state.recipe && state.recipe.match) state.recipe = null; return renderMatch(root, p, ctx); },
+  // The old Match Ingredients screen (before v77) lives on only in history entries: they open the recipe screen in its place.
+  match: (root, p) => { if (state.recipe && state.recipe.match) state.recipe = null; return go('recipeview', { mealId: p.mealId }, true); },
   manual: (root, p) => renderFoodForm(root, { barcode: p.barcode }, ctx),
 };
 

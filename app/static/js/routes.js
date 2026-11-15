@@ -80,7 +80,7 @@ export function formatRoute(name, params) {
 }
 
 // The URL to show for a screen: its own, else the current one (the parent screen). current is location.hash; inFlow is true
-// while the screen serves a recipe (the food finder of Create Recipe or Match Ingredients), which never has a URL of its own.
+// while the screen serves a recipe (the food finder of Create Recipe or of a recipe row), which never has a URL of its own.
 export function routeUrl(name, params, current, inFlow) {
   return (!inFlow && formatRoute(name, params)) || current || '';
 }

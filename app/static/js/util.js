@@ -616,7 +616,7 @@ export function gramsFor(units, amount, unit) {
   return n > 0 ? n : null;
 }
 
-// ---------- Match Ingredients: amount from the recipe line ----------
+// ---------- matching a recipe row: amount from the recipe line ----------
 
 const MASS_UNITS = ['g', 'kg', 'oz', 'lb'];
 const VOLUME_UNITS = ['ml', 'l', 'floz', 'cup', 'tbsp', 'tsp'];
@@ -949,7 +949,7 @@ export const SEARCH_SOURCES = [
 ];
 export function searchSource(v) { return SEARCH_SOURCES.some((s) => s.value === v) ? v : 'all'; }
 
-// Settings, Display, Auto-Match After Import: what happens on Match Ingredients right after an import. Search (default) is the free
+// Settings, Display, Auto-Match After Import: what happens on the recipe screen right after an import. Search (default) is the free
 // name search. Claude matches the unmatched rows with Claude. Search Then Claude searches first, then asks Claude only about the rows
 // Search left without a proposal. Off does nothing. Same values as core.AUTO_MATCHES.
 export const AUTO_MATCHES = [{ value: 'search', label: 'Search' }, { value: 'claude', label: 'Claude' },

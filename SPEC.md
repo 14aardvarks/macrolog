@@ -426,7 +426,7 @@ Mobile first, one-hand use, also fine on desktop. Plain ES modules, under about 
 Screens: Login, Today, Add, Recipes, Picker, Claude fallback, Settings. Bottom nav: Today, Add, Recipes, Settings.
 - Recipes tab (js/recipes.js, helpers in js/recipeimport.js and js/recipecards.js): New Recipe and Import Recipe buttons, then my recipes (and shared ones per the Owner filter, see Shared Recipes) as photo cards (see Recipe Cards). Above the list: a search box (every word of the name must match), a Meal filter chip row (All, Breakfast, Lunch, Dinner, Snack, Dessert, Untagged; strict, same as Saved, via SAVED_FILTERS and filterSavedItems) and a Sort select (Name (A to Z), Newest, Most Used; util.js `sortRecipes`; Newest is the highest id first, Most Used is the total of the per meal `counts` from GET /api/meals). Group Recipes By Meal (Display setting `group_recipes`, default on): the list shows a real heading (h2 class group) per meal tag in the usual meal order with Untagged last, empty groups hidden, a recipe with several tags under each (util.js `groupRecipesByMeal` built on `groupByMeal`, `pageGroups`); the Meal filter limits the groups to that meal and sort applies within each group; off gives the plain list. The list shows 20 rows with Show More. The chosen filter and sort are kept in memory for the session, the search text is not. Every recipe, partial or complete, opens the recipe screen (a partial one keeps its "3 of 8 matched" badge and shows the quiet sentence "5 ingredients are not counted."): Log
   (Meal, Amount and a unit from meal.portions: servings, % of recipe, and the yield units when a yield is set; POST /api/meals/{id}/log
-  with amount and unit, so the server scales it), the Ingredients list with Edit Ingredients (opens Match Ingredients with edit true), Meal Tags, Rename, Steps, Serving Size (js/servingsize.js:
+  with amount and unit, so the server scales it), the Ingredients list, matched in place (see Recipe First, v77), Meal Tags, Rename, Steps, Serving Size (js/servingsize.js:
   servings, Total yield amount and unit, Use Total of Ingredients when the yield is blank and ingredient_grams is known, which fills it
   in grams and saves at once; Save Serving Size), then a Delete Recipe button (btn danger, last; only on this screen, not on Match Ingredients). It asks "Delete This Recipe?" (saved.js `deleteRecipe`, the same confirm and DELETE /api/meals/{id} as Saved's Delete and Add's x), shows the Undo notice and then goes back to the Recipes tab list (see Recently Deleted Recipes).
   The log checklist (Add, Recipes sub-tab only; the recipe screen no longer has Adjust Items) has the same Amount and unit at the top; changing them scales every row by
@@ -503,7 +503,8 @@ Screens: Login, Today, Add, Recipes, Picker, Claude fallback, Settings. Bottom n
   validated by core.clean_source_url on POST /api/meals/import, returned by meal_dict and copied by Duplicate. The recipe screen shows it
   under the per serving line as recipeflow.js `sourceNode`: a link (target _blank, rel noopener noreferrer, the site name as text,
   "opens in a new tab" in its label) only for http and https addresses (recipeimport.js `sourceLink`).
-  Save and Continue posts /api/meals/import and opens Match Ingredients ("Saved", "Step 2 of 2"): per row the line and its state, Search
+  (Superseded by Recipe First, v77: the review is short, Save Recipe posts /api/meals/import and opens the recipe screen; the Match Ingredients
+  screen and the Save Recipe choice below are gone. Kept for history.) Save and Continue posted /api/meals/import and opened Match Ingredients ("Saved", "Step 2 of 2"): per row the line and its state, Search
   and Scan Barcode (the ingredient finder in ingredient mode; a picked food is matched at once by autoMatch, no picker), Ask Claude,
   Edit Amount or the Check Amount editor, Skip or Unskip; checkboxes, Select All
   and Match Selected; proposals with Accept and Change; once proposals are waiting, Accept N Suggested Matches (primary, above
@@ -640,6 +641,8 @@ POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log i
 
 ## Match With Search, editing on Match Ingredients, Add order (v42)
 
+- v77: the Match Ingredients page, Match Selected and its switch were replaced by Recipe First (below); match-search and the items routes are unchanged.
+
 - Match Selected has a method switch "Match With: Search | Claude" (js/recipeflow.js, helpers in recipeimport.js `MATCH_METHODS`, `matchMethod`,
   `methodBatch`, `matchDoneText`; segmented buttons with aria-pressed, session state ctx.flow.method, default Search; the switch is hidden and
   Search is used when Claude is off or not set up). The button reads Match Selected With Search or With Claude. Checkboxes and Select All show on every
@@ -736,6 +739,8 @@ POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log i
 
 ## Auto-Match After Import
 
+- v77: runs on the recipe screen right after Save Recipe (Recipe First); Match Selected below now reads Match All, and nothing is ticked.
+
 - Settings, Display has Auto-Match After Import (select: Search, Claude, Search Then Claude, Off; saved at once like the other Display choices, per user,
   default Search) with a hint that states Search is the default, that Search is free, that the Claude choices use Claude requests (cost shown first when Confirm
   before using Claude is on) and fall back to Search when Claude is not set up, and that Off leaves every ingredient to match. Server: `settings.auto_match`
@@ -748,7 +753,7 @@ POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log i
   monthly cap); Cancel leaves those rows unmatched and ticked with a quiet note, keeping any Search proposals. With Claude not set up or the switch off, Claude and
   Search Then Claude run Search only and add the note "Claude is not available, so Search ran instead." A Claude failure keeps the Search proposals and adds a quiet
   note. Proposals are Claude Suggests like a manual run, never accepted automatically; Accept N Suggested Matches works as before.
-- Save and Continue (ctx.flow.saved in app.js) sets a one-shot in memory (`state.autoMatch` = the new meal id) when the setting is Search. Match Ingredients
+- Save Recipe (ctx.flow.saved in app.js, v77; was Save and Continue) sets a one-shot in memory (`state.autoMatch` = the new meal id) unless the setting is Off. The recipe screen (v77; was Match Ingredients)
   takes it once (`ctx.flow.takeAuto`, params.saved only), so reopening a recipe, a return from the food finder, Back and a reload never search again.
   Nothing is stored for it.
 - The page renders at once with every unmatched row ticked, then `autoRun` (recipeflow.js) calls POST /api/recipes/{id}/match-search on the unmatched rows
@@ -1109,3 +1114,47 @@ GET    /api/photos/{name}  -> image/jpeg, Cache-Control "private, max-age=315360
   Cooking view keeps its photo. Add's Recipes rows show `recipeThumb` (48 px photo or placeholder) while photos are on.
 - Fixed boxes everywhere, so nothing shifts while images load; transitions follow prefers-reduced-motion. Shell cache macrolog-shell-v76
   (js/recipecards.js added). Tests: tests/ui/recipecards.test.mjs, tests/test_recipe_share.py (list carries the card fields), tests/test_static_shell.py.
+
+## Recipe First (v77, issue #49)
+
+- Import: Read With Claude, Split Lines Without Claude or a web address gives a short review (js/recipeflow.js `renderReview`): name and
+  servings side by side, one text box per ingredient holding `rowText` (recipeimport.js `lineRow`: an untouched box keeps every part Claude
+  or the splitter built, amount, unit, name, note and printed size; an edited one is split again by `parseIngredientLine`), x to remove, Add
+  Ingredient, the typical weight or printed size under a flagged line (POST /api/units/preview as before), Steps in a collapsed details,
+  the photo choice of a photo import, then one primary button Save Recipe, plus Rerun With Notes (#46) and Cancel. Meal tags and Use Grams
+  moved off the review (tags on the recipe screen, Enter Grams on a row). Save Recipe posts /api/meals/import (one request; every line is an
+  unmatched reference row with src amount, unit, name, note, printed size and was_* exactly as before), uploads the chosen photo, and opens the
+  recipe screen (`go('recipeview', { mealId, saved: true })` in place of the import entries). No matching step before saving. No route changed.
+- Import source tabs: Web Address is first and selected by default whenever `urlImportOn` (switch on, Claude usable); otherwise Paste Text,
+  Photos (`importKinds`, `startKind`; a tab picked in the visit and a rerun's source are kept, `input.picked`).
+- Recipe screen Ingredients (js/ingrows.js `ingredientSection`, pure helpers in js/rowmatch.js): heading, the count line (`matchedLine`: "3 of 8
+  matched, 1 to check, 2 suggested"), `checkBlock`, Match All, Accept N Suggested Matches (with the From Previous Recipe count), a status line,
+  the rows, Add Ingredient (Add, or Add and Search, which runs + on the new row). After an import a Saved note shows and the Ingredients
+  scroll into view; Auto-Match After Import runs once (`ctx.flow.takeAuto`) with the same plans, routes, confirm, Full Claude Use and cap
+  rules as before (`runAll(mode, auto)`).
+- Row state machine (`rowState(item, proposal)`): unmatched, suggested (a suggestion with a food waits), accepted, check (Check Amount),
+  skipped; derived from the saved row and the waiting suggestion, never stored. `rowActions(state, { aiOn, canRemove })` gives the row's
+  buttons and menu: unmatched: + (accessible name Match Ingredient, described by the line; POST match-search for that row, one request) and,
+  when Claude is usable, the Claude + (sparkle icon, Match With Claude; POST /api/recipes/{id}/match with one row after `confirmClaude`);
+  suggested: Accept and Change; check: Edit Amount; accepted and skipped: menu only. The three dot menu (js/menu.js `menuButton`, shared with
+  the recipe cards: aria-haspopup, arrows, Escape closes and returns focus, 44 px items) holds Change, Search Another (the full finder with
+  Scan Barcode and Enter Manually, as before), Edit Amount, Enter Grams, Skip or Unskip, Remove (not on the last row; Undo puts the row back at
+  its place with POST items, `restoreRowBody`), and Match With Claude on a suggested row. Change opens an inline search (the ingredient
+  name, searched at once with GET /api/foods/search and the Search source, up to 5 results each one tap; the amount comes from the line by
+  `matchAmount`, else one label serving with Check Amount). One compact line per ingredient: amount, unit and name, the note muted, the
+  chip (Matched, Suggested or Claude Suggests, Check Amount, Not Matched, Skipped) and the food or suggestion with source, Estimated Weight tag
+  and check reason in small text. Totals (per serving line, not counted note, portions) follow every change at once.
+- Match All: a split button, the main part Match All (Search, free, up to 40 rows), the arrow menu Match All With Search, Match All With
+  Claude (every unmatched row except From Previous Recipe suggestions, up to 15), Search Then Claude, Review One By One (`matchAllPlan`,
+  `searchIds`, `claudeIds`). Shown while any row is unmatched. Review One By One (`reviewOrder`, `reviewNext`) walks unmatched and suggested
+  rows in list order in a panel above the list: "Ingredient 2 of 5", the line, the top suggestion (one Search for a row without one), Accept,
+  Change (inline search), Skip, Next and Done.
+- Removed: the Match Ingredients screen (checkboxes, Select All, Match Selected, the Search or Claude switch, Jump to Next Unmatched, the
+  visit snapshot and Discard Changes) and the Save Recipe choice (Save Without Them, Keep Them to Finish Later). Saving never needs matching,
+  every change on the recipe screen is written at once. DELETE /api/meals/{id}/uncounted stays on the server (no client caller). A history
+  entry named match (an old tab) opens the recipe screen. Saved's Edit Ingredients or Match Ingredients opens the recipe screen at its
+  Ingredients (params.focus ingredients); the recipe screen has no Edit Ingredients button. The food finder returns to the recipe screen.
+  Logged recipes and Cooking are unchanged.
+- Tests: tests/ui/rowmatch.test.mjs, tests/test_recipe_first.py, tests/ui/recipeurl.test.mjs (tab order), tests/test_static_shell.py.
+  Shell cache macrolog-shell-v77 (js/rowmatch.js, js/ingrows.js, js/menu.js added).
+

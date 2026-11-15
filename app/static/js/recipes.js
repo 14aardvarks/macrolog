@@ -1,33 +1,21 @@
 // Recipes tab: New Recipe, Import Recipe and the list of my recipes, plus one recipe's screen with Log and the edit tools
 // from Saved. Matching is optional: a recipe with unmatched ingredients opens and logs like any other.
 import { api } from './api.js';
-import { h, clear, field, message, show, select, checkBlock, weightTagNode } from './dom.js';
-import { MEALS, MEAL_LABELS, fmtNum, checkReasonLine, pageOf, PAGE_SIZE, matchedAmountText, stepsCheck, amountMemo, SAVED_FILTERS, SAVED_FILTER_LABELS, filterSavedItems,
+import { h, clear, field, message, show, select } from './dom.js';
+import { MEALS, MEAL_LABELS, fmtNum, pageOf, PAGE_SIZE, stepsCheck, amountMemo, SAVED_FILTERS, SAVED_FILTER_LABELS, filterSavedItems,
   RECIPE_SORTS, RECIPE_SORT_LABELS, sortRecipes, sentence, RECIPE_OWNERS, RECIPE_OWNER_LABELS, recipeOwner, filterRecipeOwner, ownerText,
   ownerEmptyText, groupRecipesByMeal, pageGroups } from './util.js';
-import { recipeListSub, notCounted, notCountedText, matchState, servingsText, perServingText, tagsText, portionUnits, portionFraction, portionAmount, yieldText } from './recipeimport.js';
+import { recipeListSub, notCounted, notCountedText, servingsText, perServingText, tagsText, portionUnits, portionFraction, portionAmount, yieldText } from './recipeimport.js';
 import { servingSizeEditor } from './servingsize.js';
+import { ingredientSection } from './ingrows.js';
 import { sourceNode } from './recipeflow.js';
 import { chips, renameRecipe, deleteRecipe } from './saved.js';
 import { stepsList, stepsEditor } from './steps.js';
 import { deletedHint, deletedTitle, daysLeftText, deleteForeverConfirm, restoredText, purgedText, sortDeleted, withoutDeleted } from './trash.js';
 import { closeUndo } from './undo.js';
 import { loadPhotoConfig, photosOn, recipeImage, photoHero, choosePhoto } from './photo.js';
-import { summaryParts, cardChips, cardLabel, cardGridClass, cardMenuItems, menuLabel, menuMove } from './recipecards.js';
-
-// The recipe's ingredients as a read only list: "Wheat flour" over "1 1/2 cup, 188 g". Skipped lines keep their own text. A row
-// whose weight is a unit weight or an estimate shows the Estimated Weight tag; onGrams(item, grams) saves grams typed in it.
-function ingredientList(meal, onGrams) {
-  const LABELS = { skipped: 'Skipped', unmatched: 'Unmatched', check: 'Check Amount' };
-  return h('ul', { class: 'list recipe-ings' }, meal.items.map((it) => (matchState(it) !== 'matched'
-    ? h('li', { class: 'item' }, h('div', { class: 'item-main' }, h('span', { class: 'item-title' }, (it.src && it.src.text) || (it.food && it.food.name) || 'Ingredient'),
-      h('span', { class: 'item-sub' }, LABELS[matchState(it)] + ', not counted'),
-      matchState(it) === 'check' ? h('span', { class: 'check-reason' }, checkReasonLine(it.check_reason, (it.src && it.src.unit) || it.unit)) : null))
-    : h('li', { class: 'item' }, h('div', { class: 'item-main' },
-      h('span', { class: 'item-title' }, it.food.brand ? it.food.name + ' (' + it.food.brand + ')' : it.food.name),
-      h('span', { class: 'item-sub' }, matchedAmountText(it.amount, it.unit, it.grams)),
-      weightTagNode(it, it.food.name, onGrams ? (g) => onGrams(it, g) : null))))));
-}
+import { summaryParts, cardChips, cardLabel, cardGridClass, cardMenuItems, menuLabel } from './recipecards.js';
+import { menuButton } from './menu.js';
 
 // Steps with Edit Steps: the editor works on a copy, Save Steps sends it (PATCH steps), Cancel drops it.
 function stepsSection(meal) {
@@ -59,56 +47,6 @@ function stepsSection(meal) {
   return h('div', null, box, status);
 }
 
-// The menu of a card: a real button (aria-haspopup, aria-expanded) that opens a list of menuitems below it, or above it
-// near the bottom of the window. Arrow keys, Home and End move, Escape and Tab close, and Escape returns focus to the button.
-// items: [{ key, label }]. onPick(key) runs after the menu closed.
-let openMenu = null;  // the close function of the menu that is open, so only one is open at a time
-function cardMenu(card, items, label, onPick) {
-  const id = 'menu-' + Math.random().toString(36).slice(2, 9);
-  const btn = h('button', { class: 'card-menu-btn', type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false', 'aria-controls': id,
-    'aria-label': label, title: 'More Actions' },
-  h('span', { class: 'dots', 'aria-hidden': 'true' }, h('span'), h('span'), h('span')));
-  const list = h('ul', { class: 'card-menu', role: 'menu', id, 'aria-label': label, hidden: true });
-  const entries = items.map((it) => h('li', { role: 'none' }, h('button', { type: 'button', role: 'menuitem', tabindex: '-1',
-    class: 'card-menu-item' + (it.key === 'delete' ? ' danger-text' : ''), onclick: () => { close(false); onPick(it.key); } }, it.label)));
-  entries.forEach((li) => list.appendChild(li));
-  const buttons = () => Array.prototype.slice.call(list.querySelectorAll('[role=menuitem]'));
-  function outside(e) { if (!list.contains(e.target) && e.target !== btn && !btn.contains(e.target)) close(false); }
-  function close(focusBtn) {
-    if (list.hidden) return;
-    list.hidden = true;
-    btn.setAttribute('aria-expanded', 'false');
-    card.classList.remove('menu-open');
-    document.removeEventListener('pointerdown', outside, true);
-    if (openMenu === close) openMenu = null;
-    if (focusBtn) btn.focus();
-  }
-  function open(at) {
-    if (openMenu) openMenu(false);
-    list.hidden = false;
-    card.classList.add('menu-open');
-    btn.setAttribute('aria-expanded', 'true');
-    const r = btn.getBoundingClientRect();
-    list.classList.toggle('up', window.innerHeight - r.bottom < list.offsetHeight + 72);  // room above the bottom nav
-    document.addEventListener('pointerdown', outside, true);
-    openMenu = close;
-    const b = buttons();
-    (at === 'last' ? b[b.length - 1] : b[0]).focus();
-  }
-  btn.addEventListener('click', () => (list.hidden ? open('first') : close(true)));
-  btn.addEventListener('keydown', (e) => {
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); open(e.key === 'ArrowUp' ? 'last' : 'first'); }
-  });
-  list.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(true); return; }
-    if (e.key === 'Tab') { close(false); return; }
-    const b = buttons();
-    const next = menuMove(e.key, b.indexOf(document.activeElement), b.length);
-    if (next != null) { e.preventDefault(); b[next].focus(); }
-  });
-  return h('div', { class: 'card-menu-wrap' }, btn, list);
-}
-
 // One recipe card: the photo or placeholder on the left, the title, the summary and the chips on the right, the whole card
 // one button that opens the recipe, and the menu button at the bottom right. act(key, meal, card) runs a menu action.
 function recipeCard(m, open, act) {
@@ -121,7 +59,7 @@ function recipeCard(m, open, act) {
       h('span', { class: 'rcard-sum' }, summaryParts(m).flatMap((t, i) => [i ? ' · ' : null, h('span', { class: 'nowrap' }, t)])),
       // The bottom row: chips on the left, the menu button (outside this button) at the right edge.
       h('span', { class: 'rcard-chips' }, chipList.map((c) => h('span', { class: 'tag tag-' + c.kind }, c.label))))));
-  card.appendChild(cardMenu(card, cardMenuItems(m, photosOn()), menuLabel(m), (key) => act(key, m, card)));
+  card.appendChild(menuButton(card, cardMenuItems(m, photosOn()), menuLabel(m), (key) => act(key, m, card)));
   return card;
 }
 
@@ -265,11 +203,12 @@ function recentlyDeleted(trash, restored) {
   return wrap;
 }
 
-// params: { mealId }. Log (meal and how much: servings, % of the recipe or a yield unit, worked out by the server); the
-// ingredients with Edit Ingredients (the Match Ingredients page); meal tags, Rename, Steps, Serving Size and Delete Recipe.
+// params: { mealId, saved? (just saved by Import: a Saved note, the Ingredients in view and Auto-Match After Import once),
+// focus? ('log' or 'ingredients') }. Log (meal and how much: servings, % of the recipe or a yield unit, worked out by the server);
+// the ingredients, matched in place (js/ingrows.js); meal tags, Rename, Steps, Serving Size and Delete Recipe.
 // The checklist with Adjust is only for logging a recipe from Add.
 export async function renderRecipeView(root, params, ctx) {
-  const [meal] = await Promise.all([api.meal(params.mealId), loadPhotoConfig()]);
+  const [meal, st] = await Promise.all([api.meal(params.mealId), api.aiStatus().catch(() => ({ enabled: false })), loadPhotoConfig()]);
   const status = h('div', { 'aria-live': 'polite' });
   const mealSel = select([{ value: 'none', label: MEAL_LABELS.none }, ...MEALS.map((m) => ({ value: m, label: MEAL_LABELS[m] }))],
     ctx.defaultMeal(), { 'aria-label': 'Meal' });
@@ -280,8 +219,11 @@ export async function renderRecipeView(root, params, ctx) {
   let lastUnit = 'serving';
   const subText = () => servingsText(meal) + (meal.yield ? ', ' + yieldText(meal.yield) + ' in all' : '') + ' · ' + tagsText(meal.meals);
   const sub = h('p', { class: 'sub' }, subText());
-  const perText = () => 'Per serving: ' + perServingText(meal, (v) => fmtNum(v, 0)) + '.';
-  const per = h('p', { class: 'sub' }, perText());
+  const perText = () => 'Per serving: ' + perServingText(meal, (v) => fmtNum(v, 0)) + '.' + (meal.complete ? '' : ' ' + sentence('Only matched ingredients count'));
+  const per = h('p', { class: 'sub per-line', 'aria-live': 'polite' }, perText());
+  const uncounted = h('p', { class: 'sub not-counted' });
+  const paintUncounted = () => { uncounted.textContent = notCounted(meal) ? notCountedText(notCounted(meal)) : ''; uncounted.hidden = !notCounted(meal); };
+  paintUncounted();
   // After Save Serving Size: new servings or yield change the units and the per serving line, without a repaint.
   function sizeSaved(m) {
     Object.assign(meal, m);
@@ -324,6 +266,9 @@ export async function renderRecipeView(root, params, ctx) {
       show(dupStatus, message(e.message, 'error'));
     }
   } }, 'Duplicate');
+  // Each match, skip or removal changes the totals: the per serving line, the not counted note and the portions follow at once.
+  const focusRow = ctx.flow.takeFocus();
+  const ings = ingredientSection(meal, ctx, { st, edit, onMeal: (m) => { sizeSaved(m); paintUncounted(); } });
   const owned = ownerText(meal);
   const tagStatus = h('div', { 'aria-live': 'polite' });
   const renameBox = h('div');
@@ -336,17 +281,22 @@ export async function renderRecipeView(root, params, ctx) {
     h('h2', { id: 'log-head' }, 'Log'),
     h('label', { class: 'field' }, h('span', null, 'Meal'), mealSel),
     h('div', { class: 'grid2 recipe-log' }, amount, h('label', { class: 'field' }, h('span', null, 'Of the recipe'), unitSel)),
-    notCounted(meal) ? h('p', { class: 'sub not-counted' }, notCountedText(notCounted(meal))) : null,
-    checkBlock(meal),
+    uncounted,
     status,
     h('div', { class: 'row wrap' }, logBtn),
     h('div', { class: 'row wrap' }, h('button', { class: 'btn', type: 'button', onclick: () => ctx.go('cooking', { mealId: meal.id }) }, 'Cooking')),
-    h('h2', null, 'Ingredients'),
-    ingredientList(meal, edit ? async (it, g) => {
-      await api.matchItem(meal.id, it.id, { food_id: it.food_id, amount: g, unit: 'g', remember: true });
-      await again();
-    } : null),
+    params.saved ? h('p', { class: 'saved-note', role: 'status' }, h('span', { class: 'saved-tag' }, 'Saved'),
+      h('span', null, sentence('Match the ingredients below to count them'))) : null,
+    ings.el,
     edit ? editTools() : viewOnly()));
+  if (params.saved || params.focus === 'ingredients' || focusRow != null) {  // after an import, from Saved, or back from the food finder
+    root.addEventListener('mounted', () => setTimeout(() => {
+      if (focusRow != null) { ings.focus(focusRow); return; }
+      const head = root.querySelector('#ing-head');
+      if (head && head.scrollIntoView) head.scrollIntoView({ block: 'start' });
+    }, 0), { once: true });
+  }
+  if (params.saved && edit && ctx.flow.takeAuto(meal.id)) ings.autoRun();
   if (params.focus === 'log') {  // Log from a card menu: the Log section in view with the amount ready, once the screen shows
     root.addEventListener('mounted', () => setTimeout(() => {
       const head = root.querySelector('#log-head');
@@ -367,7 +317,6 @@ export async function renderRecipeView(root, params, ctx) {
 
   function editTools() {
     return h('div', null,
-    h('button', { class: 'btn', type: 'button', onclick: () => ctx.go('match', { mealId: meal.id, edit: true }) }, 'Edit Ingredients'),
     h('h2', null, 'Sharing'),
     shareSwitch(meal),
     h('h2', null, 'Meal Tags'),

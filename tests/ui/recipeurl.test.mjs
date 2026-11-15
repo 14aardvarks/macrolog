@@ -65,3 +65,15 @@ test('URL help text is a sentence without em dashes', () => {
   assert.ok(!/—|–/.test(URL_TEXT));
   assert.match(URL_TEXT, /never through this server/);
 });
+
+import { importKinds, startKind } from '../../app/static/js/recipeimport.js';
+
+test('Web Address is the first and default tab when available, else Paste Text then Photos', () => {
+  assert.deepEqual(importKinds(true).map((k) => k[0]), ['url', 'text', 'photos']);
+  assert.deepEqual(importKinds(false).map((k) => k[0]), ['text', 'photos']);
+  assert.equal(startKind({ kind: 'text' }, true), 'url');        // the stored default never hides Web Address
+  assert.equal(startKind({ kind: 'text' }, false), 'text');
+  assert.equal(startKind({ kind: 'photos', picked: true }, true), 'photos');  // a tab picked this visit stays
+  assert.equal(startKind({ kind: 'url', picked: true }, false), 'text');      // not available: falls back
+  assert.equal(startKind(undefined, true), 'url');
+});

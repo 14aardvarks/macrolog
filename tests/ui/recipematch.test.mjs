@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  matchSnapshot, restoreBody, changedSince, nextUnmatched, notCounted, notMatchedText, notCountedText, saveChoice, canSaveWithout, unmatchedIds, pendingProposals, acceptAllText, servingSizeBody, yieldText,
+  notCounted, notCountedText, unmatchedIds, pendingProposals, acceptAllText, servingSizeBody, yieldText,
   portionUnits, portionFraction, portionItems, portionNote, portionAmount, photoPick, PHOTOS_TEXT, MAX_PHOTOS,
 } from '../../app/static/js/recipeimport.js';
 import { setAmountFormat } from '../../app/static/js/util.js';
@@ -11,50 +11,13 @@ const un = (id) => ({ id, food: null, food_id: null, amount: null, unit: null, s
 const ok = (id, over) => ({ id, food: F, food_id: 9, amount: 2, unit: 'cup', skipped: false, check: false, ...over });
 const meal = (items, over) => ({ id: 1, servings: 2, yield: null, items, ...over });
 
-test('restoreBody writes back only the rows and sizes that changed since the last save', () => {
-  const base = matchSnapshot(meal([un(1), ok(2), un(3), ok(4, { skipped: true })]));
-  const now = meal([ok(1), ok(2, { amount: 3 }), un(3, ), ok(4)], { servings: 4, yield: { amount: 900, unit: 'g' } });
-  const r = restoreBody(base, now);
-  assert.deepEqual(r.items, [
-    { id: 1, food_id: null, skipped: false },
-    { id: 2, food_id: 9, amount: 2, unit: 'cup', check: false, skipped: false },
-    { id: 4, food_id: 9, amount: 2, unit: 'cup', check: false, skipped: true },
-  ]);
-  assert.deepEqual(r.meal, { servings: 2, yield: null });
-  assert.equal(changedSince(base, now), true);
-  assert.deepEqual(restoreBody(base, meal([un(1), ok(2), un(3), ok(4, { skipped: true })])), { remove: [], add: [], items: [], meal: null });
-  assert.equal(changedSince(base, meal([un(1), ok(2), un(3), ok(4, { skipped: true })])), false);
-});
-
-test('the snapshot is a copy, and a Check Amount row restores with check', () => {
-  const m = meal([ok(1, { check: true })], { yield: { amount: 1, unit: 'l' } });
-  const base = matchSnapshot(m);
-  m.yield.amount = 2;
-  m.items[0].check = false;
-  assert.deepEqual(restoreBody(base, m), { remove: [], add: [], items: [{ id: 1, food_id: 9, amount: 2, unit: 'cup', check: true, skipped: false }], meal: { yield: { amount: 1, unit: 'l' } } });
-});
-
-test('nextUnmatched wraps round and finds unmatched and Check Amount rows', () => {
-  const items = [ok(1), un(2), ok(3, { check: true }), { ...un(4), skipped: true }, ok(5)];
-  assert.equal(nextUnmatched(items, -1), 1);
-  assert.equal(nextUnmatched(items, 1), 2);
-  assert.equal(nextUnmatched(items, 2), 1);
-  assert.equal(nextUnmatched([ok(1), ok(2)], -1), -1);
-});
-
-test('Save asks only while rows are not matched, and the texts are sentences', () => {
+test('not counted rows and the quiet sentence', () => {
   const m = meal([ok(1), un(2), { ...un(3), skipped: true }, ok(4, { check: true })], { matched: 1 });
   assert.equal(notCounted(m), 3);
-  assert.deepEqual(saveChoice(m), { ask: true, n: 3 });
-  assert.deepEqual(saveChoice(meal([ok(1), ok(2)], { matched: 2 })), { ask: false, n: 0 });
-  assert.equal(notMatchedText(3), '3 ingredients are not matched.');
-  assert.equal(notMatchedText(1), '1 ingredient is not matched.');
   assert.equal(notCountedText(5), '5 ingredients are not counted.');
-  assert.equal(canSaveWithout(m), true);
-  assert.equal(canSaveWithout(meal([un(1)], { matched: 0 })), false);
 });
 
-test('only unmatched rows are pre-ticked', () => {
+test('unmatchedIds lists rows with no food that are not skipped', () => {
   assert.deepEqual(unmatchedIds([un(1), ok(2), ok(3, { check: true }), { ...un(4), skipped: true }, un(5)]), [1, 5]);
 });
 
@@ -185,7 +148,7 @@ test('auto-match searches unmatched rows only, up to the Search cap of 40', () =
   assert.deepEqual(autoMatchIds([]), []);
 });
 
-test('auto-match answers for rows matched or skipped meanwhile are dropped, and only rows with a food are un-ticked', () => {
+test('auto-match answers for rows matched or skipped meanwhile are dropped, and found lists rows that got a food', () => {
   const items = [amRow(1), amRow(2), amRow(3, { food: { id: 9 }, food_id: 9 }), amRow(4, { skipped: true }), amRow(5)];
   const proposals = [{ item_id: 1, food: { id: 7 } }, { item_id: 2, food: null }, { item_id: 3, food: { id: 7 } }, { item_id: 4, food: { id: 7 } }, { item_id: 5, food: { id: 8 } }];
   const r = autoMatchResult(items, proposals);

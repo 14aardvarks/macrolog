@@ -408,56 +408,17 @@ h1 .src { font-size: .875rem; vertical-align: middle; }
 
 .entries-body .item-title { font-weight: 400; }
 
-/* Import Recipe and Match Ingredients */
+/* Import Recipe and matching on the recipe screen */
 textarea { font: inherit; color: inherit; width: 100%; min-height: 160px; padding: 8px 12px; background: var(--card);
   border: 1px solid var(--line); border-radius: 10px; resize: vertical; }
 .btn.small { padding: 6px 12px; font-size: .9375rem; }
-.import-rows { padding: 0; }
-.import-row { display: flex; align-items: flex-start; gap: 4px; padding: 8px 0; border-bottom: 1px solid var(--line); }
-.import-row:last-child { border-bottom: 0; }
-.import-fields { flex: 1; min-width: 0; display: grid; gap: 0 6px; grid-template-columns: 4.5em 7.5em minmax(0, 1fr); }
-.import-fields select { width: 100%; min-height: 36px; }
-.import-fields .field { margin: 0 0 4px; }
-.import-fields .field > span { font-size: .75rem; margin-bottom: 2px; }
-.import-fields .import-note { grid-column: 1 / -1; }
-.import-fields .import-note input { min-height: 36px; padding: 4px 10px; }
-.import-row .icon-btn { margin-top: 14px; }
 .saved-note { display: flex; align-items: center; gap: 10px; margin: 0 0 8px; font-weight: 600; }
 .saved-tag { padding: 2px 10px; border-radius: 99px; background: var(--accent); color: var(--accent-text); }
 .match-count { font-weight: 600; margin: 0 0 8px; }
 .match-bulk { margin: 0 0 8px; }
 .match-bulk .check { margin: 0; flex: none; }
-.match-run { gap: 8px 12px; margin: 0 0 8px; }
-.method-switch { display: flex; align-items: center; gap: 8px; }
-.method-label { font-size: .875rem; font-weight: 600; color: var(--muted); }
-.segmented { display: inline-flex; padding: 3px; gap: 3px; background: var(--track); border-radius: 12px; }
-.seg-btn { min-height: 44px; min-width: 72px; padding: 6px 14px; border: 0; border-radius: 9px; background: transparent; color: var(--muted); font: inherit; font-weight: 600; cursor: pointer; }
-.seg-btn[aria-pressed=true] { background: var(--card); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.25), inset 0 -3px 0 var(--accent); }
 .match-add { margin: 8px 0 12px; }
-.match-row { display: block; padding: 10px 4px; border-bottom: 1px solid var(--line); border-radius: 8px; }
-.match-row.current { box-shadow: inset 4px 0 0 var(--accent); background: var(--card); }
-.match-top { display: flex; align-items: flex-start; gap: 10px; }
-.match-top input[type=checkbox] { margin-top: 2px; }
-.match-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.match-actions { margin: 8px 0 0; }
 .match-state { display: inline-block; padding: 0 8px; border-radius: 99px; border: 1px solid var(--line); font-size: .8125rem; }
-.match-unmatched { border-color: var(--over); color: var(--text); background: var(--warn-bg); }
-.match-skipped { color: var(--muted); }
-.proposal { margin: 8px 0 0; padding: 8px 12px; border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 10px; background: var(--card); }
-.proposal p { margin: 4px 0; }
-.proposal-head { font-weight: 600; }
-.proposal .row { margin: 8px 0 0; }
-.match-totals { width: 100%; border-collapse: collapse; margin: 0 0 12px; }
-.match-totals th, .match-totals td { padding: 6px 4px; border-bottom: 1px solid var(--line); text-align: left; font-weight: 400; }
-.match-totals td { text-align: right; font-variant-numeric: tabular-nums; }
-.match-foot { margin-top: 12px; }
-.match-foot > .btn { flex: 1 1 0; }
-.match-jump { margin: 0 0 4px; }
-.match-jump .link-btn { padding: 0; }
-.match-hint { margin: 0; font-size: .875rem; }
-.save-choice { margin: 12px 0; padding: 12px; }
-.save-choice h2 { margin-top: 0; }
-.save-choice p { margin: 0 0 8px; }
 /* A field with a hint under it (Settings, Claude): the hint sits close to its box. */
 .hinted { margin: 0 0 12px; }
 .hinted > .field { margin-bottom: 4px; }
@@ -477,7 +438,7 @@ textarea { font: inherit; color: inherit; width: 100%; min-height: 160px; paddin
 .steps-list li { margin: 0 0 8px; line-height: 1.45; }
 .recipe-ings { margin: 0 0 12px; }
 .recipe-ings .item-sub { display: block; }
-/* Check Amount on Match Ingredients */
+/* Check Amount on a recipe row */
 .match-check { border-color: var(--over); color: var(--text); background: var(--warn-bg); }
 .amount-edit { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px; margin: 8px 0 0; }
 .amount-edit .field { margin: 0; flex: 0 1 7em; }
@@ -589,7 +550,6 @@ body.has-undo main { padding-bottom: 96px; }  /* room to scroll the last rows ab
 .check-more ul { margin: 4px 0 0; padding-left: 18px; }
 .match-est { border-color: var(--line); color: var(--muted); }
 .check-reason { display: block; font-size: .875rem; color: var(--text); margin-top: 2px; }
-.pkg-note { font-size: .8125rem; color: var(--muted); margin: 2px 0 0; }
 
 /* Estimated Weight tag (issue #45 step 8): grams and source in words, the grams a button that opens a grams box in place.
    Both states keep the same height, so nothing below moves. */
@@ -603,7 +563,6 @@ body.has-undo main { padding-bottom: 96px; }  /* room to scroll the last rows ab
 .weight-tag .weight-err { flex-basis: 100%; color: var(--danger, var(--text)); }
 .weight-tag .weight-err:empty { display: none; }
 .check-notes .check-list.estimates { border-color: var(--line); background: transparent; }
-.import-flag { min-height: 44px; }
 
 /* Recipe cards (issue #48): photo or placeholder on the left, title, summary and chips on the right, the menu at the bottom
    right. The image box is sized by the card, never by the image, so nothing moves while photos load. */
@@ -684,3 +643,80 @@ body.has-undo main { padding-bottom: 96px; }  /* room to scroll the last rows ab
   .card-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .screen.recipes { max-width: none; }
 }
+
+/* Recipe screen ingredients (v77, issue #49): one compact line per ingredient, the + and Claude + at the right, the three dot menu last.
+   Buttons keep 44 px targets; text wraps beside them, so the row only grows when a suggestion or editor opens below it. */
+.ing-count { margin: 0 0 6px; font-weight: 600; }
+.ing-tools { margin: 0 0 8px; }
+.ing-list { list-style: none; margin: 0 0 8px; padding: 0; }
+.ing-row { padding: 6px 0 6px 2px; border-bottom: 1px solid var(--line); }
+.ing-row:last-child { border-bottom: 0; }
+.ing-row:focus { outline: none; }
+.ing-row:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; border-radius: 8px; }
+.ing-row.menu-open { position: relative; z-index: 5; }
+.ing-main { display: flex; align-items: flex-start; gap: 6px; min-height: 44px; }
+.ing-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; padding-top: 2px; }
+.ing-line { font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+.ing-note { font-weight: 400; color: var(--muted); }
+.ing-state { font-size: .8125rem; line-height: 1.5; color: var(--muted); overflow-wrap: anywhere; }
+.ing-state .weight-tag { display: inline-flex; min-height: 0; vertical-align: middle; }
+.ing-state .check-reason { font-size: .8125rem; }
+.ing-food { color: var(--text); }
+.ing-chip { font-size: .75rem; line-height: 1.5; padding: 0 7px; margin-right: 2px; white-space: nowrap; }
+.chip-unmatched { border-style: dashed; color: var(--muted); }
+.chip-suggested { border-color: var(--accent); color: var(--text); }
+.chip-accepted { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.chip-check { border-color: var(--over); color: var(--text); background: var(--warn-bg); }
+.chip-skipped { color: var(--muted); }
+.state-skipped .ing-line { color: var(--muted); font-weight: 400; text-decoration: line-through; }
+.ing-btns { flex: none; display: flex; align-items: center; gap: 2px; }
+.ing-plus, .ing-claude, .ing-menu-btn { width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; padding: 0;
+  border-radius: 12px; cursor: pointer; font: inherit; }
+.ing-plus { border: 2px solid var(--accent); background: var(--accent); color: var(--accent-text); font-size: 1.6rem; font-weight: 600; line-height: 1; }
+.ing-claude { border: 1px solid var(--line); background: var(--card); color: var(--accent); }
+.ing-menu-btn { border: 0; background: transparent; color: var(--muted); }
+.ing-menu-btn:hover, .ing-menu-btn[aria-expanded=true] { background: var(--track); color: var(--text); }
+.ing-plus:disabled, .ing-claude:disabled { opacity: .45; cursor: default; }
+.ing-plus[aria-busy=true], .ing-claude[aria-busy=true] { opacity: 1; animation: ing-pulse 1s ease-in-out infinite alternate; }
+@keyframes ing-pulse { from { opacity: 1; } to { opacity: .45; } }
+@media (prefers-reduced-motion: reduce) { .ing-plus[aria-busy=true], .ing-claude[aria-busy=true] { animation: none; opacity: .6; } }
+.ing-menu { position: relative; }
+.ing-menu .card-menu { top: 46px; right: 0; }
+.ing-menu .card-menu.up { top: auto; bottom: 46px; }
+.ing-acts { margin: 4px 0 0; gap: 6px; }
+.ing-acts .btn.small { min-height: 44px; min-width: 88px; }
+.ing-panel { margin: 6px 0 2px; }
+.ing-search-row { margin: 0 0 4px; gap: 6px; }
+.ing-search-row input { flex: 1; min-width: 0; min-height: 44px; }
+.ing-results { list-style: none; margin: 0; padding: 0; }
+.ing-results > li.sub { padding: 8px 4px; }
+.ing-result { display: block; width: 100%; min-height: 44px; padding: 6px 10px; border: 0; border-bottom: 1px solid var(--line); background: transparent;
+  color: var(--text); text-align: left; font: inherit; cursor: pointer; }
+.ing-result:hover, .ing-result:focus { background: var(--track); }
+.ing-result-sub { display: block; font-size: .8125rem; }
+.split-btn { position: relative; display: inline-flex; }
+.split-btn .split-main { border-radius: 10px 0 0 10px; gap: 6px; font-weight: 600; border-color: var(--accent); color: var(--accent); }
+.split-btn .split-main .plus { font-size: 1.25rem; line-height: 1; }
+.split-btn .split-menu { position: static; }
+.split-btn .split-more { min-width: 44px; padding: 0; border-left: 0; border-radius: 0 10px 10px 0; border-color: var(--accent); color: var(--accent); }
+.split-btn .split-menu .card-menu { left: 0; right: auto; top: 48px; min-width: 220px; }
+.split-btn .split-menu .card-menu.up { top: auto; bottom: 48px; }
+.caret { width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid currentColor; }
+.review-one { margin: 0 0 10px; padding: 10px 12px; border-color: var(--accent); }
+.review-one h3 { margin: 0 0 4px; font-size: .875rem; color: var(--muted); }
+.review-one h3:focus { outline: none; }
+.review-line { margin: 0 0 4px; font-weight: 600; font-size: 1.05rem; }
+.review-one .row { margin: 8px 0 0; gap: 6px; }
+.ing-status-box .msg { margin: 4px 0 8px; }
+.ing-section .check-notes { margin-bottom: 8px; }
+/* The short review before saving: one text box per ingredient, a muted note under a line that needs a weight. */
+.review-head { gap: 0 10px; }
+.review-lines { list-style: none; padding: 0; margin: 0 0 8px; }
+.review-row { padding: 2px 0; }
+.review-row-main { display: flex; align-items: center; gap: 2px; }
+.review-row-main input { flex: 1; min-width: 0; }
+.review-flag { margin: 0 0 4px 4px; font-size: .8125rem; }
+.review-steps { margin-top: 12px; }
+.review-steps > .steps-editor, .review-steps > div { padding: 0 12px; }
+.review-foot { margin-top: 12px; }
+.review-foot .review-save { flex: 1 1 100%; }
