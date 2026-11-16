@@ -13,7 +13,7 @@ import {
 } from './recipeimport.js';
 import {
   rowState, rowActions, ACTION_LABELS, rowChip, rowLine, foodText, MATCH_ALL_MODES, searchIds, matchAllPlan, claudeIds, reviewOrder,
-  reviewNext, reviewPos, lineOf, searchStart, topResults, matchedLine, restoreRowBody,
+  reviewNext, reviewPos, lineOf, searchStart, topResults, matchedLine, restoreRowBody, matchPromptCount, matchPromptShows, matchPromptText,
 } from './rowmatch.js';
 import { menuButton } from './menu.js';
 
@@ -27,7 +27,8 @@ function sparkle() {
 
 // meal: the recipe (GET /api/meals/{id}). ctx: app ctx (flow.proposals, flow.find, flow.searchSource, settings, display).
 // opts: { st: /api/ai/status, edit: can change it, onMeal(meal): the recipe changed, status: an aria-live box for notes }.
-// Returns { el, autoRun() } where autoRun is Auto-Match After Import, run once right after an import.
+// Returns { el, focus(id) }. Nothing matches on its own: the banner at the top offers Match Ingredients (the Auto-Match After Import setting)
+// while rows are unmatched, and Continue Without Matching hides it for good (saved on the recipe).
 export function ingredientSection(meal, ctx, opts) {
   const o = opts || {};
   const st = o.st || { enabled: false };
@@ -35,7 +36,8 @@ export function ingredientSection(meal, ctx, opts) {
   const aiOn = edit && !!(st && st.enabled && !(st.features && st.features.recipe === false));
   const props = ctx.flow.proposals(meal.id);  // suggestions waiting for Accept, kept for the session (the finder and back keep them)
   const busy = {};  // item id -> 'search' | 'claude' while that row's request runs
-  let running = false;  // Match All or Auto-Match is running
+  let running = false;  // Match All or Match Ingredients is running
+  let acted = false;  // a Match All, Match Ingredients or Review One By One started in this visit: the banner stays hidden
   let panel = null;  // { id, kind: 'search' | 'amount' | 'grams' } the one open editor on a row
   const status = h('div', { class: 'ing-status-box', 'aria-live': 'polite' });
   const limitNote = h('div', { 'aria-live': 'polite' });
@@ -163,6 +165,7 @@ export function ingredientSection(meal, ctx, opts) {
     const base = matchAllPlan(mode, aiOn, full);
     const plan = base.note ? { ...base, note: claudeOffNote(st) } : base;
     if (!plan.search && !plan.claude) return;
+    acted = true;
     running = true;
     status.setAttribute('aria-busy', 'true');
     show(limitNote, null);
@@ -226,11 +229,20 @@ export function ingredientSection(meal, ctx, opts) {
       if (auto) say(AUTO_MATCH_FAILED); else fail(e);
     } finally { running = false; status.removeAttribute('aria-busy'); paintHead(); }
   }
-  // Auto-Match After Import, right after Save Recipe: the setting (Full Claude Use turns the default Search into Search Then Claude).
-  function autoRun() {
+  // Match Ingredients (the banner): the Auto-Match After Import setting (Full Claude Use turns the default Search into Search Then Claude).
+  // Off opens the choice menu instead of running anything.
+  function matchPrompted() {
     const eff = effectiveAutoMatch(ctx.display.auto_match, ctx.settings.full_claude === true);
-    if (eff.value === 'off') return;
+    if (eff.value === 'off') { const m = promptWrap.querySelector('.split-more'); if (m) m.click(); return; }
     runAll(eff.value, true);
+  }
+  async function dismissPrompt() {
+    dismissBtn.disabled = true;
+    try {
+      const m = await api.patchMeal(meal.id, { match_prompt_dismissed: true });
+      meal.match_prompt_dismissed = m.match_prompt_dismissed;
+    } catch (e) { fail(e); } finally { dismissBtn.disabled = false; }
+    paintHead();
   }
 
   // Match All: a split button. The main part runs Search (free); the small menu offers Claude, Search Then Claude and Review One By One.
@@ -238,15 +250,26 @@ export function ingredientSection(meal, ctx, opts) {
     h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), ' Match All');
   const allWrap = h('div', { class: 'split-btn' });
   const modes = MATCH_ALL_MODES.filter(([k]) => k === 'search' || aiOn).map(([key, label]) => ({ key, label }));
-  allWrap.append(allBtn, menuButton(allWrap, [...modes, { key: 'review', label: 'Review One By One' }], 'More Ways to Match', (k) => (k === 'review' ? startReview() : runAll(k, false)),
-    { btnClass: 'btn split-more', wrapClass: 'card-menu-wrap split-menu', title: 'More Ways to Match',
-      face: h('span', { class: 'caret', 'aria-hidden': 'true' }) }));
+  const modeItems = [...modes, { key: 'review', label: 'Review One By One' }];
+  const pickMode = (k) => (k === 'review' ? startReview() : runAll(k, false));
+  const moreFace = () => ({ btnClass: 'btn split-more', wrapClass: 'card-menu-wrap split-menu', title: 'More Ways to Match', face: h('span', { class: 'caret', 'aria-hidden': 'true' }) });
+  allWrap.append(allBtn, menuButton(allWrap, modeItems, 'More Ways to Match', (k) => (k === 'review' ? startReview() : runAll(k, false)), moreFace()));
   const tools = h('div', { class: 'row wrap ing-tools' }, allWrap);
+
+  // The banner: Match Ingredients with a small menu of the other ways, and Continue Without Matching.
+  const promptText = h('p', { class: 'match-prompt-text' });
+  const promptWrap = h('div', { class: 'split-btn' });
+  promptWrap.append(h('button', { class: 'btn split-main', type: 'button', onclick: matchPrompted }, 'Match Ingredients'),
+    menuButton(promptWrap, modeItems, 'More Ways to Match Ingredients', pickMode, moreFace()));
+  const dismissBtn = h('button', { class: 'btn ghost', type: 'button', onclick: dismissPrompt }, 'Continue Without Matching');
+  const prompt = h('div', { class: 'sheet match-prompt', role: 'group', 'aria-label': 'Match Ingredients', hidden: true },
+    promptText, h('div', { class: 'row wrap' }, promptWrap, dismissBtn));
 
   // ---------- Review One By One ----------
   let review = null;  // { order, i, searching }
   function startReview() {
     const order = reviewOrder(meal.items, props);
+    acted = true;
     if (!order.length) { say('Every ingredient has a food.'); return; }
     review = { order, i: reviewNext(order, meal.items, props, null), search: false, tried: {} };
     paintReview(true);
@@ -467,6 +490,9 @@ export function ingredientSection(meal, ctx, opts) {
     show(checks, checkBlock(meal));
     const open = unmatchedIds(meal.items).length;
     tools.hidden = !edit || !open;
+    const showPrompt = matchPromptShows(meal, props, { edit, running, acted });
+    if (showPrompt) promptText.textContent = matchPromptText(matchPromptCount(meal.items, props));
+    prompt.hidden = !showPrompt;
     allBtn.disabled = running;
     const more = tools.querySelector('.split-more');
     if (more) more.disabled = running;
@@ -518,9 +544,9 @@ export function ingredientSection(meal, ctx, opts) {
 
   paintRows();
   const el = h('div', { class: 'ing-section' },
-    h('h2', { id: 'ing-head' }, 'Ingredients'), count, checks,
+    h('h2', { id: 'ing-head' }, 'Ingredients'), edit ? prompt : null, count, checks,
     edit ? tools : null, edit ? acceptRow : null,
     status, limitNote, reviewBox, list,
     edit ? h('div', { class: 'row wrap' }, addBtn) : null, addBox);
-  return { el, autoRun, focus: (id) => focusRow(id) };
+  return { el, focus: (id) => focusRow(id) };
 }

@@ -365,8 +365,8 @@ export function matchDoneText(method, proposals, restCount, costText) {
 // The heading of a waiting proposal: Search suggestions say so, so nobody mistakes them for a Claude answer.
 export const proposalHead = (p) => (p && p.method === 'search' ? (p.food ? 'Suggested Match' : 'Search Result') : 'Claude Suggests');
 
-// ---------- Auto-Match After Import ----------
-// Right after Save Recipe the recipe screen runs the setting once on the unmatched rows, so suggestions are waiting on the rows.
+// ---------- Match Ingredients (the Auto-Match After Import setting) ----------
+// The recipe screen's Match Ingredients banner runs the setting on the unmatched rows when asked, so suggestions wait on the rows.
 
 export const AUTO_MATCH_LOADING = 'Finding Matches...';
 export const AUTO_MATCH_FAILED = sentence('Suggestions could not be found just now. Match All tries again');

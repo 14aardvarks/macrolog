@@ -57,3 +57,22 @@ def test_match_all_then_accept_all_in_one_bulk_patch(env):
     m2 = env["c"].patch(f"/api/meals/{m['id']}/items", json={"items": rows}).json()
     assert m2["matched"] + m2["checks"] == len(found)
     assert any(i["src"]["name"] == "salt" and i["food"] is None for i in m2["items"])  # a row with no suggestion stays a line
+
+
+def test_match_prompt_dismissal_is_per_recipe_and_saved_on_the_server(env):
+    m = save(env)
+    assert m["match_prompt_dismissed"] is False
+    r = env["c"].patch(f"/api/meals/{m['id']}", json={"match_prompt_dismissed": True})
+    assert r.status_code == 200 and r.json()["match_prompt_dismissed"] is True
+    assert env["c"].get(f"/api/meals/{m['id']}").json()["match_prompt_dismissed"] is True
+    other = save(env)
+    assert other["match_prompt_dismissed"] is False  # another recipe is not affected
+    # adding an unmatched ingredient keeps it dismissed
+    added = env["c"].post(f"/api/meals/{m['id']}/items", json={"src": {"text": "1 egg", "amount": 1, "unit": "count", "name": "egg"}})
+    assert added.status_code == 200 and added.json()["match_prompt_dismissed"] is True
+    # a copy is a new recipe and asks again
+    dup = env["c"].post(f"/api/meals/{m['id']}/duplicate").json()
+    assert dup["match_prompt_dismissed"] is False
+    assert env["c"].patch(f"/api/meals/{m['id']}", json={"match_prompt_dismissed": False}).json()["match_prompt_dismissed"] is False
+    assert env["c"].patch(f"/api/meals/{m['id']}", json={"match_prompt_dismissed": "yes"}).status_code == 400
+    assert env["requests"] == []  # nothing here asks Claude

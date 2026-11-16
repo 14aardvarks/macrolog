@@ -23,7 +23,7 @@ import { renderRecipe } from './recipe.js';
 import { renderRecipes, renderRecipeView } from './recipes.js';
 import { renderCooking } from './cooking.js';
 import { renderImport, renderReview } from './recipeflow.js';
-import { recipeSubText, notCounted, notCountedText, portionUnits, portionFraction, portionItems, portionNote, portionAmount, autoMatchOn,
+import { recipeSubText, notCounted, notCountedText, portionUnits, portionFraction, portionItems, portionNote, portionAmount,
   isRecipeLog, recipeAmountText, saveRecipeRows, tickedIds, REMOVE_RECIPE_CONFIRM } from './recipeimport.js';
 import { renderRecipeLog } from './recipelog.js';
 import { renderClaudeSection, renderSignIn, renderFullClaude } from './claudekey.js';
@@ -35,7 +35,7 @@ import { tabOf, routeUrl, formatRoute, startRoute } from './routes.js';
 const main = document.getElementById('main');
 const nav = document.getElementById('nav');
 const state = { user: null, settings: { start_screen: 'today', default_meal: null, use_last: true, confirm_ai: true, amount_format: 'fraction', full_claude: false }, display: DEFAULT_DISPLAY, cleanup: null, depth: 0, tab: 'favorites', addMeal: null, quickMeal: null, draft: null, recipe: null, source: null, aiSt: null, claude: null, fallback: null,
-  importInput: null, importDraft: null, importBase: 0, proposals: {}, matchFocus: null, autoMatch: null, hold: null };  // Import Recipe and matching on the recipe screen  // addMeal, source (null = the Default Search Source setting), aiSt (last /api/ai/status) and claude (last Claude estimate) live for the session only
+  importInput: null, importDraft: null, importBase: 0, proposals: {}, matchFocus: null, hold: null };  // Import Recipe and matching on the recipe screen  // addMeal, source (null = the Default Search Source setting), aiSt (last /api/ai/status) and claude (last Claude estimate) live for the session only
 const FINDER = ['add', 'picker', 'scan', 'lookup', 'manual', 'ai'];  // screens New Recipe and the recipe screen's Search Another borrow from Add
 
 // The bottom bar button to mark: params.nav when a screen is opened from another tab, the Recipes tab while a recipe
@@ -88,7 +88,6 @@ const ctx = {
     saved(meal) {
       state.importDraft = null;
       state.importInput = null;
-      state.autoMatch = autoMatchOn(state.display) ? meal.id : null;  // Auto-Match After Import runs once, on this opening only
       backThen(state.depth - state.importBase, () => go('recipeview', { mealId: meal.id, saved: true }));
     },
     cancel() { state.importDraft = null; state.importInput = null; backThen(state.depth - state.importBase, () => {}); },
@@ -96,9 +95,6 @@ const ctx = {
     // searchSource is what Search looks in: the Source chosen on Add (else the Default Search Source), as all, off or fdc;
     // Claude estimates are not a database source, so ai means all.
     searchSource() { const s = state.source == null ? state.display.search_source : state.source; return s === 'off' || s === 'fdc' ? s : 'all'; },
-    // True once for the recipe that was just imported when Auto-Match After Import is on. Held in memory only, so reopening the recipe
-    // later, a return from the food finder or a reload never matches again.
-    takeAuto(id) { const on = state.autoMatch === id; state.autoMatch = null; return on; },
     takeFocus() { const f = state.matchFocus; state.matchFocus = null; return f; },
     // Search Another for one ingredient. The finder runs in ingredient mode (search, Scan Barcode, Enter Manually); picking a food
     // skips the amount screen (autoMatch works the amount out from the recipe line, saves the match and returns to the recipe).

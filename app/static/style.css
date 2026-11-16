@@ -648,6 +648,9 @@ body.has-undo main { padding-bottom: 96px; }  /* room to scroll the last rows ab
    Buttons keep 44 px targets; text wraps beside them, so the row only grows when a suggestion or editor opens below it. */
 .ing-count { margin: 0 0 6px; font-weight: 600; }
 .ing-tools { margin: 0 0 8px; }
+.match-prompt { margin: 0 0 10px; }
+.match-prompt .match-prompt-text { margin: 0 0 8px; font-weight: 600; }
+.match-prompt[hidden] { display: none; }
 .ing-list { list-style: none; margin: 0 0 8px; padding: 0; }
 .ing-row { padding: 6px 0 6px 2px; border-bottom: 1px solid var(--line); }
 .ing-row:last-child { border-bottom: 0; }

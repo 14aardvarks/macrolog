@@ -203,7 +203,7 @@ function recentlyDeleted(trash, restored) {
   return wrap;
 }
 
-// params: { mealId, saved? (just saved by Import: a Saved note, the Ingredients in view and Auto-Match After Import once),
+// params: { mealId, saved? (just saved by Import: a Saved note and the Ingredients in view),
 // focus? ('log' or 'ingredients') }. Log (meal and how much: servings, % of the recipe or a yield unit, worked out by the server);
 // the ingredients, matched in place (js/ingrows.js); meal tags, Rename, Steps, Serving Size and Delete Recipe.
 // The checklist with Adjust is only for logging a recipe from Add.
@@ -296,7 +296,6 @@ export async function renderRecipeView(root, params, ctx) {
       if (head && head.scrollIntoView) head.scrollIntoView({ block: 'start' });
     }, 0), { once: true });
   }
-  if (params.saved && edit && ctx.flow.takeAuto(meal.id)) ings.autoRun();
   if (params.focus === 'log') {  // Log from a card menu: the Log section in view with the amount ready, once the screen shows
     root.addEventListener('mounted', () => setTimeout(() => {
       const head = root.querySelector('#log-head');

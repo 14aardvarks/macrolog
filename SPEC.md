@@ -740,6 +740,7 @@ POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log i
 ## Auto-Match After Import
 
 - v77: runs on the recipe screen right after Save Recipe (Recipe First); Match Selected below now reads Match All, and nothing is ticked.
+- v78 (Match Ingredients Prompt, below): nothing runs after Save Recipe any more. The setting now sets what the recipe screen's Match Ingredients button does. Every statement below that says matching runs after save, once, or through `autoRun` and `takeAuto` is superseded; the plans, routes, confirm, cap and Full Claude Use rules are unchanged.
 
 - Settings, Display has Auto-Match After Import (select: Search, Claude, Search Then Claude, Off; saved at once like the other Display choices, per user,
   default Search) with a hint that states Search is the default, that Search is free, that the Claude choices use Claude requests (cost shown first when Confirm
@@ -1122,7 +1123,7 @@ GET    /api/photos/{name}  -> image/jpeg, Cache-Control "private, max-age=315360
   or the splitter built, amount, unit, name, note and printed size; an edited one is split again by `parseIngredientLine`), x to remove, Add
   Ingredient, the typical weight or printed size under a flagged line (POST /api/units/preview as before), Steps in a collapsed details,
   the photo choice of a photo import, then one primary button Save Recipe, plus Rerun With Notes (#46) and Cancel. Meal tags and Use Grams
-  moved off the review (tags on the recipe screen, Enter Grams on a row). Save Recipe posts /api/meals/import (one request; every line is an
+  moved off the review (tags on the recipe screen, Enter Grams on a row). Save Recipe posts /api/meals/import (one request, and no Claude or search call after it; every line is an
   unmatched reference row with src amount, unit, name, note, printed size and was_* exactly as before), uploads the chosen photo, and opens the
   recipe screen (`go('recipeview', { mealId, saved: true })` in place of the import entries). No matching step before saving. No route changed.
 - Import source tabs: Web Address is first and selected by default whenever `urlImportOn` (switch on, Claude usable); otherwise Paste Text,
@@ -1130,8 +1131,8 @@ GET    /api/photos/{name}  -> image/jpeg, Cache-Control "private, max-age=315360
 - Recipe screen Ingredients (js/ingrows.js `ingredientSection`, pure helpers in js/rowmatch.js): heading, the count line (`matchedLine`: "3 of 8
   matched, 1 to check, 2 suggested"), `checkBlock`, Match All, Accept N Suggested Matches (with the From Previous Recipe count), a status line,
   the rows, Add Ingredient (Add, or Add and Search, which runs + on the new row). After an import a Saved note shows and the Ingredients
-  scroll into view; Auto-Match After Import runs once (`ctx.flow.takeAuto`) with the same plans, routes, confirm, Full Claude Use and cap
-  rules as before (`runAll(mode, auto)`).
+  scroll into view; matching no longer runs on its own (v78, see Match Ingredients Prompt): the banner's Match Ingredients runs the Auto-Match After Import
+  setting with the same plans, routes, confirm, Full Claude Use and cap rules as before (`runAll(mode, auto)`).
 - Row state machine (`rowState(item, proposal)`): unmatched, suggested (a suggestion with a food waits), accepted, check (Check Amount),
   skipped; derived from the saved row and the waiting suggestion, never stored. `rowActions(state, { aiOn, canRemove })` gives the row's
   buttons and menu: unmatched: + (accessible name Match Ingredient, described by the line; POST match-search for that row, one request) and,
@@ -1158,3 +1159,23 @@ GET    /api/photos/{name}  -> image/jpeg, Cache-Control "private, max-age=315360
 - Tests: tests/ui/rowmatch.test.mjs, tests/test_recipe_first.py, tests/ui/recipeurl.test.mjs (tab order), tests/test_static_shell.py.
   Shell cache macrolog-shell-v77 (js/rowmatch.js, js/ingrows.js, js/menu.js added).
 
+## Match Ingredients Prompt (v78, issue #51)
+
+- Save Recipe only saves. No matching, search or Claude call runs on save or on opening a recipe. `ctx.flow.takeAuto`, `state.autoMatch` and the
+  ingredient section's `autoRun` are removed.
+- Banner: at the top of the recipe screen's Ingredients (ingrows.js, pure helpers `matchPromptCount`, `matchPromptShows`, `matchPromptText` in
+  rowmatch.js). It shows when the viewer can edit, the recipe is not dismissed, no match is running or was started in this visit, and some row is
+  unmatched (no food, not skipped, no suggestion waiting). Text "N ingredients are not matched to foods yet" ("1 ingredient is not matched to a food yet").
+  Buttons: Match Ingredients (a split button), and Continue Without Matching.
+- Match Ingredients runs the Auto-Match After Import setting through `effectiveAutoMatch` and `runAll(mode, true)`, so Full Claude Use, the confirm step,
+  cost and the monthly cap behave as before. The small arrow menu offers Match All With Search, Match All With Claude (when Claude is usable), Search Then
+  Claude and Review One By One. With the setting Off, Match Ingredients opens that menu instead of running anything.
+- Any Match All, Match Ingredients or Review One By One hides the banner for the rest of that visit (rows with no match found would otherwise bring it
+  straight back). Reopening the recipe shows it again while rows are unmatched and it was not dismissed.
+- Continue Without Matching: PATCH /api/meals/{id} with match_prompt_dismissed true (bool, else 400; false brings the banner back). Column
+  meals.match_prompt_dismissed INTEGER, nullable, added in place by core.init; meal_dict returns it as a bool. It is per recipe, not per viewer, written by
+  whoever can edit the recipe (the owner, or an admin for a shared one). Adding an unmatched ingredient later keeps it dismissed. Duplicate does not
+  copy it, so a copy asks again. A dismissed recipe keeps Match All and the per row + buttons.
+- Settings, Display: the select is labelled Match Ingredients (stored as settings.auto_match, unchanged); its help says it sets what the Match Ingredients
+  button does and that Off offers a choice of ways instead.
+- Tests: tests/test_recipe_first.py (dismissal), tests/ui/rowmatch.test.mjs (banner rules), tests/test_static_shell.py. Shell cache macrolog-shell-v78.

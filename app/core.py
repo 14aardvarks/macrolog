@@ -175,6 +175,8 @@ def init(c: sqlite3.Connection) -> None:
         c.execute("ALTER TABLE meals ADD COLUMN deleted_at TEXT")
     if "source_url" not in {r[1] for r in c.execute("PRAGMA table_info(meals)")}:  # databases made before URL import (null = none)
         c.execute("ALTER TABLE meals ADD COLUMN source_url TEXT")
+    if "match_prompt_dismissed" not in {r[1] for r in c.execute("PRAGMA table_info(meals)")}:  # databases made before the match prompt (null = not dismissed)
+        c.execute("ALTER TABLE meals ADD COLUMN match_prompt_dismissed INTEGER")
     purge_deleted(c)  # at startup: recipes deleted more than RECIPE_PURGE_DAYS ago go for good
     if "user_id" not in {r[1] for r in c.execute("PRAGMA table_info(recipe_logs)")}:  # who logged it; null (older logs) means the owner
         c.execute("ALTER TABLE recipe_logs ADD COLUMN user_id INTEGER")
@@ -1539,7 +1541,8 @@ def meal_dict(c, row, user: dict | None = None) -> dict:
             "checks": sum(1 for i in needed if i["check"]), "steps": read_steps(row["steps"]),
             "complete": complete, "yield": yld, "portions": portions(servings, yld),
             "ingredient_grams": ingredient_grams(items, complete),
-            "shared": bool(row["shared"]), "source_url": row["source_url"] if "source_url" in row.keys() else None,
+            "shared": bool(row["shared"]), "match_prompt_dismissed": bool(row["match_prompt_dismissed"]) if "match_prompt_dismissed" in row.keys() else False,
+            "source_url": row["source_url"] if "source_url" in row.keys() else None,
             "photo": row["photo"] if "photo" in row.keys() else None, "mine": mine, "can_edit": mine or bool(user and user.get("is_admin")),
             "owner": {"id": row["user_id"], "name": owner_name(c, row["user_id"])}}
 
@@ -1704,11 +1707,12 @@ def meal_from_meal(user: CurrentUser, body: dict = Body(...)):
 
 @router.patch("/meals/{meal_id}")
 def patch_meal(meal_id: int, user: CurrentUser, body: dict = Body(...)):
-    """Rename, retag (meals), set servings, yield, steps or shared, or replace the items list (amounts, units, removed items)."""
-    if not {"name", "meals", "items", "servings", "steps", "yield", "shared"} & body.keys():
-        raise bad("Nothing to update: send name, meals, items, servings, yield, steps or shared")
-    if "shared" in body and not isinstance(body["shared"], bool):
-        raise bad("shared must be true or false")
+    """Rename, retag (meals), set servings, yield, steps, shared or match_prompt_dismissed, or replace the items list (amounts, units, removed items)."""
+    if not {"name", "meals", "items", "servings", "steps", "yield", "shared", "match_prompt_dismissed"} & body.keys():
+        raise bad("Nothing to update: send name, meals, items, servings, yield, steps, shared or match_prompt_dismissed")
+    for flag in ("shared", "match_prompt_dismissed"):
+        if flag in body and not isinstance(body[flag], bool):
+            raise bad(f"{flag} must be true or false")
     yld = recipe_yield(body["yield"]) if "yield" in body else None
     steps = clean_steps(body["steps"]) if "steps" in body else None
     name = meal_name(body) if "name" in body else None
@@ -1719,6 +1723,8 @@ def patch_meal(meal_id: int, user: CurrentUser, body: dict = Body(...)):
         items = parse_items(c, body["items"], user["id"]) if "items" in body else None
         if "shared" in body:
             c.execute("UPDATE meals SET shared=? WHERE id=?", (int(body["shared"]), meal_id))
+        if "match_prompt_dismissed" in body:  # per recipe, not per viewer; true hides the Match Ingredients banner, false brings it back
+            c.execute("UPDATE meals SET match_prompt_dismissed=? WHERE id=?", (1 if body["match_prompt_dismissed"] else None, meal_id))
         if name:
             c.execute("UPDATE meals SET name=? WHERE id=?", (name, meal_id))
         if "servings" in body:

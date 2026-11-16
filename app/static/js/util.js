@@ -949,9 +949,9 @@ export const SEARCH_SOURCES = [
 ];
 export function searchSource(v) { return SEARCH_SOURCES.some((s) => s.value === v) ? v : 'all'; }
 
-// Settings, Display, Auto-Match After Import: what happens on the recipe screen right after an import. Search (default) is the free
+// Settings, Display, Match Ingredients (stored as auto_match): what the banner's Match Ingredients does on the recipe screen. Search (default) is the free
 // name search. Claude matches the unmatched rows with Claude. Search Then Claude searches first, then asks Claude only about the rows
-// Search left without a proposal. Off does nothing. Same values as core.AUTO_MATCHES.
+// Search left without a proposal. Off makes Match Ingredients open the choice menu instead. Same values as core.AUTO_MATCHES.
 export const AUTO_MATCHES = [{ value: 'search', label: 'Search' }, { value: 'claude', label: 'Claude' },
   { value: 'search_claude', label: 'Search Then Claude' }, { value: 'off', label: 'Off' }];
 export const autoMatch = (v) => (AUTO_MATCHES.some((o) => o.value === v) ? v : 'search');
@@ -1272,7 +1272,7 @@ export function cookToggle(checked, key) {
 
 export const CLAUDE_CAP_NOTE = sentence('Monthly Claude limit reached, so Claude was not used');
 
-// Auto-Match After Import with Full Claude Use: Search (the default, which a stored explicit "search" cannot be told from) becomes
+// Match Ingredients with Full Claude Use: Search (the default, which a stored explicit "search" cannot be told from) becomes
 // Search Then Claude. Claude, Search Then Claude and Off are never changed. forced: Full Claude Use made the change. Under Full
 // Claude Use the Claude step asks about every row Search did not take from a previous recipe (see autoClaudeBatch).
 export function effectiveAutoMatch(setting, full) {

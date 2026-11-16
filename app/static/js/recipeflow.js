@@ -31,7 +31,7 @@ export async function renderImport(root, ctx, params) {
   try { st = await api.aiStatus(); } catch (e) { st = { enabled: false }; }
   loadPhotoConfig();  // fresh for the review screen's Use As Recipe Photo
   const aiOn = aiFeature(st, 'recipe');
-  // Full Claude Use: Read With Claude (text or photos) runs without the extra confirm, and the matching right after the import
+  // Full Claude Use: Read With Claude (text or photos) runs without the extra confirm, and the matching offered by the banner on the recipe screen
   // uses Claude on its own. The cost is shown where the setting is turned on; the text line shows it again, and at the monthly
   // cap the buttons are off with one quiet note.
   const direct = aiOn && ctx.settings.full_claude === true;

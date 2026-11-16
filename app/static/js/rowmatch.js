@@ -143,6 +143,16 @@ export function matchedLine(meal, props) {
   return meal.skipped ? t + ', ' + meal.skipped + ' skipped' : t;
 }
 
+// The Match Ingredients banner (v78): shown at the top of the Ingredients while some row is still unmatched (not skipped, no food, no
+// suggestion waiting), the viewer can edit, it was not dismissed for the recipe and no match is running or already started in this visit.
+export const matchPromptCount = (items, props) => (items || []).filter((it) => rowState(it, props && props[it.id]) === 'unmatched').length;
+export function matchPromptShows(meal, props, opts) {
+  const o = opts || {};
+  if (!o.edit || o.running || o.acted || (meal && meal.match_prompt_dismissed)) return false;
+  return matchPromptCount(meal && meal.items, props) > 0;
+}
+export const matchPromptText = (n) => (n === 1 ? '1 ingredient is not matched to a food yet' : n + ' ingredients are not matched to foods yet');
+
 // The body that puts a removed row back at its place (POST /api/meals/{id}/items), for Undo after Remove.
 export function restoreRowBody(item, position) {
   const out = { position };

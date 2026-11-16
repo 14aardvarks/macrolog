@@ -110,3 +110,20 @@ test('the count line and the Undo body of a removed row', () => {
   assert.deepEqual(restoreRowBody(ok(3, { check: true }), 2), { position: 2, src: src('butter', 1, 'tbsp'), food_id: 9, amount: 1, unit: 'tbsp', check: true });
   assert.deepEqual(restoreRowBody(un(4, { skipped: true }), 0), { position: 0, src: src('row 4', 1, 'cup'), skipped: true });
 });
+
+import { matchPromptCount, matchPromptShows, matchPromptText } from '../../app/static/js/rowmatch.js';
+
+test('Match Ingredients banner shows only for editable recipes with unmatched rows and no dismissal', () => {
+  const meal = (items, over) => ({ items, match_prompt_dismissed: false, ...over });
+  const rows = [un(1), ok(2), un(3, { skipped: true }), un(4)];
+  assert.equal(matchPromptCount(rows, {}), 2);
+  assert.equal(matchPromptCount(rows, { 1: sug(1) }), 1);  // a waiting suggestion is not unmatched
+  assert.equal(matchPromptShows(meal(rows), {}, { edit: true }), true);
+  assert.equal(matchPromptShows(meal(rows), {}, { edit: false }), false);
+  assert.equal(matchPromptShows(meal(rows, { match_prompt_dismissed: true }), {}, { edit: true }), false);
+  assert.equal(matchPromptShows(meal(rows), {}, { edit: true, running: true }), false);
+  assert.equal(matchPromptShows(meal(rows), {}, { edit: true, acted: true }), false);
+  assert.equal(matchPromptShows(meal([ok(1), un(2, { skipped: true })]), {}, { edit: true }), false);
+  assert.equal(matchPromptText(1), '1 ingredient is not matched to a food yet');
+  assert.equal(matchPromptText(3), '3 ingredients are not matched to foods yet');
+});
