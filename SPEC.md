@@ -279,14 +279,14 @@ GET/PUT /api/goals   {"kcal","carb_pct","protein_pct","fat_pct"}  pcts total 100
         targets: carbs g = kcal*pct/4, protein same, fat g = kcal*pct/9. Goals are per user.
 GET/PUT /api/settings {"start_screen": "today"|"scan"|"search"|"ai", "default_meal": ..., "use_last", "confirm_ai", "full_claude": bool, "amount_format"}   # per user, validated
         # full_claude is Full Claude Use (column settings.full_claude INTEGER NOT NULL DEFAULT 0, added in place; true or false only, else 400). See "Full Claude Use" below
-GET/PUT /api/settings/display {"show_macros","show_micros","show_split","show_macro_bar","show_table","micros_open": bool, "micros_shown": [nutrient...], "today_view": "list"|"table", "search_source": "all"|"off"|"fdc"|"ai", "auto_match": "search"|"claude"|"search_claude"|"off", "recipe_owner": "mine"|"shared"|"all", "refresh_mode": "search"|"search_claude", "refresh_mode_set": bool (read only, true once picked)}
+GET/PUT /api/settings/display {"show_macros","show_micros","show_split","show_macro_bar","show_table","micros_open": bool, "micros_shown": [nutrient...], "today_view": "list"|"table", "search_source": "all"|"off"|"fdc"|"ai", "recipe_owner": "mine"|"shared"|"all", "refresh_mode": "search"|"search_claude", "refresh_mode_set": bool (read only, true once picked)}
         # per user, stored in the settings table (micros_hidden comma list). PUT takes any subset, booleans only (today_view is the string list or table), 400 otherwise.
         # today_view is the Today tab's view, column settings.today_view TEXT NOT NULL DEFAULT 'list', added in place by core.init.
         # Defaults: everything shown, micros_open false (the new section starts collapsed), so existing users see no change.
         # search_source is the Default Search Source (column settings.search_source TEXT NOT NULL DEFAULT 'all', added in place).
-        # auto_match is Auto-Match After Import (column settings.auto_match TEXT NOT NULL DEFAULT 'search', added in place; core.AUTO_MATCHES = search, claude, search_claude, off, a plain TEXT column so new values need no migration;
+        # auto_match (Auto-Match After Import) was removed in issue #56: never returned, PUT ignores it like group_recipes (core.LEGACY_DISPLAY),
+        # older databases keep the settings.auto_match column unread and new ones do not create it.
         # refresh_mode is Refresh Nutrients (column settings.refresh_mode TEXT NOT NULL DEFAULT 'search', added in place; core.REFRESH_MODES = search, search_claude; PUT 400 on any other value, a bad stored value reads as search; per user).
-        # anything else is 400, a bad stored value reads as search). See "Auto-Match After Import" below.
 GET/PUT /api/goals/micros  GET -> {"micros": [{"key","label","unit","kind": "goal"|"limit","default","target"}]}
         PUT {"targets": {nutrient: number > 0 and <= 100000}} (any subset). Table micro_targets(user_id, nutrient, target).
         Defaults and kinds (fixed): fiber 28 g, potassium 4700 mg, calcium 1300 mg, iron 18 mg, vitamin D 20 mcg are goals;
@@ -739,6 +739,7 @@ POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log i
 
 ## Auto-Match After Import
 
+- Removed in issue #56 (v83): the setting, `autoRun`, the plans and the banner are gone. See Match and Match With Claude. Kept for history.
 - v77: runs on the recipe screen right after Save Recipe (Recipe First); Match Selected below now reads Match All, and nothing is ticked.
 - v78 (Match Ingredients Prompt, below): nothing runs after Save Recipe any more. The setting now sets what the recipe screen's Match Ingredients button does. Every statement below that says matching runs after save, once, or through `autoRun` and `takeAuto` is superseded; the plans, routes, confirm, cap and Full Claude Use rules are unchanged.
 
@@ -797,7 +798,8 @@ POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log i
   uses the normal reservation and the monthly cap (never exceeded: at the cap nothing is sent and one quiet note says "Monthly Claude limit
   reached, so Claude was not used.", util.js `CLAUDE_CAP_NOTE`); with Confirm before using Claude on the usual notice with the estimated cost
   comes first, with it off it runs quietly (util.js `autoClaudePlan` gives off, cap, confirm or run; notice.js `autoClaude`).
-  1. Auto-Match After Import (ai_allow_recipe): util.js `effectiveAutoMatch` turns Search (or an unset or bad value) into Search Then Claude;
+  1. (Issue #56: superseded by Match With Claude, which under Full Claude Use asks Claude about every unmatched row except a food from a previous
+     recipe; the setting and `effectiveAutoMatch` are gone. The rest of this item is history.) Auto-Match After Import (ai_allow_recipe): util.js `effectiveAutoMatch` turns Search (or an unset or bad value) into Search Then Claude;
      an explicit Claude, Search Then Claude or Off is never changed (a stored explicit "search" is the default and cannot be told from a choice, so it
      is treated as unset). Issue #40: Search Then Claude used to ask Claude only about rows Search left without a proposal, and real USDA and Open Food
      Facts data proposes something for every row, so Claude never ran and nothing said so (the mocks only missed a row or two). Under Full Claude Use
@@ -832,8 +834,8 @@ POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log i
      (`refreshFallbackNote(reason)`: "Search Then Claude is not available, so Search Only ran. <reason>"), shown with the result. When Full Claude Use only
      made it the default the fallback is silent, except for a note at the cap. The cost notice and confirm follow `refreshClaudePlan`: the usual notice when Confirm before
      using Claude is on, nothing when off, one quiet note at the cap. The hint states both defaults. Claude values stay estimates (foods.ai_micros).
-  4. Import Recipe, Read With Claude (ai_allow_recipe), text and photos (v61, issue #35), sends at once without the confirm notice, and
-     the Auto-Match After Import Claude step right after it runs with no confirm and no extra tap. The line under the text button shows
+  4. Import Recipe, Read With Claude (ai_allow_recipe), text and photos (v61, issue #35), sends at once without the confirm notice
+     (matching no longer follows an import, see Match and Match With Claude). The line under the text button shows
      the cost beforehand ("Up to about 0.11 cents per import ... N of M Claude requests left this month."); at the cap the buttons are
      disabled with the cap note, and a 429 shows that note. The label photo, typed lookup, Match Selected With Claude, Ask Claude on a row
      and the bulk Refresh Nutrients batches keep the Confirm before using Claude behavior.
@@ -1152,6 +1154,7 @@ GET    /api/photos/{name}  -> image/jpeg, Cache-Control "private, max-age=315360
   `matchAmount`, else one label serving with Check Amount). One compact line per ingredient: amount, unit and name, the note muted, the
   chip (Matched, Suggested or Claude Suggests, Check Amount, Not Matched, Skipped) and the food or suggestion with source, Estimated Weight tag
   and check reason in small text. Totals (per serving line, not counted note, portions) follow every change at once.
+- Issue #56 (v83) supersedes Match All, Review One By One, the banner, Accept N Suggested Matches and the row buttons below; see Match and Match With Claude.
 - Match All: a split button, the main part Match All (Search, free, up to 40 rows), the arrow menu Match All With Search, Match All With
   Claude (every unmatched row except From Previous Recipe suggestions, up to 15), Search Then Claude, Review One By One (`matchAllPlan`,
   `searchIds`, `claudeIds`). Shown while any row is unmatched. Review One By One (`reviewOrder`, `reviewNext`) walks unmatched and suggested
@@ -1168,6 +1171,7 @@ GET    /api/photos/{name}  -> image/jpeg, Cache-Control "private, max-age=315360
 
 ## Match Ingredients Prompt (v78, issue #51)
 
+- Issue #56 (v83) replaces the banner, the split button and the setting with one Match block; Continue Without Matching and its storage stay. Kept for history.
 - Save Recipe only saves. No matching, search or Claude call runs on save or on opening a recipe. `ctx.flow.takeAuto`, `state.autoMatch` and the
   ingredient section's `autoRun` are removed.
 - Banner: at the top of the recipe screen's Ingredients (ingrows.js, pure helpers `matchPromptCount`, `matchPromptShows`, `matchPromptText` in
@@ -1245,3 +1249,47 @@ GET    /api/photos/{name}  -> image/jpeg, Cache-Control "private, max-age=315360
 - Known limit: a recipe log part (entries) keeps only its food, amount and unit, so a grams estimate logged from a recipe shows no Estimated
   Weight tag on the recipe log.
 - Tests: tests/test_import_units.py, tests/ui/importunits.test.mjs, updated count, package and review tests. Shell cache macrolog-shell-v82.
+
+## Match and Match With Claude (v83, issue #56)
+
+- Goal: one way to start matching, not two. The not matched banner, Match All (a split button with an arrow menu), Review One By One as a separate
+  entry, Accept N Suggested Matches and the Settings, Display choice Match Ingredients (auto_match) are removed.
+- The Match block (js/ingrows.js, pure helpers in js/rowmatch.js) sits at the top of the recipe screen's Ingredients: the count line (`matchedLine`,
+  "3 of 8 matched, 1 to check, 2 suggested"), `checkBlock`, then a choice and one action. The choice is a two segment control (`MATCH_MODES`,
+  `matchModes(aiOn)`, `matchMode`; chip buttons with aria-pressed in a group labelled How to match): Match, the default, and Match With Claude,
+  offered only when Claude is usable (a key and the ai_allow_recipe switch). Without Claude the segments are left out and the action reads Match;
+  with Claude it reads Start. Choosing and tapping Start is the confirmation: no dialog, no cost line and no warning text, whatever Confirm before using
+  Claude says (that setting still covers the other Claude steps). Continue Without Matching sits under it.
+- `matchBlock(meal, props, {edit, expanded})` decides { choice, dismiss, link }. The choice shows to an editor while any row is open (`openCount`:
+  unmatched or with a suggestion waiting). Continue Without Matching (PATCH match_prompt_dismissed true, unchanged storage) hides the choice for that
+  recipe and leaves a small Match link next to the count line; the link shows the choice again for the visit (nothing is stored). Rows keep every
+  action after a dismissal. Nothing runs on Save Recipe or on opening a recipe.
+- Match: the free search (POST match-search, an earlier recipe's food first as before) for every unmatched row without a food suggested
+  (`searchIds`, 40 per request, `chunks`), then the walk. The walk (`reviewOrder`, `reviewNext`, `reviewPos`) shows one open row at a time in a panel in
+  place of the list (the list and Add Ingredient are hidden while it runs): "Ingredient 2 of 5", the line, the best pick with its chip, source and
+  Estimated Weight tag (or "No match found."), then Accept (only with a pick), Search Again (the inline search), Scan Barcode (the scanner; the finder
+  returns to the recipe screen) and Use Claude (with Claude only, one tap), and Skip (leave it for later) and Finish. A row with no pick yet gets one search
+  when it is shown. The walk's place is kept for the session (app.js `ctx.flow.walk(mealId)`), so it goes on after Scan Barcode at the same row, or the
+  next one when that row was matched. Finish, or the last row, ends it: the list comes back, the Ingredients heading takes focus and a note says
+  "Matched 5 ingredients. 2 ingredients are still open." (`walkDoneText`).
+- Match With Claude asks nothing: the same search, then Claude (POST /api/recipes/{id}/match, 15 rows per request) for every unmatched row
+  without a confident suggestion (`claudeIds`; under Full Claude Use every unmatched row except a food from a previous recipe), then every row whose
+  suggestion is confident is accepted in one PATCH items (`confidentIds`, `isConfident`). Claude finding nothing keeps a search suggestion
+  (`claudeKeep`). The rest stay as suggestions on their rows (Suggested or Claude Suggests chip, Accept on the row) or Not Matched. The note says
+  "Matched 6 ingredients. 2 suggestions are waiting for a look. ... 1 ingredient had no match." (`claudeDoneText`). The monthly cap is read from
+  GET /api/ai/status first: at the cap nothing goes to Claude, confident search picks are still accepted and `CLAUDE_CAP_NOTE` is added. A Claude
+  failure stops the Claude step with `AUTO_CLAUDE_FAILED`; a search failure adds `AUTO_MATCH_FAILED`. Nothing blocks the page.
+- Confidence (server, no new route): every match and match-search proposal carries `confident`. Search: true for a food from a previous recipe or the
+  same name (class 2, "Same name in ..."), false for a closest name or nothing. Claude: MATCH_TOOL rows gain a required `match_confidence`
+  (low, medium or high; no union, the schema keeps 9 of 16), and a chosen candidate is confident at medium or high, the existing
+  `units.AI_CONFIDENT` threshold used for Claude weights. An estimate, no choice, or an earlier recipe's food Claude passed on is never confident.
+  A confident pick that needs a Check Amount is accepted as a Check Amount row, so it still shows in "N to check".
+- Rows (`rowActions`, `ACTION_LABELS`): unmatched keeps + (Find Match, the free search for that row) and, with Claude, the Claude sparkle (Use Claude),
+  both a single tap with no dialog; its menu has Search Again, Scan Barcode, More Options (the full finder with Enter Manually), Skip and Remove.
+  Suggested shows Accept; its menu has Search Again, Scan Barcode, Use Claude, More Options, Skip and Remove. Accepted rows have Change, Scan Barcode,
+  More Options, Edit Amount, Enter Grams, Skip and Remove in the menu; Check Amount keeps Edit Amount on the row.
+- Removed client helpers: util.js `AUTO_MATCHES`, `autoMatch`, `effectiveAutoMatch`, `DEFAULT_DISPLAY.auto_match`; recipeimport.js `autoMatchOn`,
+  `autoMatchPlan`, `autoMatchIds`, `autoClaudeBatch`, `claudeOffNote` and its notes, `AUTO_CLAUDE_CANCELLED`, `matchDoneText`, `pendingProposals`,
+  `acceptAllText`, `previousCountText`; rowmatch.js `MATCH_ALL_MODES`, `matchAllPlan`, `moreText` and the banner helpers. The split button styles are gone.
+- Tests: tests/test_match_confident.py, tests/test_micros.py (auto_match ignored, old column kept, new databases without it), tests/ui/rowmatch.test.mjs,
+  tests/ui/fullclaude.test.mjs, tests/ui/recipematch.test.mjs, tests/test_static_shell.py. Shell cache macrolog-shell-v83.
