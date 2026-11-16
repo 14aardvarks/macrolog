@@ -4,7 +4,7 @@ import { api } from './api.js';
 import { h, clear, field, message, show, select } from './dom.js';
 import { MEALS, MEAL_LABELS, fmtNum, pageOf, PAGE_SIZE, stepsCheck, amountMemo, SAVED_FILTERS, SAVED_FILTER_LABELS, filterSavedItems,
   RECIPE_SORTS, RECIPE_SORT_LABELS, sortRecipes, sentence, RECIPE_OWNERS, RECIPE_OWNER_LABELS, recipeOwner, filterRecipeOwner, ownerText,
-  ownerEmptyText, groupRecipesByMeal, pageGroups } from './util.js';
+  ownerEmptyText } from './util.js';
 import { recipeListSub, notCounted, notCountedText, servingsText, perServingText, tagsText, portionUnits, portionFraction, portionAmount, yieldText } from './recipeimport.js';
 import { servingSizeEditor } from './servingsize.js';
 import { ingredientSection } from './ingrows.js';
@@ -64,7 +64,7 @@ function recipeCard(m, open, act) {
 }
 
 // The chosen meal filter and sort stay for the session (this module lives as long as the page); the search text does not.
-const listView = { meal: 'all', sort: 'name', deletedOpen: false };
+const listView = { meal: 'all', sort: 'recent', deletedOpen: false };
 
 // ctx: { go, back, newRecipe(), importRecipe(), defaultMeal(), display, saveDisplay(patch) }
 // The owner filter (Mine, Shared With Me, All) is the Display setting recipe_owner, saved when it changes.
@@ -119,16 +119,9 @@ export async function renderRecipes(root, ctx) {
     if (!mine.length) { listBox.appendChild(message(ownerEmptyText(owner))); return; }
     const items = sortRecipes(filterSavedItems(mine, query, listView.meal, (r) => r.name), listView.sort);
     if (!items.length) { listBox.appendChild(h('p', { class: 'sub', role: 'status' }, sentence('No recipes match your search'))); return; }
-    let more;
-    if (ctx.display && ctx.display.group_recipes === false) {
-      const page = pageOf(items, shown);
-      more = page.more;
-      listBox.appendChild(grid(page.items));
-    } else {
-      const page = pageGroups(groupRecipesByMeal(items, listView.meal), shown);
-      more = page.more > 0;
-      for (const g of page.groups) listBox.appendChild(h('div', { class: 'recipe-group' }, h('h2', { class: 'group' }, g.label), grid(g.items)));
-    }
+    const page = pageOf(items, shown);
+    listBox.appendChild(grid(page.items));
+    const more = page.more;
     if (more) listBox.appendChild(h('button', { class: 'btn show-more', type: 'button', onclick: () => { shown += PAGE_SIZE; paint(); } }, 'Show More'));
   }
   paint();

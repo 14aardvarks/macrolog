@@ -114,7 +114,8 @@ CREATE TABLE IF NOT EXISTS micro_targets(
 """
 # Display switches in the settings table. Every default keeps the screens as they were before the switches existed;
 # the new Micro Nutrients section starts collapsed. micros_hidden is a comma list of hidden nutrients.
-DISPLAY_FLAGS = {"show_macros": 1, "show_micros": 1, "show_split": 1, "show_macro_bar": 1, "show_table": 1, "micros_open": 0, "group_recipes": 1}
+DISPLAY_FLAGS = {"show_macros": 1, "show_micros": 1, "show_split": 1, "show_macro_bar": 1, "show_table": 1, "micros_open": 0}
+LEGACY_DISPLAY = ("group_recipes",)  # removed Display setting: old databases keep the column (never read), old clients may still send it, and it is ignored
 TODAY_VIEWS = ("list", "table")  # the Today tab's default view, stored as settings.today_view
 START_SOURCES = ("all", "off", "fdc", "ai")  # the Add search Source to start with, stored as settings.search_source
 REFRESH_MODES = ("search", "search_claude")  # Refresh Nutrients: Search Only (source lookups, free) or Search Then Claude; stored as settings.refresh_mode (plain TEXT, validated here)
@@ -177,6 +178,8 @@ def init(c: sqlite3.Connection) -> None:
         c.execute("ALTER TABLE meals ADD COLUMN source_url TEXT")
     if "match_prompt_dismissed" not in {r[1] for r in c.execute("PRAGMA table_info(meals)")}:  # databases made before the match prompt (null = not dismissed)
         c.execute("ALTER TABLE meals ADD COLUMN match_prompt_dismissed INTEGER")
+    if "updated_at" not in {r[1] for r in c.execute("PRAGMA table_info(meals)")}:  # databases made before the Recipes list sorted by last edit (null = never edited, created_at counts)
+        c.execute("ALTER TABLE meals ADD COLUMN updated_at TEXT")
     purge_deleted(c)  # at startup: recipes deleted more than RECIPE_PURGE_DAYS ago go for good
     if "user_id" not in {r[1] for r in c.execute("PRAGMA table_info(recipe_logs)")}:  # who logged it; null (older logs) means the owner
         c.execute("ALTER TABLE recipe_logs ADD COLUMN user_id INTEGER")
@@ -1079,7 +1082,7 @@ def get_display(user: CurrentUser):
 @router.put("/settings/display")
 def put_display(user: CurrentUser, body: dict = Body(...)):
     """Per user show/hide switches. Send any subset; micros_shown is the list of nutrients to show."""
-    if not (set(DISPLAY_FLAGS) | {"micros_shown", "today_view", "search_source", "auto_match", "recipe_owner", "refresh_mode"}) & body.keys():
+    if not (set(DISPLAY_FLAGS) | set(LEGACY_DISPLAY) | {"micros_shown", "today_view", "search_source", "auto_match", "recipe_owner", "refresh_mode"}) & body.keys():
         raise bad("Nothing to update: send " + ", ".join(DISPLAY_FLAGS) + ", micros_shown, today_view, search_source, auto_match, recipe_owner or refresh_mode")
     with db.conn() as c:
         d = read_display(c, user["id"])
@@ -1543,7 +1546,8 @@ def meal_dict(c, row, user: dict | None = None) -> dict:
             "ingredient_grams": ingredient_grams(items, complete),
             "shared": bool(row["shared"]), "match_prompt_dismissed": bool(row["match_prompt_dismissed"]) if "match_prompt_dismissed" in row.keys() else False,
             "source_url": row["source_url"] if "source_url" in row.keys() else None,
-            "photo": row["photo"] if "photo" in row.keys() else None, "mine": mine, "can_edit": mine or bool(user and user.get("is_admin")),
+            "photo": row["photo"] if "photo" in row.keys() else None, "mine": mine,
+            "created_at": row["created_at"], "updated_at": row["updated_at"] if "updated_at" in row.keys() else None, "can_edit": mine or bool(user and user.get("is_admin")),
             "owner": {"id": row["user_id"], "name": owner_name(c, row["user_id"])}}
 
 
@@ -1626,6 +1630,11 @@ def writable_meal(c, user: dict, meal_id: int):
     if row["user_id"] != user["id"] and not user.get("is_admin"):
         raise HTTPException(403, "Only the owner or an admin can change this recipe. Duplicate it to make your own copy.")
     return row
+
+
+def touch_meal(c, meal_id: int) -> None:
+    """Mark a recipe as edited now. Same text format as created_at (UTC, sortable as text) with fractions of a second."""
+    c.execute("UPDATE meals SET updated_at=strftime('%Y-%m-%d %H:%M:%f','now') WHERE id=?", (meal_id,))
 
 
 def count_log(c, uid: int, meal_id: int, meal: str) -> None:
@@ -1743,6 +1752,8 @@ def patch_meal(meal_id: int, user: CurrentUser, body: dict = Body(...)):
             c.execute("UPDATE meal_items SET position=position+? WHERE meal_id=?", (len(items), meal_id))
             c.executemany("INSERT INTO meal_items(meal_id,food_id,amount,unit,position) VALUES(?,?,?,?,?)",
                           [(meal_id, f["id"], a, u, i) for i, (f, a, u) in enumerate(items)])
+        if {"name", "meals", "items", "servings", "steps", "yield"} & body.keys():  # a real edit; sharing and the prompt flags are not
+            touch_meal(c, meal_id)
         # read back by id: an admin who just made someone else's recipe private still gets the answer to this request
         return meal_dict(c, c.execute("SELECT * FROM meals WHERE id=?", (meal_id,)).fetchone(), user)
 
@@ -2093,6 +2104,7 @@ def patch_meal_item(meal_id: int, item_id: int, user: CurrentUser, body: dict = 
         writable_meal(c, user, meal_id)
         own_item(c, meal_id, item_id)
         apply_item(c, item_id, body, user["id"])
+        touch_meal(c, meal_id)
         return meal_dict(c, writable_meal(c, user, meal_id), user)
 
 
@@ -2124,6 +2136,7 @@ def patch_meal_items(meal_id: int, user: CurrentUser, body: dict = Body(...)):
                 apply_item(c, item_id, rest, user["id"])
             except HTTPException as e:
                 raise HTTPException(e.status_code, f"row {i}: {e.detail}")
+        touch_meal(c, meal_id)
         return meal_dict(c, writable_meal(c, user, meal_id), user)
 
 
@@ -2164,6 +2177,7 @@ def add_meal_item(meal_id: int, user: CurrentUser, body: dict = Body(...)):
                         (meal_id, food_id, amount, unit, len(ids), *src, int(body.get("skipped") is True), int(body.get("check") is True)))
         ids.insert(len(ids) if pos is None else min(pos, len(ids)), cur.lastrowid)
         c.executemany("UPDATE meal_items SET position=? WHERE id=?", [(i, x) for i, x in enumerate(ids)])
+        touch_meal(c, meal_id)
         return {**meal_dict(c, row, user), "added": cur.lastrowid}
 
 
@@ -2176,6 +2190,7 @@ def delete_meal_item(meal_id: int, item_id: int, user: CurrentUser):
         if c.execute("SELECT COUNT(*) FROM meal_items WHERE meal_id=?", (meal_id,)).fetchone()[0] <= 1:
             raise HTTPException(409, "A recipe needs at least one ingredient. Delete the recipe instead.")
         c.execute("DELETE FROM meal_items WHERE id=?", (item_id,))
+        touch_meal(c, meal_id)
         return meal_dict(c, row, user)
 
 
@@ -2188,6 +2203,7 @@ def delete_uncounted_items(meal_id: int, user: CurrentUser):
         if not c.execute("SELECT 1 FROM meal_items WHERE meal_id=? AND food_id IS NOT NULL AND skipped=0 AND needs_check=0", (meal_id,)).fetchone():
             raise bad("A recipe needs at least one ingredient. Match one, or keep the others to finish later.")
         c.execute("DELETE FROM meal_items WHERE meal_id=? AND NOT (food_id IS NOT NULL AND skipped=0 AND needs_check=0)", (meal_id,))
+        touch_meal(c, meal_id)
         return meal_dict(c, row, user)
 
 

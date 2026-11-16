@@ -4,7 +4,7 @@ import {
   MEALS, MEAL_LABELS, parseDecimal, parseAmount, amountText, servingText, qtyText, amountMemo, setAmountFormat, unitLabel, fmtNum, fmtAmount, groupByMeal, mealGroupsAll, quickLabel, checkedItems, canSaveRecipe, rowAmountText, applyRowPick, draftFits, localDate, progressText, remainingText,
   sentence, matchAmount, newRecipeDraft, recipeAddRow, recipeSetRow, stepsBack, barWidth, barState, debounce, digitsOnly, guessMeal, pctTotal, latestGuard, MEAL_FILTERS, MEAL_FILTER_LABELS, filterByMeal, filterSaved, pageOf, PAGE_SIZE, emptyText,
   entryKey, todayHold, holdFresh, holdTarget, DEFAULT_DISPLAY, searchSource, searchAction, searchHint, DESCRIPTION_TEXT, aiFeature, aiFeatureOff, searchSources, startSource,
-  ownerText, groupRecipesByMeal, pageGroups, MAX_AI_TEXT, CLAUDE_CAP_NOTE, FALLBACK_TEXT, FALLBACK_FAILED,
+  ownerText, sortRecipes, MAX_AI_TEXT, CLAUDE_CAP_NOTE, FALLBACK_TEXT, FALLBACK_FAILED,
 } from './util.js';
 import { microSection, displaySection, microTargets } from './micros.js';
 import { viewToggle, dayTable } from './daytable.js';
@@ -694,19 +694,7 @@ async function recipesList(meal) {  // my recipes and the ones shared with me; o
     const open = () => go('meal', { mealId: m.id, meal: chosenMeal() });
     return foodRow(m.name, [recipeSubText(m, fmtNum(m.kcal, 0)), ownerText(m)].filter(Boolean).join(' · '), open, del, null, null, null, recipeThumb(m));
   };
-  if (meal !== 'all' || state.display.group_recipes === false) return paged(recipes, (page) => h('ul', { class: 'list' }, page.map(rowOf)));
-  // With All and Group Recipes By Meal on, headings per meal tag; a recipe with several tags shows under each.
-  const groups = groupRecipesByMeal(recipes);
-  const box = h('div');
-  let shown = PAGE_SIZE;
-  const paint = () => {
-    const page = pageGroups(groups, shown);
-    clear(box);
-    for (const g of page.groups) box.appendChild(h('div', null, h('h2', { class: 'group' }, g.label), h('ul', { class: 'list' }, g.items.map(rowOf))));
-    if (page.more) box.appendChild(h('button', { class: 'btn', type: 'button', onclick: () => { shown += PAGE_SIZE; paint(); } }, 'Show More'));
-  };
-  paint();
-  return box;
+  return paged(sortRecipes(recipes, 'recent'), (page) => h('ul', { class: 'list' }, page.map(rowOf)));
 }
 
 // ---------- lookup result, recipe checklist ----------

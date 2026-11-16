@@ -72,17 +72,43 @@ test('twenty per section then more', () => {
   assert.equal(pageOf(list, PAGE_SIZE * 3).more, 0);
 });
 
-test('sortRecipes by name, newest and most used', async () => {
+test('sortRecipes by recent, name and most used', async () => {
   const { sortRecipes, recipeUses, RECIPE_SORTS, RECIPE_SORT_LABELS } = await import('../../app/static/js/util.js');
   const r = [{ id: 1, name: 'banana bread', counts: { lunch: 2, dinner: 1 } }, { id: 3, name: 'Apple Pie' }, { id: 2, name: 'Chili', counts: { dinner: 3 } }, { id: 4, name: 'apple pie' }];
   const ids = (s) => sortRecipes(r, s).map((x) => x.id);
   assert.deepEqual(ids('name'), [3, 4, 1, 2]);
-  assert.deepEqual(ids('newest'), [4, 3, 2, 1]);
+  assert.deepEqual(ids('recent'), [4, 3, 2, 1]);  // no dates: the highest id first
+  assert.deepEqual(ids('newest'), [3, 4, 1, 2]);  // the old name is gone, so it falls back to name
   assert.deepEqual(ids('used'), [1, 2, 3, 4]);
   assert.deepEqual(ids('bogus'), [3, 4, 1, 2]);
   assert.equal(recipeUses(r[0]), 3);
   assert.equal(recipeUses({}), 0);
   assert.deepEqual(sortRecipes(null, 'name'), []);
   assert.deepEqual(r.map((x) => x.id), [1, 3, 2, 4]);
-  assert.deepEqual(RECIPE_SORTS.map((s) => RECIPE_SORT_LABELS[s]), ['Name (A to Z)', 'Newest', 'Most Used']);
+  assert.deepEqual(RECIPE_SORTS.map((s) => RECIPE_SORT_LABELS[s]), ['Recent', 'Name (A to Z)', 'Most Used']);
+});
+
+test('recent sort uses last edited, falls back to created, then the highest id', async () => {
+  const { sortRecipes, recipeStamp } = await import('../../app/static/js/util.js');
+  const r = [
+    { id: 1, name: 'A', created_at: '2026-01-01 10:00:00', updated_at: '2026-03-01 09:00:00.500' },
+    { id: 2, name: 'B', created_at: '2026-02-01 10:00:00', updated_at: null },
+    { id: 3, name: 'C', created_at: '2026-03-01 09:00:00', updated_at: null },
+    { id: 4, name: 'D', created_at: '2026-03-01 09:00:00', updated_at: null },
+    { id: 5, name: 'E' },
+  ];
+  assert.deepEqual(sortRecipes(r, 'recent').map((x) => x.id), [1, 4, 3, 2, 5]);
+  assert.equal(recipeStamp(r[1]), '2026-02-01 10:00:00');
+  assert.equal(recipeStamp(r[0]), '2026-03-01 09:00:00.500');
+  assert.equal(recipeStamp(null), '');
+  assert.equal(sortRecipes(r, 'recent')[0].id, 1);
+});
+
+test('the Recipes list code has no grouping or group_recipes left', async () => {
+  const fs = await import('node:fs');
+  const util = await import('../../app/static/js/util.js');
+  assert.equal(util.groupRecipesByMeal, undefined);
+  assert.equal(util.pageGroups, undefined);
+  assert.equal('group_recipes' in util.DEFAULT_DISPLAY, false);
+  for (const f of ['recipes.js', 'app.js', 'micros.js']) assert.ok(!/group_recipes|groupRecipesByMeal/.test(fs.readFileSync(new URL('../../app/static/js/' + f, import.meta.url), 'utf8')), f);
 });

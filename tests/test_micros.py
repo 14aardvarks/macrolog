@@ -146,7 +146,7 @@ def test_migration_adds_micro_columns_and_display_settings(tmp_path):
 def test_display_defaults_keep_screens_as_before(a):
     d = a.get("/api/settings/display").json()
     assert d == {"show_macros": True, "show_micros": True, "show_split": True, "show_macro_bar": True, "show_table": True,
-                 "group_recipes": True, "micros_open": False, "micros_shown": list(core.MICROS), "today_view": "list",
+                 "micros_open": False, "micros_shown": list(core.MICROS), "today_view": "list",
                  "search_source": "all", "auto_match": "search", "recipe_owner": "mine", "refresh_mode": "search", "refresh_mode_set": False}
 
 
@@ -342,12 +342,25 @@ def test_refresh_mode_set_migration_keeps_old_saved_values(tmp_path, monkeypatch
     assert core.read_display(c, 2)["refresh_mode_set"] is False  # a plain stored search stays the default
 
 
-def test_display_group_recipes_default_validation_and_per_user(a, b):
-    assert a.get("/api/settings/display").json()["group_recipes"] is True
-    assert a.put("/api/settings/display", json={"group_recipes": False}).json()["group_recipes"] is False
-    assert a.get("/api/settings/display").json()["group_recipes"] is False
-    assert b.get("/api/settings/display").json()["group_recipes"] is True
-    for bad in ("no", 0, None):
-        assert a.put("/api/settings/display", json={"group_recipes": bad}).status_code == 400
-    assert a.get("/api/settings/display").json()["group_recipes"] is False
-    assert a.put("/api/settings/display", json={"group_recipes": True}).json()["group_recipes"] is True
+def test_removed_group_recipes_setting_is_ignored(a):
+    """The Group Recipes By Meal setting is gone: never returned, an old client may still send it, an old stored value is harmless."""
+    assert "group_recipes" not in a.get("/api/settings/display").json()
+    r = a.put("/api/settings/display", json={"group_recipes": False})  # a stale cached client
+    assert r.status_code == 200 and "group_recipes" not in r.json()
+    r = a.put("/api/settings/display", json={"group_recipes": "junk", "show_split": False})
+    assert r.status_code == 200 and r.json()["show_split"] is False and "group_recipes" not in r.json()
+
+
+def test_old_group_recipes_column_is_left_alone(tmp_path, monkeypatch):
+    import sqlite3
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "old3.db"))
+    c = sqlite3.connect(tmp_path / "old3.db")
+    c.executescript("CREATE TABLE settings(user_id INTEGER PRIMARY KEY, start_screen TEXT NOT NULL DEFAULT 'today', default_meal TEXT,"
+                    " group_recipes INTEGER NOT NULL DEFAULT 1); INSERT INTO settings(user_id, group_recipes) VALUES(1, 0), (2, 1);")
+    c.row_factory = sqlite3.Row
+    core.init(c)
+    core.init(c)
+    for uid in (1, 2):
+        d = core.read_display(c, uid)
+        assert "group_recipes" not in d and d["show_macros"] is True
+    assert c.execute("SELECT group_recipes FROM settings WHERE user_id=1").fetchone()[0] == 0  # kept as stored, never read
