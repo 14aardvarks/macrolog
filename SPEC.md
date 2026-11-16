@@ -856,6 +856,9 @@ POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log i
 
 ## Count, a Blank Unit and Typed Units (v61 issue #34, v62 issue #36)
 
+- Issue #55 (v82) supersedes the unit control parts below: dom.js `unitControl` has no Custom choice and no typed unit box; the review and
+  recipe screen pickers list only weights and volumes, and Claude's import no longer returns count. See Import Units Are Weights and Volumes.
+
 - Issue #36 (v62): the Count unit shows lowercase, "count", in every unit selector and everywhere it is displayed (units.LABELS, util.js
   unitChoices, IMPORT_UNITS). The None choice is gone: every unit control (import review row, Match Ingredients amount editor, picker) ends
   with Custom, which reveals a text box ("Your Unit", placeholder "shell, scoop, splash" since v71) for the user's own unit; empty stays blank. dom.js
@@ -899,7 +902,7 @@ POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log i
   - `recipe_ai.clean_unit` returns a known unit or None. `units.match_amount(food, amount, unit, custom=True)`: with custom=False (`fit_amount`,
     used by Claude match and match-search proposals) a typed word that is not the label's own count word counts as a plain count. A line unit of None
     or blank with an amount is count already; the same for `matchAmount` in util.js (no Check Amount, label count word else servings).
-  - Prompts: `recipe_ai.UNIT_NAMES` (g kg oz lb ml l floz cup tbsp tsp count) is listed in the import instruction (text, photos, URL) as "Use only these
+  - Prompts (superseded for imports by issue #55, which lists only the measures; the match prompt keeps this list as MATCH_UNIT_NAMES): `recipe_ai.UNIT_NAMES` (g kg oz lb ml l floz cup tbsp tsp count) is listed in the import instruction (text, photos, URL) as "Use only these
     units", with "Use count when the line gives no unit" and the to taste rule; the unit, amount and note schema descriptions and the match tool's
     unit description say the same. The schema keeps plain strings, so the strict union count is unchanged and the server enforces the list.
   - Client: the splitter gives count for an amount with no unit and moves an unknown unit word (clove, can) into the name; `reviewBody` saves count for
@@ -921,8 +924,9 @@ POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log i
   sprig pinch dash handful piece fillet rib stalk), with plurals and aliases (pkg, pkt, tin, pcs, filet), are in `units.KNOWN`. `line_unit` keeps
   them as the unit and never changes the name; unknown words still become count. `core.import_row` stores known units canonical ("Cloves" is
   clove). `units.unit_word` and util.js `unitWord` give the simple plural above 1 ("2 cloves garlic", "3 pinches"), used by amountText,
-  ingredientText, rowText, cookIngredient and import_row's built text. `recipe_ai.UNIT_NAMES` and the prompts list them (prompt text only, the
-  strict schema keeps plain strings); `clean_recipe` enforces through `line_unit`. The review unit select (IMPORT_UNITS) offers them.
+  ingredientText, rowText, cookIngredient and import_row's built text. `recipe_ai.MATCH_UNIT_NAMES` and the match prompt list them (prompt text
+  only, the strict schema keeps plain strings). Since issue #55 the import prompt and the review unit select (IMPORT_UNITS) no longer offer
+  them; `clean_recipe` converts a stray one (see Import Units Are Weights and Volumes).
   `ingredients.py` strips them from name keys, and Search ranks with and without them (`ingredients.core_words`), so "garlic cloves" matches Garlic.
   `ingredients.singular` also turns ches, shes, xes and sses into the singular (peaches, boxes).
 - Step 3, printed sizes: `units.printed_size(text)` (util.js `printedSize`) reads "1 (15 oz) can", "2 (8-ounce) packages", "1 stick (113 g)",
@@ -1119,8 +1123,8 @@ GET    /api/photos/{name}  -> image/jpeg, Cache-Control "private, max-age=315360
 ## Recipe First (v77, issue #49)
 
 - Import: Read With Claude, Split Lines Without Claude or a web address gives a short review (js/recipeflow.js `renderReview`): name and
-  servings side by side, then one compact row per ingredient (v81): an amount box, a unit selector (count first, the measures, package and
-  fuzzy units, and Custom for a unit you type, which stays as typed; Custom left empty is a blank unit, as on a to taste line), the
+  servings side by side, then one compact row per ingredient (v81): an amount box, a unit selector (since issue #55 the weights and volumes, "no unit" for a
+  to taste line, and the row's own older unit kept as an extra option; no Custom), the
   name and a note, with one x to remove. On a phone the amount and unit share the first line with the x and the name and note share the
   second; on a wide screen it is one line. Fields write straight into the row, so an untouched amount keeps the exact stored number
   (`amountBoxValue`, the box text follows the fraction or decimal setting) until its text is edited. Add Ingredient adds an empty row,
@@ -1199,3 +1203,45 @@ GET    /api/photos/{name}  -> image/jpeg, Cache-Control "private, max-age=315360
 - Prompt after a log. POST /api/meals/{id}/log answers `photo_prompt: true` once per recipe, to the owner only, when Allow Photos is on, the recipe has neither an upload nor a link, and `photo_prompt_dismissed` is not set; answering true sets the flag in the same transaction, so a second log, a reload or another device never asks again, and a log that fails or runs with photos off does not use it up. PATCH `photo_prompt_dismissed` (bool, not an edit) lets a client set or reset it. The client (`photoprompt.js showPhotoPrompt`, called after Log on the recipe screen and on Add's recipe checklist) shows a polite status bar above the bottom nav with "Add a photo of <name>?", a Take Photo button (the capture picker, crop, upload; then "Photo saved.") and Dismiss; it stays 15 seconds, pauses on hover or focus, Escape closes it. Not a push notification. It reuses the Undo bar styles.
 - Duplicate copies `photo_url` (and the uploaded file as before) and does not copy `photo_prompt_dismissed`, so the copy may ask once itself. Delete and Restore keep both.
 - Shell cache macrolog-shell-v81 (review rows with amount, unit, name and note, issue #54; v80 added js/photoprompt.js). Tests: tests/test_recipe_photo_link.py, tests/ui/recipecards.test.mjs, tests/test_static_shell.py.
+
+## Import Units Are Weights and Volumes (v82, issue #55)
+
+- Goal: Claude turns a count, a package or a fuzzy unit into a weight or volume while reading the recipe, so nobody has to look up what a
+  clove weighs. Count is kept only for lines with no unit on the no Claude path (Split Lines Without Claude) and older stored rows.
+- Prompt and schema: `recipe_ai.UNIT_NAMES` is `units.MEASURES` (g kg oz lb ml l floz cup tbsp tsp). `UNIT_RULE` (text, photo and URL imports)
+  says never count, package or piece words; convert them (g, oz for a can, a volume for a liquid sold by volume), set estimated true and put
+  the original wording first in note (3 cloves); a printed size wins (1 (15 oz) can is 15 oz, estimated false, note 1 can); a can with no size
+  is the standard size. `TYPICAL_WEIGHTS` writes out the useful part of PIECE_GRAMS and PACKAGE_GRAMS in one paragraph (garlic clove 3,
+  egg 50, onion 110, pinch 0.36, can of beans 15 oz, coconut milk 13.5 fl oz, tomato paste 6 oz, diced tomatoes 14.5 oz and so on). IMPORT_TOOL
+  rows gain a required plain boolean `estimated` (no union; the import schema has 5 unions, limit 16). "Do not convert units" became "Do not
+  change a weight or volume the line gives". The match tool and prompt keep the older list (`MATCH_UNIT_NAMES`, count, package and fuzzy units)
+  because stored rows still use them.
+- Server clean up (`recipe_ai.convert_row`, called by `clean_recipe` for every row with an amount): a printed size on the line wins
+  (amount x size in the size unit, exact, "1 can" added to the note). A measure Claude converted is estimated with `est_source` ai when Claude
+  says so or the line's text starts with a count, package or fuzzy unit (`units.was_line`, "a pinch" is 1 pinch); the original wording becomes
+  `was_amount` and `was_unit` and joins the note once (`units.wording`). A stray count, package or fuzzy unit is converted through the typical
+  tables (`core.unit_preview`) into grams with `est_source` table; when nothing knows it the row keeps its unit and the review flags it. Draft
+  rows carry estimated, est_source, was_amount and was_unit.
+- Storage: `meal_items.item_est` TEXT (ai, table or null; added in place, copied by Duplicate). POST /api/meals/import and add item accept
+  `estimated` (bool) and `est_source` (ai or table, default ai), kept only on a weight or volume with an amount; was_amount and was_unit go with
+  an estimate on a weight or a volume (Use Grams still keeps them only on a weight). item_dict's `src` adds estimated, est_source, was_amount,
+  was_unit and, on an unmatched row, `weight_reason` (no_weight or no_size from `unit_preview` when no typical weight knows the count, package
+  or fuzzy unit, else null).
+- Trust order at match time: `recipe_ai.line_pref` (Search, Claude and From Previous Recipe proposals) and util.js `linePick` (the inline search
+  and the food finder) first try the original wording on the chosen food (`units.trusted_was`): a user weight, a USDA or Open Food Facts portion,
+  or the label's own count word (1 egg) replaces the estimate (3 clove, 2 egg). A table or Claude row does not; the line's own weight or volume
+  stays. While a matched row or proposal still holds the line's amount and unit, `core.line_estimate` adds estimated true, estimate_source claude
+  (or table), weight_source ai (or table), weight_note "Estimated by Claude", weight_grams and `line_estimate: true`, so the Estimated Weight
+  tag, the estimate header and check lists show it (util.js `weightTag` shows a grams row only with line_estimate). An import estimate is never
+  saved as the user's weight by a plain match; grams typed in the tag (remember) are, and clear item_est.
+- UI: dom.js `unitControl(choices, value, attrs, {blank})` is a plain select: "no unit" (unless blank false), the choices, and a value that is not
+  a choice kept as one extra option. The review (`IMPORT_UNITS`, `importUnitOptions`) and Edit Amount on the recipe screen (food units filtered
+  by `isMeasureUnit`) list only `RECIPE_UNITS`. The logging picker (picker.js) is unchanged. Review rows keep the estimate while amount and unit
+  are untouched (`rowEstimated`) and show "Estimated by Claude from 3 cloves" (`estimateNote`); reviewBody sends the estimate only then. Words after
+  the number in an amount box (`splitAmountBox`, `tidyAmountBox`, on change and in reviewBody): a measure becomes the unit, anything else joins
+  the note. A count row on the review (`reviewFlag`) and an unmatched row on the recipe screen with weight_reason show `weightReasonLine`: "No
+  standard weight for count, so it shows Check Amount after matching unless the food has a weight per item" (no_size reads "Can size not printed,
+  so it shows Check Amount after matching unless the food has a package weight"). Unmatched estimated rows show a small Estimated cue.
+- Known limit: a recipe log part (entries) keeps only its food, amount and unit, so a grams estimate logged from a recipe shows no Estimated
+  Weight tag on the recipe log.
+- Tests: tests/test_import_units.py, tests/ui/importunits.test.mjs, updated count, package and review tests. Shell cache macrolog-shell-v82.
