@@ -1,6 +1,7 @@
 // Pure helpers for the recipe cards of the Recipes tab (issue #48): the summary line, the accessible name, the chips, the
 // placeholder tone, the grid class and the card menu. No DOM, so node can test them (tests/ui/recipecards.test.mjs).
 import { MEALS, MEAL_LABELS, fmtNum, servingText, plural, ownerText } from './util.js';
+import { photoUrl } from './photomath.js';
 
 // How many ingredient lines a recipe has, from the list route (items, else needed plus skipped).
 export function ingredientCount(meal) {
@@ -52,13 +53,68 @@ export function cardGridClass(photosOn) {
   return photosOn ? 'card-grid' : 'card-grid compact';
 }
 
-// The card menu: Log, Cooking and Duplicate for every recipe I can read; Delete and the photo action only with can_edit,
-// the photo action only while photos are on. Returns [{ key, label }].
+// ---------- recipe photos: an uploaded file or a pasted image link (issue #52) ----------
+
+export const PHOTO_LINK_MAX = 2000;  // same as core.PHOTO_URL_MAX
+
+// A pasted image link as the server stores it, or { error }. Blank clears (url null). Only http and https with a host, no user
+// name or password, no spaces, control characters, quotes or angle brackets, at most PHOTO_LINK_MAX characters. The server checks
+// again and never fetches it.
+export function photoLinkCheck(text) {
+  const v = String(text == null ? '' : text).trim();
+  if (!v) return { url: null };
+  if (v.length > PHOTO_LINK_MAX) return { error: 'Keep the image link to ' + PHOTO_LINK_MAX + ' characters or fewer.' };
+  if (/[\s\u0000-\u001f\u007f-\u009f<>"']/.test(v)) return { error: 'The image link must not contain spaces, quotes or angle brackets.' };
+  let u;
+  try { u = new URL(v); } catch (e) { return { error: 'Enter an image link that starts with http or https.' }; }
+  if ((u.protocol !== 'http:' && u.protocol !== 'https:') || !u.hostname || !/^https?:\/\//i.test(v)) return { error: 'Enter an image link that starts with http or https.' };
+  if (u.username || u.password || u.host.includes('@')) return { error: 'Remove the user name or password from the image link.' };
+  return { url: v };
+}
+
+// The stored link of a recipe when it is a safe http or https link, else null (a bad stored value never reaches an img src).
+export function linkPhotoSrc(meal) {
+  const v = meal && meal.photo_url;
+  if (typeof v !== 'string') return null;
+  const r = photoLinkCheck(v);
+  return r.url === v ? v : null;
+}
+
+// What the recipe shows as its photo: { src, link } or null. An uploaded photo wins over a link, but is only shown while Allow
+// Photos is on (photosOn); a link needs no switch. link true means a hotlink, which the page loads with no referrer.
+export function recipePhotoSrc(meal, photosOn) {
+  const up = photosOn && meal ? photoUrl(meal.photo) : null;
+  if (up) return { src: up, link: false };
+  const link = linkPhotoSrc(meal);
+  return link ? { src: link, link: true } : null;
+}
+
+// The photo actions of the three dot menus. Upload Photo and Take Photo store a file, so they need Allow Photos; Paste Image Link does not.
+// Remove Photo shows when there is something to remove (an upload while photos are on, or a link). [{ key, label }].
+export function photoMenuItems(meal, photosOn) {
+  const m = meal || {};
+  const out = [];
+  if (photosOn) out.push({ key: 'photo-upload', label: 'Upload Photo' }, { key: 'photo-take', label: 'Take Photo' });
+  out.push({ key: 'photo-link', label: 'Paste Image Link' });
+  if ((photosOn && m.photo) || m.photo_url) out.push({ key: 'photo-remove', label: 'Remove Photo', danger: true });
+  return out;
+}
+
+// The label of the photo button on the recipe screen: Add Photo, or Change Photo when the recipe has one.
+export function photoButtonLabel(meal, photosOn) {
+  return recipePhotoSrc(meal, photosOn) ? 'Change Photo' : 'Add Photo';
+}
+
+// The toast after logging a recipe that has no photo, and its Take Photo button.
+export const photoPromptText = (name) => 'Add a photo of ' + String(name || 'this recipe') + '?';
+
+// The card menu: Log, Cooking and Duplicate for every recipe I can read; Delete and the photo actions only with can_edit.
+// Returns [{ key, label }].
 export function cardMenuItems(meal, photosOn) {
   const m = meal || {};
   const edit = m.can_edit !== false;
   const out = [{ key: 'log', label: 'Log' }, { key: 'cooking', label: 'Cooking' }];
-  if (edit && photosOn) out.push({ key: 'photo', label: m.photo ? 'Replace Photo' : 'Add Photo' });
+  if (edit) out.push(...photoMenuItems(m, photosOn));
   out.push({ key: 'duplicate', label: 'Duplicate' });
   if (edit) out.push({ key: 'delete', label: 'Delete' });
   return out;

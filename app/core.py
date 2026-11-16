@@ -180,6 +180,9 @@ def init(c: sqlite3.Connection) -> None:
         c.execute("ALTER TABLE meals ADD COLUMN match_prompt_dismissed INTEGER")
     if "updated_at" not in {r[1] for r in c.execute("PRAGMA table_info(meals)")}:  # databases made before the Recipes list sorted by last edit (null = never edited, created_at counts)
         c.execute("ALTER TABLE meals ADD COLUMN updated_at TEXT")
+    for col, kind in (("photo_url", "TEXT"), ("photo_prompt_dismissed", "INTEGER")):  # databases made before pasted photo links and the post log photo prompt (null = none, not asked)
+        if col not in {r[1] for r in c.execute("PRAGMA table_info(meals)")}:
+            c.execute(f"ALTER TABLE meals ADD COLUMN {col} {kind}")
     purge_deleted(c)  # at startup: recipes deleted more than RECIPE_PURGE_DAYS ago go for good
     if "user_id" not in {r[1] for r in c.execute("PRAGMA table_info(recipe_logs)")}:  # who logged it; null (older logs) means the owner
         c.execute("ALTER TABLE recipe_logs ADD COLUMN user_id INTEGER")
@@ -1547,6 +1550,8 @@ def meal_dict(c, row, user: dict | None = None) -> dict:
             "shared": bool(row["shared"]), "match_prompt_dismissed": bool(row["match_prompt_dismissed"]) if "match_prompt_dismissed" in row.keys() else False,
             "source_url": row["source_url"] if "source_url" in row.keys() else None,
             "photo": row["photo"] if "photo" in row.keys() else None, "mine": mine,
+            "photo_url": row["photo_url"] if "photo_url" in row.keys() else None,
+            "photo_prompt_dismissed": bool(row["photo_prompt_dismissed"]) if "photo_prompt_dismissed" in row.keys() else False,
             "created_at": row["created_at"], "updated_at": row["updated_at"] if "updated_at" in row.keys() else None, "can_edit": mine or bool(user and user.get("is_admin")),
             "owner": {"id": row["user_id"], "name": owner_name(c, row["user_id"])}}
 
@@ -1716,10 +1721,11 @@ def meal_from_meal(user: CurrentUser, body: dict = Body(...)):
 
 @router.patch("/meals/{meal_id}")
 def patch_meal(meal_id: int, user: CurrentUser, body: dict = Body(...)):
-    """Rename, retag (meals), set servings, yield, steps, shared or match_prompt_dismissed, or replace the items list (amounts, units, removed items)."""
-    if not {"name", "meals", "items", "servings", "steps", "yield", "shared", "match_prompt_dismissed"} & body.keys():
-        raise bad("Nothing to update: send name, meals, items, servings, yield, steps, shared or match_prompt_dismissed")
-    for flag in ("shared", "match_prompt_dismissed"):
+    """Rename, retag (meals), set servings, yield, steps, shared, match_prompt_dismissed, photo_prompt_dismissed or photo_url (an
+    image link, null or "" clears it), or replace the items list (amounts, units, removed items)."""
+    if not {"name", "meals", "items", "servings", "steps", "yield", "shared", "match_prompt_dismissed", "photo_prompt_dismissed", "photo_url"} & body.keys():
+        raise bad("Nothing to update: send name, meals, items, servings, yield, steps, shared, match_prompt_dismissed, photo_prompt_dismissed or photo_url")
+    for flag in ("shared", "match_prompt_dismissed", "photo_prompt_dismissed"):
         if flag in body and not isinstance(body[flag], bool):
             raise bad(f"{flag} must be true or false")
     yld = recipe_yield(body["yield"]) if "yield" in body else None
@@ -1727,6 +1733,7 @@ def patch_meal(meal_id: int, user: CurrentUser, body: dict = Body(...)):
     name = meal_name(body) if "name" in body else None
     tags = clean_tags(body["meals"]) if "meals" in body else None
     servings = recipe_servings(body["servings"]) if "servings" in body else None
+    photo_url = clean_photo_url(body["photo_url"]) if "photo_url" in body else None
     with db.conn() as c:
         writable_meal(c, user, meal_id)
         items = parse_items(c, body["items"], user["id"]) if "items" in body else None
@@ -1734,6 +1741,10 @@ def patch_meal(meal_id: int, user: CurrentUser, body: dict = Body(...)):
             c.execute("UPDATE meals SET shared=? WHERE id=?", (int(body["shared"]), meal_id))
         if "match_prompt_dismissed" in body:  # per recipe, not per viewer; true hides the Match Ingredients banner, false brings it back
             c.execute("UPDATE meals SET match_prompt_dismissed=? WHERE id=?", (1 if body["match_prompt_dismissed"] else None, meal_id))
+        if "photo_prompt_dismissed" in body:  # per recipe: true is "do not ask again", false allows the prompt once more
+            c.execute("UPDATE meals SET photo_prompt_dismissed=? WHERE id=?", (1 if body["photo_prompt_dismissed"] else None, meal_id))
+        if "photo_url" in body:  # a hotlink, never fetched here; needs no Allow Photos since nothing is stored
+            c.execute("UPDATE meals SET photo_url=? WHERE id=?", (photo_url, meal_id))
         if name:
             c.execute("UPDATE meals SET name=? WHERE id=?", (name, meal_id))
         if "servings" in body:
@@ -1752,7 +1763,7 @@ def patch_meal(meal_id: int, user: CurrentUser, body: dict = Body(...)):
             c.execute("UPDATE meal_items SET position=position+? WHERE meal_id=?", (len(items), meal_id))
             c.executemany("INSERT INTO meal_items(meal_id,food_id,amount,unit,position) VALUES(?,?,?,?,?)",
                           [(meal_id, f["id"], a, u, i) for i, (f, a, u) in enumerate(items)])
-        if {"name", "meals", "items", "servings", "steps", "yield"} & body.keys():  # a real edit; sharing and the prompt flags are not
+        if {"name", "meals", "items", "servings", "steps", "yield", "photo_url"} & body.keys():  # a real edit; sharing and the prompt flags are not
             touch_meal(c, meal_id)
         # read back by id: an admin who just made someone else's recipe private still gets the answer to this request
         return meal_dict(c, c.execute("SELECT * FROM meals WHERE id=?", (meal_id,)).fetchone(), user)
@@ -1851,9 +1862,9 @@ def duplicate_meal(meal_id: int, user: CurrentUser, body: dict | None = Body(Non
     with db.conn() as c:
         row = visible_meal(c, user["id"], meal_id)
         name = meal_name(body) if "name" in body else (row["name"] + " (Copy)")[:200]
-        cur = c.execute("INSERT INTO meals(user_id, name, meal, servings, steps, yield_amount, yield_unit, shared, source_url) "
-                        "VALUES(?,?,?,?,?,?,?,0,?)", (user["id"], name, row["meal"], row["servings"], row["steps"], row["yield_amount"],
-                                                       row["yield_unit"], row["source_url"]))
+        cur = c.execute("INSERT INTO meals(user_id, name, meal, servings, steps, yield_amount, yield_unit, shared, source_url, photo_url) "
+                        "VALUES(?,?,?,?,?,?,?,0,?,?)", (user["id"], name, row["meal"], row["servings"], row["steps"], row["yield_amount"],
+                                                         row["yield_unit"], row["source_url"], row["photo_url"]))  # the photo prompt flag is not copied: a copy may ask once
         new = cur.lastrowid
         if row["photo"]:  # the copy gets its own file, so removing either photo never touches the other
             from . import photos
@@ -1923,6 +1934,37 @@ def clean_source_url(v) -> str:
         raise bad("Enter a web address that starts with http:// or https://")
     if parts.username is not None or parts.password is not None or "@" in parts.netloc:
         raise bad("Remove the user name or password from the web address")
+    return v
+
+
+PHOTO_URL_MAX = 2000
+
+
+def clean_photo_url(v) -> str | None:
+    """A recipe photo by link (meals.photo_url): null or blank clears it. Otherwise text, http or https with a host, no user name or
+    password, no spaces, control characters or angle brackets, at most PHOTO_URL_MAX characters. Checked for input hygiene only:
+    this server never fetches the link, the browser does, so there is nothing to forge a request with."""
+    if v is None:
+        return None
+    if not isinstance(v, str):
+        raise bad("Enter the image link as text")
+    v = v.strip()
+    if not v:
+        return None
+    if len(v) > PHOTO_URL_MAX:
+        raise bad(f"Keep the image link to {PHOTO_URL_MAX} characters or fewer")
+    if any(ch.isspace() or ord(ch) < 0x20 or 0x7F <= ord(ch) <= 0x9F or ch in "<>\"'" for ch in v):
+        raise bad("The image link must not contain spaces, control characters, quotes or angle brackets")
+    try:
+        parts = urlsplit(v)
+        host = parts.hostname
+        parts.port  # noqa: B018  (raises ValueError for a bad port)
+    except ValueError:
+        raise bad("Enter an image link that starts with http or https.") from None
+    if parts.scheme.lower() not in ("http", "https") or not host:
+        raise bad("Enter an image link that starts with http or https.")
+    if parts.username is not None or parts.password is not None or "@" in parts.netloc:
+        raise bad("Remove the user name or password from the image link")
     return v
 
 
@@ -2207,6 +2249,16 @@ def delete_uncounted_items(meal_id: int, user: CurrentUser):
         return meal_dict(c, row, user)
 
 
+def photo_prompt_due(c, row, mine: bool) -> bool:
+    """True once per recipe, to its owner, right after a log: Allow Photos is on, the recipe has no photo (no upload and no link) and the
+    prompt was not asked or dismissed before. Asking sets meals.photo_prompt_dismissed, so a second log, another device or a reload never asks again."""
+    from . import photos
+    if not mine or not photos.enabled() or row["photo"] or row["photo_url"] or row["photo_prompt_dismissed"]:
+        return False
+    c.execute("UPDATE meals SET photo_prompt_dismissed=1 WHERE id=?", (row["id"],))
+    return True
+
+
 @router.post("/meals/{meal_id}/log")
 def log_meal(meal_id: int, user: CurrentUser, body: dict | None = Body(None)):
     body = body or {}
@@ -2231,7 +2283,7 @@ def log_meal(meal_id: int, user: CurrentUser, body: dict | None = Body(None)):
         amount, unit = (float(body["amount"]), body["unit"]) if given else (md["servings"], units.SERVING)
         gid = new_group(c, user["id"], day, meal, meal_id, row["name"], amount, unit, 1.0 if frac is None else frac, md["portions"])
         entries = [log_entry(c, user["id"], f, a, u, day, meal, gid, revive=mine) for f, a, u in items]
-        return {"entries": entries, "group": group_out(c, user["id"], gid)}
+        return {"entries": entries, "group": group_out(c, user["id"], gid), "photo_prompt": photo_prompt_due(c, row, mine)}
 
 
 # ---------- saved screen: favorites, recipes and my foods ----------

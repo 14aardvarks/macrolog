@@ -30,6 +30,7 @@ import { renderClaudeSection, renderSignIn, renderFullClaude } from './claudekey
 import { refreshLoggedControl, useSettings } from './refresh.js';
 import { startUpdates } from './update.js';
 import { loadPhotoConfig, photoThumb, recipeThumb } from './photo.js';
+import { showPhotoPrompt } from './photoprompt.js';
 import { tabOf, routeUrl, formatRoute, startRoute } from './routes.js';
 
 const main = document.getElementById('main');
@@ -810,7 +811,11 @@ async function mealScreen(root, params) {
     const { items, error } = checkedItems(rows.map((r) => ({ checked: r.box.checked, amount: r.memo.read(r.amt.value), food_id: r.it.food_id, unit: r.unit, name: r.it.food.name })));
     if (error) { show(status, message(error, 'error')); return; }
     // amount and unit name the portion of the recipe log on Today; the rows themselves come from items
-    try { await api.logMeal(meal.id, { items, amount: shareAmount, unit, meal: mealSel.value === 'none' ? null : mealSel.value }); await go('today', {}, true); } catch (e) {
+    try {
+      const logged = await api.logMeal(meal.id, { items, amount: shareAmount, unit, meal: mealSel.value === 'none' ? null : mealSel.value });
+      await go('today', {}, true);
+      if (logged && logged.photo_prompt) showPhotoPrompt(meal);  // once per recipe, decided and recorded by the server
+    } catch (e) {
       show(status, message(e.message, 'error'));
     }
   }

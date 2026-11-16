@@ -4,7 +4,8 @@
 import { api } from './api.js';
 import { h, svg, clear, show, message, loadImage } from './dom.js';
 import { sentence } from './util.js';
-import { placeholderTone } from './recipecards.js';
+import { placeholderTone, recipePhotoSrc, photoMenuItems, photoButtonLabel, photoLinkCheck, linkPhotoSrc } from './recipecards.js';
+import { menuButton } from './menu.js';
 import { photoUrl, photoAlt, scaledSize, frameSize, startView, panView, zoomView, reframe, cropRect, viewScale, pointerDistance,
   FRAMES, FRAME_LABELS, ZOOM_MAX, PHOTO_MAX_SIDE } from './photomath.js';
 
@@ -43,13 +44,13 @@ export function photoPlaceholder(meal, extraClass) {
   return h('span', { class: 'photo-ph tone-' + placeholderTone(meal) + (extraClass ? ' ' + extraClass : ''), 'aria-hidden': 'true' }, forkKnife());
 }
 
-// The recipe image of a card or list row: the photo while photos are on and it has one, else the placeholder. Decorative
-// (the title is next to it), lazy, async decoding, in a box the CSS sizes before anything loads. A photo that fails swaps
-// to the placeholder.
+// The recipe image of a card or list row: the photo while photos are on and it has one, else a pasted link (which needs no
+// switch), else the placeholder. Decorative (the title is next to it), lazy, async decoding, in a box the CSS sizes before
+// anything loads. A link is loaded with no referrer. A photo that fails swaps to the placeholder.
 export function recipeImage(meal, extraClass) {
-  const url = photosOn() && meal ? photoUrl(meal.photo) : null;
+  const p = recipePhotoSrc(meal, photosOn());
   const box = photoPlaceholder(meal, extraClass);
-  if (url) box.appendChild(h('img', { src: url, alt: '', loading: 'lazy', decoding: 'async', onerror: (e) => { e.currentTarget.remove(); } }));
+  if (p) box.appendChild(h('img', { referrerpolicy: p.link ? 'no-referrer' : null, src: p.src, alt: '', loading: 'lazy', decoding: 'async', onerror: (e) => { e.currentTarget.remove(); } }));
   return box;
 }
 
@@ -58,12 +59,14 @@ export function recipeThumb(meal) {
   return photosOn() ? recipeImage(meal, 'photo-thumb ph-thumb') : null;
 }
 
-// The photo in a fixed 4:3 box (the box is there before the image loads), or null without a photo.
+// The photo in a fixed 4:3 box (the box is there before the image loads), or null without a photo. A recipe may show a pasted link too.
 export function photoFigure(item, extraClass) {
-  const url = photosOn() && item ? photoUrl(item.photo) : null;
-  if (!url) return null;
-  return h('div', { class: 'photo-frame' + (extraClass ? ' ' + extraClass : '') }, h('div', { class: 'photo-box' },
-    h('img', { src: url, alt: photoAlt(item.name), loading: 'lazy', decoding: 'async' })));
+  const p = item ? (item.photo_url !== undefined ? recipePhotoSrc(item, photosOn()) : (photosOn() && photoUrl(item.photo) ? { src: photoUrl(item.photo), link: false } : null)) : null;
+  if (!p) return null;
+  const frame = h('div', { class: 'photo-frame' + (extraClass ? ' ' + extraClass : '') }, h('div', { class: 'photo-box' },
+    h('img', { referrerpolicy: p.link ? 'no-referrer' : null, src: p.src, alt: photoAlt(item.name), loading: 'lazy', decoding: 'async',
+      onerror: p.link ? () => { frame.remove(); } : null })));
+  return frame;
 }
 
 // Draw the rect of an image into a JPEG of at most PHOTO_MAX_SIDE on its longest side.
@@ -204,9 +207,10 @@ export async function cropPhoto(file, title) {
 }
 
 // Choose a file (camera allowed on phones through the normal chooser), crop it, and resolve the Blob or null.
-export function pickPhoto(title) {
+// capture true (Take Photo) asks a phone for its camera; a computer ignores it and shows the normal file chooser.
+export function pickPhoto(title, capture) {
   return new Promise((resolve, reject) => {
-    const input = h('input', { type: 'file', accept: 'image/*', class: 'visually-hidden', 'aria-hidden': 'true', tabindex: '-1' });
+    const input = h('input', { type: 'file', accept: 'image/*', capture: capture ? 'environment' : null, class: 'visually-hidden', 'aria-hidden': 'true', tabindex: '-1' });
     input.addEventListener('change', async () => {
       const file = input.files && input.files[0];
       input.remove();
@@ -220,8 +224,9 @@ export function pickPhoto(title) {
 
 // Pick, crop and upload a photo for a food or recipe. Resolves the new photo name, or null when the user cancelled.
 // Throws an Error with a message for the user. say(text) reports progress.
-export async function choosePhoto(item, kind, say) {
-  const blob = await pickPhoto(item.photo ? 'Replace Photo' : 'Add Photo');
+// capture true opens the camera on a phone (Take Photo).
+export async function choosePhoto(item, kind, say, capture) {
+  const blob = await pickPhoto(item.photo ? 'Change Photo' : 'Add Photo', capture);
   if (!blob) return null;
   if (blob.size > cfg.max_mb * 1024 * 1024) throw new Error('That photo is larger than ' + cfg.max_mb + ' MB.');
   if (say) say('Saving photo...');
@@ -238,35 +243,99 @@ async function removePhoto(item, kind) {
   return true;
 }
 
-// The hero at the top of the recipe screen: the photo full width (cover, at most about 40vh tall) or the placeholder, with
-// Add Photo, or Replace Photo and Remove Photo, over its corner for editors. Null when photos are off.
+// The Paste Image Link dialog. save(url) stores the link (null clears it) and may throw an Error whose message is shown in the
+// dialog, which then stays open. Resolves true once saved, false on Cancel or Escape. current prefills the field.
+export function askPhotoLink(current, save) {
+  return new Promise((resolve) => {
+    const previous = document.activeElement;
+    const input = h('input', { type: 'text', id: 'photo-link-input', inputmode: 'url', autocomplete: 'off', autocapitalize: 'none', spellcheck: 'false',
+      value: current || '' });
+    const status = h('div', { 'aria-live': 'polite' });
+    const go = h('button', { class: 'btn primary', type: 'button', onclick: submit }, 'Save Link');
+    const cancel = h('button', { class: 'btn ghost', type: 'button', onclick: () => done(false) }, 'Cancel');
+    async function submit() {
+      const r = photoLinkCheck(input.value);
+      if (r.error) { show(status, message(r.error, 'error')); input.focus(); return; }
+      go.disabled = true;
+      try { await save(r.url); done(true); } catch (e) {
+        go.disabled = false;
+        show(status, message(e.message, 'error'));
+      }
+    }
+    const box = h('div', { class: 'notice', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'photo-link-title' },
+      h('h2', { id: 'photo-link-title' }, 'Paste Image Link'),
+      h('p', { class: 'sub' }, sentence('The photo loads from that address each time it shows, and nothing is stored on this server') + ' ' + sentence('Only http and https links work')),
+      h('label', { class: 'field', for: 'photo-link-input' }, h('span', null, 'Image link'), input),
+      status,
+      h('div', { class: 'row wrap' }, go, cancel));
+    const overlay = h('div', { class: 'overlay' }, box);
+    function onKey(e) {
+      if (e.key === 'Escape') { e.preventDefault(); done(false); return; }
+      if (e.key === 'Enter' && document.activeElement === input) { e.preventDefault(); submit(); return; }
+      if (e.key !== 'Tab') return;
+      const items = [input, go, cancel].filter((x) => !x.disabled);
+      const i = items.indexOf(document.activeElement);
+      e.preventDefault();
+      items[(i + (e.shiftKey ? items.length - 1 : 1) + items.length) % items.length].focus();
+    }
+    function done(ok) {
+      document.removeEventListener('keydown', onKey, true);
+      overlay.remove();
+      if (previous && previous.focus && document.body.contains(previous)) previous.focus();
+      resolve(ok);
+    }
+    document.addEventListener('keydown', onKey, true);
+    document.body.appendChild(overlay);
+    input.focus();
+  });
+}
+
+// Run one photo menu action (recipecards.js photoMenuItems) on a recipe the user can edit. Resolves the text to show when something
+// changed (the recipe object is updated in place), or '' when the user cancelled. Throws an Error with a message for the user.
+export async function recipePhotoAction(key, meal, say) {
+  if (key === 'photo-upload' || key === 'photo-take') return (await choosePhoto(meal, 'meal', say, key === 'photo-take')) ? 'Photo saved.' : '';
+  if (key === 'photo-link') {
+    const saved = await askPhotoLink(meal.photo_url, async (url) => { meal.photo_url = (await api.patchMeal(meal.id, { photo_url: url })).photo_url; });
+    if (!saved) return '';
+    return meal.photo_url && photosOn() && photoUrl(meal.photo) ? 'Link saved. The uploaded photo still shows. Remove Photo to use the link.' : 'Photo link saved.';
+  }
+  if (key === 'photo-remove') {
+    if (!window.confirm(REMOVE_PHOTO_CONFIRM)) return '';
+    if (photosOn() && meal.photo) { await api.deleteMealPhoto(meal.id); meal.photo = null; meal.photo_url = null; } else { await api.patchMeal(meal.id, { photo_url: null }); meal.photo_url = null; }
+    return 'Photo removed.';
+  }
+  return '';
+}
+
+// The hero at the top of the recipe screen: the photo full width (cover, at most about 40vh tall; an upload, else a pasted link)
+// or the placeholder, with an Add Photo (or Change Photo) menu over its corner for editors: Upload Photo, Take Photo, Paste Image
+// Link and Remove Photo. Shown while photos are on, or when the recipe has a link, or for an editor (so a link can be pasted
+// with photos off). A link that fails to load shows the placeholder.
 export function photoHero(meal, canEdit) {
-  if (!photosOn()) return null;
+  if (!photosOn() && !linkPhotoSrc(meal) && !canEdit) return null;
   const box = h('div', { class: 'hero' });
   const status = h('div', { 'aria-live': 'polite' });
+  let failed = false;
   function paint(focus) {
     clear(box);
-    const url = photoUrl(meal.photo);
-    box.className = 'hero' + (url ? '' : ' hero-empty');
-    box.appendChild(url ? h('div', { class: 'hero-box' }, h('img', { src: url, alt: photoAlt(meal.name), decoding: 'async' }))
+    const p = failed ? null : recipePhotoSrc(meal, photosOn());
+    box.className = 'hero' + (p ? '' : ' hero-empty');
+    box.appendChild(p ? h('div', { class: 'hero-box' }, h('img', { referrerpolicy: p.link ? 'no-referrer' : null, src: p.src, alt: photoAlt(meal.name), decoding: 'async',
+      onerror: () => { failed = true; paint(false); } }))
       : h('div', { class: 'hero-box' }, photoPlaceholder(meal, 'hero-ph')));
     if (!canEdit) return;
-    const add = h('button', { class: 'btn hero-btn', type: 'button', onclick: choose }, url ? 'Replace Photo' : 'Add Photo');
-    const del = url ? h('button', { class: 'btn hero-btn danger-text', type: 'button', onclick: drop }, 'Remove Photo') : null;
-    box.appendChild(h('div', { class: 'hero-actions' }, add, del));
-    if (focus) add.focus();
+    const label = photoButtonLabel(meal, photosOn());
+    const menu = menuButton(box, photoMenuItems(meal, photosOn()), label, act, { btnClass: 'btn hero-btn', wrapClass: 'hero-menu', title: label, face: label });
+    box.appendChild(h('div', { class: 'hero-actions' }, menu));
+    if (focus) menu.querySelector('button').focus();
   }
-  async function choose() {
+  async function act(key) {
+    show(status, null);
     try {
-      if (!(await choosePhoto(meal, 'meal', (t) => show(status, message(t))))) return;
-      show(status, message('Photo saved.'));
-      paint(true);
-    } catch (e) { show(status, message(e.message, 'error')); }
-  }
-  async function drop() {
-    try {
-      if (!(await removePhoto(meal, 'meal'))) return;
-      show(status, message('Photo removed.'));
+      const text = await recipePhotoAction(key, meal, (t) => show(status, message(t)));
+      if (!text) return;
+      failed = false;
+      show(status, message(text));
       paint(true);
     } catch (e) { show(status, message(e.message, 'error')); }
   }

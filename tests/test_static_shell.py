@@ -45,7 +45,7 @@ def test_service_worker_waits_for_the_update_banner():
     install = re.search(r"addEventListener\('install'.*?\n\}\);", sw, re.S).group(0)
     assert "skipWaiting" not in install
     assert "SKIP_WAITING" in sw and "self.skipWaiting()" in sw
-    assert "macrolog-shell-v79" in sw and "'/js/update.js'" in sw
+    assert "macrolog-shell-v80" in sw and "'/js/update.js'" in sw
     assert (STATIC / "js" / "update.js").is_file()
 
 
@@ -94,12 +94,12 @@ def test_photo_modules_are_in_the_shell_and_photos_are_never_cached():
 def test_recipe_cards_module_is_in_the_shell():
     sw = (STATIC / "sw.js").read_text()
     assert "'/js/recipecards.js'" in sw and (STATIC / "js" / "recipecards.js").is_file()
-    assert "macrolog-shell-v79" in sw
+    assert "macrolog-shell-v80" in sw
 
 
 def test_recipe_first_modules_are_in_the_shell_and_the_old_match_screen_is_gone():
     sw = (STATIC / "sw.js").read_text()
-    for name in ("rowmatch.js", "ingrows.js", "menu.js"):
+    for name in ("rowmatch.js", "ingrows.js", "menu.js", "photoprompt.js"):
         assert f"'/js/{name}'" in sw and (STATIC / "js" / name).is_file()
     flow = (STATIC / "js" / "recipeflow.js").read_text()
     assert "renderMatch" not in flow and "Save Without Them" not in flow and "'Save Recipe'" in flow

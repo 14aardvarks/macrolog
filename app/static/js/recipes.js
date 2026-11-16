@@ -13,7 +13,8 @@ import { chips, renameRecipe, deleteRecipe } from './saved.js';
 import { stepsList, stepsEditor } from './steps.js';
 import { deletedHint, deletedTitle, daysLeftText, deleteForeverConfirm, restoredText, purgedText, sortDeleted, withoutDeleted } from './trash.js';
 import { closeUndo } from './undo.js';
-import { loadPhotoConfig, photosOn, recipeImage, photoHero, choosePhoto } from './photo.js';
+import { loadPhotoConfig, photosOn, recipeImage, photoHero, recipePhotoAction } from './photo.js';
+import { showPhotoPrompt } from './photoprompt.js';
 import { summaryParts, cardChips, cardLabel, cardGridClass, cardMenuItems, menuLabel } from './recipecards.js';
 import { menuButton } from './menu.js';
 
@@ -86,9 +87,9 @@ export async function renderRecipes(root, ctx) {
       else if (key === 'cooking') await ctx.go('cooking', { mealId: m.id });
       else if (key === 'duplicate') { const d = await api.duplicateMeal(m.id); await ctx.go('recipeview', { mealId: d.id }); }
       else if (key === 'delete') { if (await deleteRecipe(m, () => ctx.repaint())) await ctx.repaint(); else card.querySelector('.card-menu-btn').focus(); }
-      else if (key === 'photo') {
-        if (await choosePhoto(m, 'meal', (t) => show(status, message(t)))) { show(status, message('Photo saved.')); paint(); menuBtn(); }
-        else card.querySelector('.card-menu-btn').focus();
+      else if (key.indexOf('photo-') === 0) {
+        const text = await recipePhotoAction(key, m, (t) => show(status, message(t)));
+        if (text) { show(status, message(text)); paint(); menuBtn(); } else card.querySelector('.card-menu-btn').focus();
       }
     } catch (e) { show(status, message(e.message, 'error')); }
   }
@@ -240,7 +241,11 @@ export async function renderRecipeView(root, params, ctx) {
     const r = portionFraction(meal, memo.read(amount.input.value), unitSel.value);
     if (r.error) { show(status, message(r.error, 'error')); return; }
     logBtn.disabled = true;
-    try { await api.logMeal(meal.id, { amount: r.amount, unit: unitSel.value, meal: chosenMeal() }); await ctx.go('today', {}, true); } catch (e) {
+    try {
+      const logged = await api.logMeal(meal.id, { amount: r.amount, unit: unitSel.value, meal: chosenMeal() });
+      await ctx.go('today', {}, true);
+      if (logged && logged.photo_prompt) showPhotoPrompt(meal);  // once per recipe, decided and recorded by the server
+    } catch (e) {
       logBtn.disabled = false;
       show(status, message(e.message, 'error'));
     }

@@ -197,6 +197,10 @@ def writable_food(c, user: dict, food_id: int):
 def _set(table: str, item_id: int, name: Optional[str], c) -> Optional[str]:
     old = c.execute(f"SELECT photo FROM {table} WHERE id=?", (item_id,)).fetchone()["photo"]
     c.execute(f"UPDATE {table} SET photo=? WHERE id=?", (name, item_id))
+    if table == "meals":
+        core.touch_meal(c, item_id)
+        if name is None:  # Remove Photo on a recipe clears a pasted link too
+            c.execute("UPDATE meals SET photo_url=NULL WHERE id=?", (item_id,))
     return old
 
 
