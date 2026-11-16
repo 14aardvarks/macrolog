@@ -137,7 +137,7 @@ def test_migration_adds_micro_columns_and_display_settings(tmp_path):
     assert set(core.NEW_MICROS) <= {r[1] for r in c.execute("PRAGMA table_info(foods)")}
     assert core.read_display(c, 1) == {**{k: bool(v) for k, v in core.DISPLAY_FLAGS.items()}, "micros_shown": list(core.MICROS),
                                             "today_view": "list", "search_source": "all",
-                                            "auto_match": "search", "recipe_owner": "mine", "refresh_mode": "search", "refresh_mode_set": False}
+                                            "recipe_owner": "mine", "refresh_mode": "search", "refresh_mode_set": False}
     assert c.execute("SELECT start_screen FROM settings").fetchone()[0] == "scan"
 
 
@@ -147,7 +147,7 @@ def test_display_defaults_keep_screens_as_before(a):
     d = a.get("/api/settings/display").json()
     assert d == {"show_macros": True, "show_micros": True, "show_split": True, "show_macro_bar": True, "show_table": True,
                  "micros_open": False, "micros_shown": list(core.MICROS), "today_view": "list",
-                 "search_source": "all", "auto_match": "search", "recipe_owner": "mine", "refresh_mode": "search", "refresh_mode_set": False}
+                 "search_source": "all", "recipe_owner": "mine", "refresh_mode": "search", "refresh_mode_set": False}
 
 
 def test_display_put_partial_per_user_and_other_settings_kept(a, b):
@@ -239,47 +239,40 @@ def test_search_source_validation(a, value):
     assert a.get("/api/settings/display").json()["search_source"] == "all"
 
 
-# ---------- auto-match after import ----------
+# ---------- Auto-Match After Import was removed (issue #56) ----------
 
-def test_auto_match_default_save_and_isolation(a, b):
-    assert a.get("/api/settings/display").json()["auto_match"] == "search"
-    for v in ("off", "claude", "search_claude", "search", "off"):
-        assert a.put("/api/settings/display", json={"auto_match": v}).json()["auto_match"] == v
-    a.put("/api/settings/display", json={"show_split": False, "search_source": "fdc"})  # other display saves keep it
-    assert a.get("/api/settings/display").json()["auto_match"] == "off"
-    assert b.get("/api/settings/display").json()["auto_match"] == "search"
-
-
-@pytest.mark.parametrize("value", ["", None, "Claude", "search claude", "search_claude ", "claude_search", "auto", True, 1, ["off"], {"a": 1}, "OFF", "Search"])
-def test_auto_match_validation(a, value):
-    assert a.put("/api/settings/display", json={"auto_match": value}).status_code == 400
-    assert a.get("/api/settings/display").json()["auto_match"] == "search"
+@pytest.mark.parametrize("value", ["search", "off", "claude", "search_claude", "bogus", None, 1, ["off"]])
+def test_removed_auto_match_setting_is_ignored(a, value):
+    """Match and Match With Claude replaced the setting: never returned, a stale client may still send any value, it changes nothing."""
+    assert "auto_match" not in a.get("/api/settings/display").json()
+    r = a.put("/api/settings/display", json={"auto_match": value})
+    assert r.status_code == 200 and "auto_match" not in r.json()
+    r = a.put("/api/settings/display", json={"auto_match": value, "show_split": False})
+    assert r.status_code == 200 and r.json()["show_split"] is False and "auto_match" not in r.json()
+    assert not hasattr(core, "AUTO_MATCHES")
 
 
-def test_auto_match_error_lists_the_values(a):
-    r = a.put("/api/settings/display", json={"auto_match": "nope"})
-    assert r.status_code == 400
-    for v in core.AUTO_MATCHES:
-        assert v in r.json()["detail"]
-    assert core.AUTO_MATCHES == ("search", "claude", "search_claude", "off")
-
-
-def test_auto_match_migrates_old_settings_table(tmp_path, monkeypatch):
+def test_old_auto_match_column_is_left_alone(tmp_path, monkeypatch):
     import sqlite3
     monkeypatch.setenv("DB_PATH", str(tmp_path / "old.db"))
     c = sqlite3.connect(tmp_path / "old.db")
     c.executescript("CREATE TABLE settings(user_id INTEGER PRIMARY KEY, start_screen TEXT NOT NULL DEFAULT 'today', default_meal TEXT,"
-                    " use_last INTEGER NOT NULL DEFAULT 1); INSERT INTO settings(user_id) VALUES(1);")
+                    " auto_match TEXT NOT NULL DEFAULT 'search'); INSERT INTO settings(user_id, auto_match) VALUES(1, 'off'), (2, 'bogus');")
     c.row_factory = sqlite3.Row
     core.init(c)
     core.init(c)  # safe to run twice
-    assert c.execute("SELECT auto_match FROM settings").fetchone()[0] == "search"
-    assert core.read_display(c, 1)["auto_match"] == "search"
-    c.execute("UPDATE settings SET auto_match='bogus'")  # a bad stored value reads as the default
-    assert core.read_display(c, 1)["auto_match"] == "search"
-    for v in core.AUTO_MATCHES:  # every allowed value reads back as stored
-        c.execute("UPDATE settings SET auto_match=?", (v,))
-        assert core.read_display(c, 1)["auto_match"] == v
+    for uid in (1, 2):
+        assert "auto_match" not in core.read_display(c, uid)
+    assert c.execute("SELECT auto_match FROM settings WHERE user_id=1").fetchone()[0] == "off"  # kept as stored, never read
+
+
+def test_new_database_has_no_auto_match_column(tmp_path, monkeypatch):
+    import sqlite3
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "new.db"))
+    c = sqlite3.connect(tmp_path / "new.db")
+    c.row_factory = sqlite3.Row
+    core.init(c)
+    assert "auto_match" not in {r[1] for r in c.execute("PRAGMA table_info(settings)")}
 
 
 # ---------- refresh nutrients mode ----------
@@ -288,7 +281,7 @@ def test_refresh_mode_default_save_and_isolation(a, b):
     assert a.get("/api/settings/display").json()["refresh_mode"] == "search"
     for v in ("search_claude", "search", "search_claude"):
         assert a.put("/api/settings/display", json={"refresh_mode": v}).json()["refresh_mode"] == v
-    a.put("/api/settings/display", json={"show_split": False, "auto_match": "off"})  # other display saves keep it
+    a.put("/api/settings/display", json={"show_split": False, "today_view": "table"})  # other display saves keep it
     assert a.get("/api/settings/display").json()["refresh_mode"] == "search_claude"
     assert b.get("/api/settings/display").json()["refresh_mode"] == "search"
 
@@ -300,7 +293,7 @@ def test_refresh_mode_explicit_search_only_is_remembered(a):
     assert a.get("/api/settings/display").json()["refresh_mode_set"] is False  # other saves do not pick it
     d = a.put("/api/settings/display", json={"refresh_mode": "search"}).json()
     assert d["refresh_mode"] == "search" and d["refresh_mode_set"] is True  # an explicit Search Only survives
-    a.put("/api/settings/display", json={"auto_match": "off"})
+    a.put("/api/settings/display", json={"today_view": "table"})
     assert a.get("/api/settings/display").json()["refresh_mode_set"] is True
 
 

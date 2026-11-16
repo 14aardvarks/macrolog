@@ -281,7 +281,7 @@ def test_automatic_routes_honor_switch_key_and_cap(env, monkeypatch, path, body,
     assert env["requests"] == []
 
 
-def test_auto_match_claude_route_honors_switch_key_and_cap(env, monkeypatch):
+def test_match_with_claude_route_honors_switch_key_and_cap(env, monkeypatch):
     m = env["a"].post("/api/meals/import", json={"name": "Bread", "ingredients": [{"name": "flour", "amount": 1, "unit": "cup"}]}).json()
     body = {"item_ids": [m["items"][0]["id"]]}
     monkeypatch.setenv("AI_ALLOW_RECIPE", "0")
@@ -294,12 +294,12 @@ def test_auto_match_claude_route_honors_switch_key_and_cap(env, monkeypatch):
     assert env["requests"] == []
 
 
-def test_full_claude_survives_other_settings_saves_and_gives_the_client_what_auto_match_reads(env):
+def test_full_claude_survives_other_settings_saves_and_gives_the_client_what_match_with_claude_reads(env):
     full(env)
     assert env["a"].put("/api/settings", json={"start_screen": "search", "confirm_ai": False}).json()["full_claude"] is True
-    assert env["a"].put("/api/settings/display", json={"auto_match": "search"}).status_code == 200
-    assert env["a"].get("/api/settings").json()["full_claude"] is True  # a stored explicit Search is the default, not a choice
-    assert env["a"].get("/api/settings/display").json()["auto_match"] == "search"
+    assert env["a"].put("/api/settings/display", json={"auto_match": "search"}).status_code == 200  # a stale client, ignored
+    assert env["a"].get("/api/settings").json()["full_claude"] is True
+    assert "auto_match" not in env["a"].get("/api/settings/display").json()
     st = env["a"].get("/api/ai/status").json()  # the client plan reads exactly these
     assert st["enabled"] is True and st["features"]["recipe"] is True and st["remaining"] > 0
     assert env["b"].get("/api/settings").json()["full_claude"] is False

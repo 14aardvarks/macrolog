@@ -161,13 +161,16 @@ MATCH_TOOL = {
                 "estimate": {"anyOf": [_ESTIMATE, {"type": "null"}],
                              "description": "Your nutrition estimate per serving, only when no candidate fits, else null"},
                 "note": {**_NSTR, "description": "One short sentence on the choice, or null"},
+                # Match With Claude (issue #56) accepts a chosen candidate on its own only at medium or high (units.AI_CONFIDENT).
+                "match_confidence": {"type": "string", "enum": ["low", "medium", "high"],
+                                     "description": "How sure you are that the chosen candidate is the food the line means; low when unsure or when nothing was chosen"},
                 # Two more unions (nine in all, the strict limit is 16): Claude's weight of one unit and the food's density.
                 "unit_grams": {"anyOf": [_UNIT_GRAMS, {"type": "null"}],
                                "description": "Only for a row marked weight needed: grams in one of the line's unit of the chosen food, else null"},
                 "density_g_per_cup": {"anyOf": [_DENSITY, {"type": "null"}],
                                       "description": "Only for a row marked density needed whose chosen food's label gives only a weight: grams in one cup, else null"},
             },
-            "required": ["row", "choice", "amount", "unit", "estimate", "note", "unit_grams", "density_g_per_cup"]}}},
+            "required": ["row", "choice", "amount", "unit", "estimate", "note", "match_confidence", "unit_grams", "density_g_per_cup"]}}},
         "required": ["matches"],
     },
 }
@@ -184,7 +187,8 @@ MATCH_INSTRUCTION = (
     "else estimate a typical weight from general nutrition knowledge (USDA household measures). Never invent a brand or a product. "
     "A row marked \"density needed\" is a volume line: when the chosen food's label gives only a weight, give density_g_per_cup, "
     "the grams in one cup of the food as the line means it. Set confidence low when you are unsure. Use null for both on every "
-    "other row."
+    "other row. Set match_confidence high when the chosen candidate is clearly the food the line means, medium when it is a close fit, "
+    "and low when you are unsure, when you give an estimate or when nothing fits."
 )
 PREVIOUS_INSTRUCTION = (
     " A row marked \"earlier match\" names the candidate this user already chose for the same ingredient in an earlier recipe. "
@@ -801,7 +805,7 @@ async def proposal(it, cands: list[dict], m: Optional[dict], prev: Optional[dict
     """prev: the food an earlier recipe matched to this ingredient. It is used when Claude chose no candidate, and a proposal
     that ends on it carries from_previous."""
     out = {"item_id": it["id"], "kind": "none", "food": None, "amount": None, "unit": None, "check": False, "check_reason": None, "grams": None,
-           "note": None, "warnings": [], "preview": None, "weight_source": None, "weight_note": None, "weight_grams": None}
+           "note": None, "warnings": [], "preview": None, "weight_source": None, "weight_note": None, "weight_grams": None, "confident": False}
     if not isinstance(m, dict) and prev is None:
         out["note"] = "Claude did not answer for this ingredient."
         return out
@@ -815,6 +819,7 @@ async def proposal(it, cands: list[dict], m: Optional[dict], prev: Optional[dict
             with db.conn() as c:
                 food = core.save_food(c, food)
         out["kind"], out["food"] = "candidate", food
+        out["confident"] = m.get("match_confidence") in units.AI_CONFIDENT  # Claude chose it and is sure enough (medium or high)
     elif prev is not None:  # Claude chose nothing: the earlier recipe's food
         out["kind"], out["food"], out["note"] = "candidate", prev, PREVIOUS_NOTE
     else:
@@ -959,7 +964,7 @@ async def search_proposal(it, food: Optional[dict], own: bool = False, cls: int 
     """A pending proposal for one row, shaped like Claude's (kind candidate or none), with method search. No estimates."""
     out = {"item_id": it["id"], "kind": "none", "food": None, "amount": None, "unit": None, "check": False, "check_reason": None, "grams": None,
            "note": "No match found.", "warnings": [], "preview": None, "method": "search", "weight_source": None, "weight_note": None,
-           "weight_grams": None}
+           "weight_grams": None, "confident": False}
     if skipped:
         out["skipped"] = True  # USDA was not asked for this row because of the rate limit
     if food is None:
@@ -976,7 +981,8 @@ async def search_proposal(it, food: Optional[dict], own: bool = False, cls: int 
     out.update(kind="candidate", food=food, amount=amount, unit=unit, check=check, grams=None if check else units.grams(food, amount, unit),
                check_reason=reason,
                preview=core.macros(food, amount, unit),
-               note=PREVIOUS_NOTE if previous else ("Same name in " if cls == 2 else "Closest name in ") + where)
+               note=PREVIOUS_NOTE if previous else ("Same name in " if cls == 2 else "Closest name in ") + where,
+               confident=previous or cls == 2)  # Match With Claude accepts these on its own: an earlier recipe's food, or the same name
     out["estimated"] = not check and out["preview"]["estimated"]
     out["estimate_source"] = core.estimate_word(units.estimate_source(food, unit)) if out["estimated"] else None
     weight_fields(out)
