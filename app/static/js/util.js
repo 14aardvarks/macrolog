@@ -108,6 +108,10 @@ export const PACKAGE_UNITS = ['can', 'jar', 'bottle', 'bag', 'box', 'packet', 'p
 export const FUZZY_UNITS = ['clove', 'slice', 'bunch', 'head', 'sprig', 'pinch', 'dash', 'handful', 'piece', 'fillet', 'rib', 'stalk'];
 export const COUNTISH = [...PACKAGE_UNITS, ...FUZZY_UNITS];
 export const isCountish = (unit) => COUNTISH.indexOf(unit) >= 0;
+// The only units a recipe unit picker offers (issue #55): weights and volumes. Count, package and fuzzy units are never a choice; a row
+// that already holds one keeps it as an extra option (dom.js unitControl), so nothing is lost.
+export const RECIPE_UNITS = ['g', 'kg', 'oz', 'lb', 'ml', 'l', 'floz', 'cup', 'tbsp', 'tsp'];
+export const isMeasureUnit = (unit) => RECIPE_UNITS.indexOf(unit) >= 0;
 const COUNTISH_ALIASES = { pkg: 'package', pkgs: 'package', pk: 'package', pack: 'package', pkt: 'packet', pc: 'piece', pcs: 'piece', filet: 'fillet', tin: 'can' };
 COUNTISH.forEach((u) => { COUNTISH_ALIASES[u] = u; });
 
@@ -730,6 +734,17 @@ export function matchAmount(units, amount, unit, pkg, hint) {
   return hit ? { amount: a, unit: u, check: false, ...(hit.estimated ? { estimated: true } : {}) } : check('no_convert');
 }
 
+// The amount for a recipe line once a food is picked (issue #55). A line whose weight or volume is an import estimate (line.was:
+// the original wording, 3 clove) goes back to that wording when the food knows the unit from a real source: your own weight, USDA,
+// Open Food Facts, or the label's own word. Otherwise the line as it is (the estimate). Mirrors recipe_ai.line_pref.
+export const TRUSTED_SOURCES = ['user', 'fdc', 'off'];
+export function linePick(units, line) {
+  const l = line || {};
+  const was = l.was && Number(l.was.amount) > 0 ? matchAmount(units, Number(l.was.amount), l.was.unit, null, l.name) : null;
+  if (was && !was.check && !was.estimated && (was.source == null || TRUSTED_SOURCES.indexOf(was.source) >= 0)) return was;
+  return matchAmount(units, l.amount, l.unit, l.pkg, l.name);
+}
+
 // ---------- why an amount needs a check (issue #45) ----------
 // reason: no_weight (a count or fuzzy unit with no known weight on the food), no_size (a package unit with no printed size),
 // no_convert (a measure the food cannot reach), no_amount (the line gives none), estimated (counted, but from an estimate;
@@ -748,6 +763,14 @@ export function checkReasonText(reason, unit, source) {
   return 'amount could not be worked out, enter one';
 }
 const capFirst = (t) => (t ? t.charAt(0).toUpperCase() + t.slice(1) : t);
+// The disclaimer under an unmatched row whose count, package or fuzzy unit has no known weight (issue #55): it only becomes a weight
+// when the matched food has one per item, else it asks for a check. '' when a typical weight is known (reason null).
+export function weightReasonLine(reason, unit) {
+  if (reason !== 'no_weight' && reason !== 'no_size') return '';
+  const u = unitWord(unit, 1) || 'count';
+  if (reason === 'no_size') return capFirst(u + ' size not printed, so it shows Check Amount after matching unless the food has a package weight');
+  return capFirst('no standard weight for ' + u + ', so it shows Check Amount after matching unless the food has a weight per item');
+}
 // The reason on its own line: "No standard weight for clove, enter grams".
 export const checkReasonLine = (reason, unit, source) => capFirst(checkReasonText(reason, unit, source));
 // The reason with the ingredient: "Garlic: no standard weight for clove, enter grams".
@@ -784,7 +807,7 @@ export const WEIGHT_SOURCE_WORDS = { user: 'Your Weight', fdc: 'USDA', off: 'Ope
 export function weightTag(it) {
   if (!it || it.check || it.kind === 'none') return null;
   const g = Number(it.weight_grams);
-  if (!(it.weight_grams != null && g > 0) || it.unit === 'g') return null;
+  if (!(it.weight_grams != null && g > 0) || (it.unit === 'g' && !it.line_estimate)) return null;  // an import estimate in g still shows
   const src = it.estimated ? (it.weight_source === 'ai' || it.estimate_source === 'claude' ? 'claude' : it.weight_source || it.estimate_source || 'guess')
     : it.weight_source;
   if (!src) return null;

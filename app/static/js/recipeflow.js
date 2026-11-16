@@ -9,7 +9,7 @@ import { confirmClaude } from './notice.js';
 import { stepsEditor } from './steps.js';
 import { centsText, sentence, aiFeature, aiFeatureOff, CLAUDE_CAP_NOTE, recipeTextCostLine, unitPreviewText } from './util.js';
 import {
-  parseIngredientText, reviewDraft, reviewBody, blankRow, importUnitOptions, importWhat, photoPick, PHOTOS_TEXT, reviewFlag, pkgNote,
+  parseIngredientText, reviewDraft, reviewBody, blankRow, importUnitOptions, importWhat, photoPick, PHOTOS_TEXT, reviewFlag, pkgNote, estimateNote, tidyAmountBox,
   urlCheck, urlImportOn, importKinds, startKind, recipeUrlCostLine, sourceLink, URL_TEXT, URL_MAX,
   NOTE_MAX, noteCheck, NOTE_LABEL, NOTE_HINT, NOTE_EXAMPLES, RERUN_LABEL, RERUN_TEXT, canRerun, rerunInput, claudeRead,
 } from './recipeimport.js';
@@ -187,7 +187,8 @@ export function renderReview(root, ctx) {
   const list = h('ol', { class: 'review-lines' });
   const warns = (draft.warnings || []).map((w) => h('li', null, sentence(w)));
 
-  // One compact row per ingredient: amount, unit (count, the measures, Custom for your own word, blank for "to taste"), name and note,
+  // One compact row per ingredient: amount, unit (weights and volumes, no unit for "to taste"; a row's older unit stays as an extra
+  // option), name and note,
   // then x. The fields write straight into the row, so untouched ones keep exactly what Claude filled (amountBoxValue keeps the exact
   // number until the amount text is edited). A package or fuzzy unit with no printed size shows its typical weight under it.
   function rowNode(r, i) {
@@ -203,12 +204,19 @@ export function renderReview(root, ctx) {
       const t = reviewFlag(r);
       const p = t ? previews[previewKey(r)] : null;
       const weight = !t ? '' : p === undefined ? 'Looking up a typical weight' : p && p.grams && !p.reason ? unitPreviewText(p) : t;
-      flag.textContent = [weight, pkgNote(r)].filter(Boolean).join('. ');
+      flag.textContent = [estimateNote(r), weight, pkgNote(r)].filter(Boolean).join('. ');
       flag.hidden = !flag.textContent;
     };
     flags[i] = paintFlag;
     const changed = () => { paintFlag(); lookupSoon(); };
     amount.addEventListener('input', () => { r.amount = amount.value; changed(); });
+    amount.addEventListener('change', () => {  // words typed after the number: a measure becomes the unit, anything else the note
+      if (!tidyAmountBox(r)) return;
+      amount.value = r.amount;
+      unit.value = r.unit;
+      note.value = r.note;
+      changed();
+    });
     unit.addEventListener('change', () => { r.unit = unit.value; changed(); });
     nm.addEventListener('input', () => { r.name = nm.value; changed(); });
     note.addEventListener('input', () => { r.note = note.value; });

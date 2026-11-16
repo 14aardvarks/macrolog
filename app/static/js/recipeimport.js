@@ -1,5 +1,5 @@
 // Pure helpers for Import Recipe and matching ingredients on the recipe screen. No DOM access, safe to import from node.
-import { cleanUnitText, canonUnit, unitWord, printedSize, sizeText, isCountish, checkReasonLine, PACKAGE_UNITS, FUZZY_UNITS, PLAIN_COUNTS, plural, parseAmount, amountBoxValue, fmtAmount, qtyText, servingText, amountText, roundTo, matchedAmountText, sentence, centsText, stepsCheck, MEALS, MEAL_LABELS, MICROS, autoMatch } from './util.js';
+import { cleanUnitText, canonUnit, unitWord, RECIPE_UNITS, isMeasureUnit, weightReasonLine, ingredientText, printedSize, sizeText, isCountish, checkReasonLine, PACKAGE_UNITS, FUZZY_UNITS, PLAIN_COUNTS, plural, parseAmount, amountBoxValue, fmtAmount, qtyText, servingText, amountText, roundTo, matchedAmountText, sentence, centsText, stepsCheck, MEALS, MEAL_LABELS, MICROS, autoMatch } from './util.js';
 
 // Unit words found at the start of an ingredient line, mapped to the server's canonical units. Package and fuzzy units
 // (clove, can, pinch, util.js COUNTISH) are found through canonUnit too, so every plural works ("bunches", "boxes").
@@ -223,7 +223,9 @@ export function reviewDraft(recipe, extra) {
     rows: (r.ingredients || []).map((i) => {
       const amount = i.amount == null ? '' : qtyText(i.amount, i.unit);
       return { amount, shown: amount, exact: i.amount == null ? null : i.amount, unit: i.unit || '', name: i.name || '', note: i.note || '', text: i.text || '',
-        pkgAmount: i.pkg_amount == null ? null : i.pkg_amount, pkgUnit: i.pkg_unit || null };
+        pkgAmount: i.pkg_amount == null ? null : i.pkg_amount, pkgUnit: i.pkg_unit || null,
+        // an import estimate (issue #55): kept while the amount and unit stay as Claude or the tables gave them
+        ...(i.estimated ? { estimated: true, estSource: i.est_source || 'ai', estUnit: i.unit, wasAmount: i.was_amount == null ? null : i.was_amount, wasUnit: i.was_unit || null } : {}) };
     }),
     steps: (r.steps || []).filter((x) => typeof x === 'string'),
     sourceUrl: r.source_url || null,
@@ -231,10 +233,9 @@ export function reviewDraft(recipe, extra) {
   };
 }
 
-// The unit choices of a review row: count first, then the measures, then Custom (made by dom.js unitControl) for any word of the
-// recipe's own (clove, pinch) or the user's. Blank is Custom left empty, so nothing is guessed or lost.
-export const IMPORT_UNITS = [['count', 'count'], ['g', 'g'], ['kg', 'kg'], ['oz', 'oz'], ['lb', 'lb'], ['ml', 'ml'], ['l', 'l'],
-  ['floz', 'fl oz'], ['cup', 'cup'], ['tbsp', 'tbsp'], ['tsp', 'tsp'], ...PACKAGE_UNITS.map((u) => [u, u]), ...FUZZY_UNITS.map((u) => [u, u])];
+// The unit choices of a review row (issue #55): weights and volumes only, no count, package or fuzzy unit and no Custom. A row that
+// already holds another unit (Split Lines Without Claude gives count, can or clove) keeps it as an extra option (dom.js unitControl).
+export const IMPORT_UNITS = RECIPE_UNITS.map((u) => [u, u === 'floz' ? 'fl oz' : u]);
 export function importUnitOptions() {
   return IMPORT_UNITS.map(([value, label]) => ({ value, label }));
 }
@@ -254,10 +255,55 @@ export function pkgNote(row) {
 }
 // The warning under a review row whose package or fuzzy unit has no printed size: "Can size not printed, pick a size or enter grams",
 // "No standard weight for clove, enter grams". '' for every other row. A matched food can still know the weight (1 clove (3 g)).
+// A count (Split Lines Without Claude, issue #55) says it only becomes a weight when the food has one per item.
 export function reviewFlag(row) {
   const u = canonUnit(row.unit);
-  if (!String(row.amount || '').trim() || !isCountish(u) || PLAIN_COUNTS.indexOf(u) >= 0 || rowPkg(row)) return '';
+  if (!String(row.amount || '').trim() || rowPkg(row)) return '';
+  if (u === 'count') return weightReasonLine('no_weight', 'count');
+  if (!isCountish(u) || PLAIN_COUNTS.indexOf(u) >= 0) return '';
   return checkReasonLine(PACKAGE_UNITS.indexOf(u) >= 0 ? 'no_size' : 'no_weight', u);
+}
+// True while a review row still holds the import's estimate: estimated, and its amount and unit untouched.
+export function rowEstimated(row) {
+  if (!row || !row.estimated) return false;
+  const a = rowAmount(row);
+  return a != null && row.exact != null && Math.abs(a - row.exact) < 1e-9 && canonUnit(row.unit) === canonUnit(row.estUnit);
+}
+// "Estimated by Claude from 3 cloves garlic" under an estimated review row, else ''.
+export function estimateNote(row) {
+  if (!rowEstimated(row)) return '';
+  const lead = row.estSource === 'table' ? 'Estimated from a typical weight' : 'Estimated by Claude';
+  // a count names no unit (the note already says "2 eggs"), so only a package or fuzzy unit is repeated here
+  const was = Number(row.wasAmount) > 0 && row.wasUnit && row.wasUnit !== 'count' ? ingredientText(Number(row.wasAmount), row.wasUnit, '') : '';
+  return lead + (was ? ' from ' + was.trim() : '');
+}
+// Unit words typed in the amount box (issue #55). "30 g" moves g into the unit; any other word ("2 pinches", "3 large") goes into
+// the note, so the amount box keeps only the number. Returns { amount, unit, extra } or null when the box holds no number with words.
+const BOX_LEAD = new RegExp('^\\s*(' + AMOUNT + ')(?:\\s*(?:-|\\u2013|to)\\s*(' + AMOUNT + '))?\\s*(.*)$');
+export function splitAmountBox(text) {
+  const m = BOX_LEAD.exec(String(text == null ? '' : text));
+  if (!m || !m[3].trim()) return null;
+  const amount = m[0].slice(0, m[0].length - m[3].length).trim();
+  let rest = m[3].trim();
+  let unit = null;
+  const fl = FLOZ.exec(rest);
+  const w = /^([A-Za-z]+)\.?(?=\s|$|,)/.exec(rest);
+  if (fl) { unit = 'floz'; rest = rest.slice(fl[0].length); }
+  else if (w && isMeasureUnit(UNIT_WORDS[w[1]] || UNIT_WORDS[w[1].toLowerCase()] || canonUnit(w[1]))) {
+    unit = UNIT_WORDS[w[1]] || UNIT_WORDS[w[1].toLowerCase()] || canonUnit(w[1]);
+    rest = rest.slice(w[0].length);
+  }
+  return { amount, unit, extra: rest.replace(/^[\s,;]+|[\s,;]+$/g, '') };
+}
+// The review row after its amount box is left: the number stays, a measure word becomes the unit, other words join the note.
+// True when anything moved.
+export function tidyAmountBox(row) {
+  const s = splitAmountBox(row.amount);
+  if (!s) return false;
+  row.amount = s.amount;
+  if (s.unit) row.unit = s.unit;
+  if (s.extra && String(row.note || '').toLowerCase().indexOf(s.extra.toLowerCase()) < 0) row.note = [s.extra, String(row.note || '').trim()].filter(Boolean).join(', ');
+  return true;
 }
 // Use Grams on a flagged review row: the amount is cleared for the grams, the unit becomes g and the printed size goes. The line
 // before it (2 clove) is kept as wasAmount and wasUnit, so the grams typed become your weight of one clove once the row is matched.
@@ -293,7 +339,8 @@ export function reviewBody(draft) {
   if (!rows.length) return { error: 'Add at least one ingredient.' };
   const ingredients = [];
   for (let i = 0; i < rows.length; i++) {
-    const r = rows[i];
+    const r = { ...rows[i] };
+    tidyAmountBox(r);  // "2 pinches" in the amount box: the words go to the note
     const nm = String(r.name || '').trim();
     if (!nm) return { error: 'Ingredient ' + (i + 1) + ' needs a name.' };
     const raw = String(r.amount || '').trim();
@@ -302,7 +349,11 @@ export function reviewBody(draft) {
     const unit = cleanUnitText(r.unit) || (amount != null ? 'count' : null);  // an amount with no unit is a count
     const note = String(r.note || '').trim() || null;
     const pkg = amount != null ? rowPkg({ ...r, unit }) : null;  // null tells the server not to read a size from the text again
-    const was = amount != null && r.wasAmount && ['g', 'kg', 'oz', 'lb'].indexOf(canonUnit(unit)) >= 0 ? { was_amount: r.wasAmount, was_unit: r.wasUnit } : {};
+    // An untouched import estimate keeps its source and original wording (3 clove) so a real portion can replace it once matched.
+    // Use Grams keeps the line it replaced. An estimate the person edited is their own amount and sends neither.
+    const est = rowEstimated(r);
+    const was = est ? { estimated: true, est_source: r.estSource || 'ai', ...(r.wasAmount ? { was_amount: r.wasAmount, was_unit: r.wasUnit } : {}) }
+      : !r.estimated && amount != null && r.wasAmount && ['g', 'kg', 'oz', 'lb'].indexOf(canonUnit(unit)) >= 0 ? { was_amount: r.wasAmount, was_unit: r.wasUnit } : {};
     ingredients.push({ text: rowText(r).slice(0, 300), amount, unit, name: nm, note, pkg_amount: pkg ? pkg.amount : null, pkg_unit: pkg ? pkg.unit : null, ...was });
   }
   const st = stepsCheck(draft.steps);

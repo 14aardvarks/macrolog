@@ -1,4 +1,4 @@
-import { sentence, sourceLabel, kcalEstimated, KCAL_ESTIMATE_CUE, isEstimate, sourceNote, CUSTOM_UNIT, CUSTOM_UNIT_LABEL, CUSTOM_UNIT_MAX, CUSTOM_UNIT_HINT, cleanUnitText, unitToSave, checkList, checkSummary, estimateList, estimateSummary, weightTag, tagGrams } from './util.js';
+import { sentence, sourceLabel, kcalEstimated, KCAL_ESTIMATE_CUE, isEstimate, sourceNote, checkList, checkSummary, estimateList, estimateSummary, weightTag, tagGrams } from './util.js';
 
 // Tiny DOM helpers. Text always goes through textContent / text nodes, never innerHTML.
 
@@ -32,26 +32,26 @@ export function select(options, value, attrs) {
   return sel;
 }
 
-// A unit select with a Custom choice that reveals a text box for the user's own unit. choices: [{value, label}] (no blank choice).
-// Returns a wrapper that works like a select: .value reads the unit to save ('' when Custom is empty) and can be set, 'change'
-// fires on the wrapper when the choice or the typed text changes, .focus() focuses the select.
-export function unitControl(choices, value, attrs) {
+// A unit select (issue #55: no Custom, no typed units). choices: [{value, label}], the measures a recipe row may pick. A value that is
+// not a choice (count, clove or a typed word an older row already holds) is kept as one extra option, so it stays editable and is
+// never lost. opts.blank adds a "no unit" option for lines without an amount (salt to taste). Returns a wrapper that works like a
+// select: .value reads and sets the unit, 'change' bubbles from the select, .focus() focuses it.
+export function unitControl(choices, value, attrs, opts) {
   const sel = h('select', attrs || {});
+  const blank = !opts || opts.blank !== false;
+  if (blank) sel.appendChild(h('option', { value: '' }, 'no unit'));
   for (const o of choices) sel.appendChild(h('option', { value: o.value }, o.label));
-  sel.appendChild(h('option', { value: CUSTOM_UNIT }, CUSTOM_UNIT_LABEL));
-  const label = (attrs && attrs['aria-label']) || 'Unit';
-  const box = h('input', { type: 'text', class: 'unit-custom', maxlength: CUSTOM_UNIT_MAX, placeholder: CUSTOM_UNIT_HINT, autocomplete: 'off',
-    autocapitalize: 'none', enterkeyhint: 'done', 'aria-label': label + ', your own', hidden: '' });
-  const wrap = h('div', { class: 'unit-control' }, sel, box);
-  const known = (v) => choices.some((o) => o.value === v);
+  const wrap = h('div', { class: 'unit-control' }, sel);
+  const has = (v) => Array.prototype.some.call(sel.options, (o) => o.value === v);
   function put(v) {
     const unit = v == null ? '' : String(v);
-    if (known(unit)) { sel.value = unit; box.value = ''; } else { sel.value = CUSTOM_UNIT; box.value = cleanUnitText(unit); }
-    box.hidden = sel.value !== CUSTOM_UNIT;
+    if (!has(unit) && (unit || !blank)) {  // an older row's own unit: kept as an extra option
+      const word = unit ? (unit === 'floz' ? 'fl oz' : unit) : 'no unit';
+      sel.insertBefore(h('option', { value: unit, 'data-kept': 'true' }, word), blank ? sel.options[1] || null : sel.firstChild);
+    }
+    sel.value = unit;
   }
-  sel.addEventListener('change', () => { box.hidden = sel.value !== CUSTOM_UNIT; if (!box.hidden) box.focus(); });
-  box.addEventListener('input', () => wrap.dispatchEvent(new Event('change', { bubbles: true })));
-  Object.defineProperty(wrap, 'value', { get: () => (sel.value === CUSTOM_UNIT ? unitToSave(box.value) : sel.value), set: put });
+  Object.defineProperty(wrap, 'value', { get: () => sel.value, set: put });
   wrap.focus = () => sel.focus();
   put(value);
   return wrap;

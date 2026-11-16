@@ -94,7 +94,9 @@ test('Review One By One walks unmatched and suggested rows in list order and ski
 
 test('inline search: the line for the amount, the start text and at most 5 results', () => {
   const pk = un(1, { src: { text: '1 (15 oz) can beans', amount: 1, unit: 'can', name: 'beans', note: '15 oz', pkg_amount: 15, pkg_unit: 'oz' } });
-  assert.deepEqual(lineOf(pk), { amount: 1, unit: 'can', pkg: { amount: 15, unit: 'oz' }, name: 'beans' });
+  assert.deepEqual(lineOf(pk), { amount: 1, unit: 'can', pkg: { amount: 15, unit: 'oz' }, name: 'beans', was: null });
+  const est = un(3, { src: { text: '3 cloves garlic', amount: 9, unit: 'g', name: 'garlic', note: '3 cloves', estimated: true, was_amount: 3, was_unit: 'clove' } });
+  assert.deepEqual(lineOf(est).was, { amount: 3, unit: 'clove' });  // issue #55: the original wording for a real portion
   assert.deepEqual(lineOf({ id: 2, amount: 3, unit: 'g', src: null }), { amount: 3, unit: 'g', pkg: null, name: '' });
   assert.equal(searchStart(pk), 'beans');
   assert.equal(searchStart({ food: F, src: null }), 'Butter, salted');

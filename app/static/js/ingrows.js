@@ -6,7 +6,7 @@
 import { api } from './api.js';
 import { h, svg, clear, field, message, show, sourceBadge, unitControl, kcalCue, checkBlock, weightTagNode } from './dom.js';
 import { confirmClaude } from './notice.js';
-import { unitChoices, fmtNum, sentence, amountMemo, matchAmount, centsText, checkReasonLine, effectiveAutoMatch, CLAUDE_CAP_NOTE, ESTIMATE_SOURCES, weightTag, qtyText, unitWord } from './util.js';
+import { unitChoices, fmtNum, sentence, amountMemo, matchAmount, linePick, isMeasureUnit, weightReasonLine, centsText, checkReasonLine, effectiveAutoMatch, CLAUDE_CAP_NOTE, ESTIMATE_SOURCES, weightTag, qtyText, unitWord } from './util.js';
 import {
   parseIngredientLine, matchWhat, matchDoneText, pendingProposals, acceptAllText, previousCountText, PREVIOUS_CUE, AUTO_MATCH_LOADING,
   AUTO_MATCH_FAILED, autoMatchResult, claudeKeep, claudeOffNote, AUTO_CLAUDE_FAILED, AUTO_CLAUDE_CANCELLED, rateLimitNote, unmatchedIds,
@@ -93,7 +93,7 @@ export function ingredientSection(meal, ctx, opts) {
       const food = await api.food(f.id);
       const line = lineOf(item);
       const label = food.units[0];
-      const pick = matchAmount(food.units, line.amount, line.unit, line.pkg, line.name) || { amount: label.default_amount, unit: label.unit, check: true };
+      const pick = linePick(food.units, line) || { amount: label.default_amount, unit: label.unit, check: true };
       const ok = await apply(item, { food_id: food.id, amount: pick.amount, unit: pick.unit, ...(pick.check ? { check: true } : {}) });
       if (ok) say(sentence('Matched ' + rowLine(item).head + ' to ' + food.name));
       return ok;
@@ -362,7 +362,10 @@ export function ingredientSection(meal, ctx, opts) {
     const close = () => { panel = null; paint(item.id, 'menu'); };
     let unitSel = null;
     unitsOf(item.food_id).then((us) => {
-      unitSel = unitControl(unitChoices(us).map((u) => ({ value: u.value, label: u.label + (u.estimated ? ' (estimated)' : '') })), grams ? 'g' : item.unit, { 'aria-label': 'Unit of ' + name });
+      // weights and volumes only (issue #55); the row's own count, package or label word stays as an extra option
+      const measures = unitChoices(us).filter((u) => isMeasureUnit(u.value));
+      unitSel = unitControl(measures.map((u) => ({ value: u.value, label: u.label + (u.estimated ? ' (estimated)' : '') })), grams ? 'g' : item.unit,
+        { 'aria-label': 'Unit of ' + name }, { blank: false });
       if (grams && !us.some((u) => u.unit === 'g')) unitSel.value = item.unit;
       unitBox.replaceChild(unitSel, unitBox.lastChild);
       save.disabled = false;
@@ -405,7 +408,10 @@ export function ingredientSection(meal, ctx, opts) {
           tag ? [' ', tag] : item.estimated && state !== 'check' ? h('span', { class: 'src-est', title: 'From ' + (ESTIMATE_SOURCES[item.estimate_source] || ESTIMATE_SOURCES.guess) }, ' Estimated Conversion') : null),
         state === 'check' ? h('span', { class: 'check-reason' }, checkReasonLine(item.check_reason, (item.src && item.src.unit) || item.unit)) : null);
     }
-    return h('span', { class: 'ing-state' }, chip, p && !p.food ? h('span', { class: 'sub' }, ' ' + sentence(p.note || 'No match found')) : null);
+    const reason = item.src ? weightReasonLine(item.src.weight_reason, item.src.unit) : '';  // a count no typical weight knows (issue #55)
+    return h('span', { class: 'ing-state' }, chip, p && !p.food ? h('span', { class: 'sub' }, ' ' + sentence(p.note || 'No match found')) : null,
+      item.src && item.src.estimated && !p ? h('span', { class: 'src-est' }, ' Estimated') : null,
+      reason ? h('span', { class: 'check-reason' }, reason) : null);
   }
   function rowNode(item) {
     const p = props[item.id];

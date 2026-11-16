@@ -39,7 +39,7 @@ test('step 2: package and fuzzy units are known, canonical and pluralized', () =
   assert.equal(amountText(2, 'clove'), '2 cloves');
   assert.equal(ingredientText(2, 'clove', 'garlic'), '2 cloves garlic');
   assert.equal(cookIngredient({ src: { amount: 1, unit: 'clove', name: 'garlic', note: 'minced' } }, 2).text, '2 cloves garlic, minced');
-  for (const w of [...PACKAGE_UNITS, ...FUZZY_UNITS]) assert.ok(IMPORT_UNITS.some(([v]) => v === w), w);
+  for (const w of [...PACKAGE_UNITS, ...FUZZY_UNITS, 'count']) assert.ok(!IMPORT_UNITS.some(([v]) => v === w), w);  // issue #55: measures only
 });
 
 test('step 2: the local splitter keeps units structured and the name clean', () => {
@@ -94,7 +94,8 @@ test('step 3: matchAmount uses the printed size once', () => {
 test('review flags a package or fuzzy unit without a printed size, and Use Grams clears it', () => {
   const rows = parseIngredientText('2 cloves garlic\n1 can corn\n3 carrots\n1 cup flour\nsalt to taste').ingredients;
   const d = reviewDraft({ ingredients: rows });
-  assert.deepEqual(d.rows.map(reviewFlag), ['No standard weight for clove, enter grams', 'Can size not printed, pick a size or enter grams', '', '', '']);
+  assert.deepEqual(d.rows.map(reviewFlag), ['No standard weight for clove, enter grams', 'Can size not printed, pick a size or enter grams',
+    'No standard weight for count, so it shows Check Amount after matching unless the food has a weight per item', '', '']);
   useGrams(d.rows[0]);
   assert.deepEqual([d.rows[0].unit, d.rows[0].amount, reviewFlag(d.rows[0])], ['g', '', '']);
   assert.equal(reviewFlag({ ...blankRow(), amount: '1', unit: 'piece' }), '');  // a plain count word

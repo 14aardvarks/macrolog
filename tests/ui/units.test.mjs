@@ -6,10 +6,11 @@ import { reviewBody, reviewDraft, rowText, importUnitOptions, IMPORT_UNITS, blan
 const EGG = [{ unit: 'egg', default_amount: 1 }, { unit: 'serving', default_amount: 1 }, { unit: 'count', default_amount: 1 }, { unit: '', default_amount: 1 }];
 const FLOUR = [{ unit: 'g', default_amount: 30 }, { unit: 'cup', default_amount: 0.25, estimated: true }, { unit: 'count', default_amount: 1 }, { unit: '', default_amount: 1 }];
 
-test('review unit choices start with lowercase count and have no None choice', () => {
-  assert.deepEqual(IMPORT_UNITS[0], ['count', 'count']);
-  assert.ok(!IMPORT_UNITS.some(([v, l]) => v === '' || l === 'None' || l === 'Count'));
-  assert.deepEqual(importUnitOptions()[0], { value: 'count', label: 'count' });
+test('review unit choices are the weights and volumes only (issue #55)', () => {
+  assert.deepEqual(IMPORT_UNITS.map(([v]) => v), ['g', 'kg', 'oz', 'lb', 'ml', 'l', 'floz', 'cup', 'tbsp', 'tsp']);
+  assert.ok(!IMPORT_UNITS.some(([v, l]) => v === '' || v === 'count' || l === 'None' || l === 'Custom'));
+  assert.deepEqual(importUnitOptions()[0], { value: 'g', label: 'g' });
+  assert.deepEqual(importUnitOptions()[6], { value: 'floz', label: 'fl oz' });
 });
 
 test('custom unit text is trimmed, capped, stripped of control characters and kept as typed', () => {

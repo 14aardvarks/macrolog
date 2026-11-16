@@ -122,7 +122,8 @@ export const reviewPos = (i, n) => 'Ingredient ' + (i + 1) + ' of ' + n;
 export function lineOf(item) {
   const src = (item && item.src) || null;
   if (!src) return { amount: item ? item.amount : null, unit: item ? item.unit : null, pkg: null, name: '' };
-  return { amount: src.amount, unit: src.unit, pkg: src.pkg_amount ? { amount: src.pkg_amount, unit: src.pkg_unit } : null, name: src.name || '' };
+  return { amount: src.amount, unit: src.unit, pkg: src.pkg_amount ? { amount: src.pkg_amount, unit: src.pkg_unit } : null, name: src.name || '',
+    was: src.estimated && src.was_amount ? { amount: src.was_amount, unit: src.was_unit } : null };
 }
 
 // The text the inline search starts with: the ingredient name, else the line.
