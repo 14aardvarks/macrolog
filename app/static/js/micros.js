@@ -1,5 +1,5 @@
 import { h, field, select } from './dom.js';
-import { SEARCH_SOURCES, searchSource, AUTO_MATCHES, autoMatch, MICROS, shownMicros, microValue, microText, microNote, barWidth, barState, toggleMicro, parseDecimal, fmtAmount, sentence, REFRESH_MODES, refreshModeHint, resolveRefreshMode, ESTIMATE_HELP } from './util.js';
+import { SEARCH_SOURCES, searchSource, MICROS, shownMicros, microValue, microText, microNote, barWidth, barState, toggleMicro, parseDecimal, fmtAmount, sentence, REFRESH_MODES, refreshModeHint, resolveRefreshMode, ESTIMATE_HELP } from './util.js';
 
 let seq = 0;
 
@@ -84,12 +84,6 @@ export function displaySection(display, sources, save, claude) {
     const want = srcSel.value;
     try { source = (await save({ search_source: want })).search_source; } catch (e) { srcSel.value = source; }
   });
-  let auto = autoMatch(display.auto_match);
-  const autoSel = select(AUTO_MATCHES, auto, { id: 'disp-auto', 'aria-describedby': 'disp-auto-help' });
-  autoSel.addEventListener('change', async () => {
-    const want = autoSel.value;
-    try { auto = (await save({ auto_match: want })).auto_match; } catch (e) { autoSel.value = auto; }
-  });
   let cur = display;
   const fullNow = () => !!(claude && claude.full && claude.full());
   const refSel = select(REFRESH_MODES, resolveRefreshMode(cur.refresh_mode, cur.refresh_mode_set, fullNow(), claude && claude.status).wanted, { id: 'disp-refresh', 'aria-describedby': 'disp-refresh-help disp-refresh-why' });
@@ -113,8 +107,6 @@ export function displaySection(display, sources, save, claude) {
     h('p', { class: 'field-cap' }, 'Micro nutrients to show'), chips,
     h('label', { class: 'field', for: 'disp-source' }, h('span', null, 'Default Search Source'), srcSel),
     h('p', { class: 'sub', id: 'disp-source-help' }, 'Where the search on Add looks first. All Sources by default. Changing Source on Add lasts until the app is reloaded.'),
-    h('label', { class: 'field', for: 'disp-auto' }, h('span', null, 'Match Ingredients'), autoSel),
-    h('p', { class: 'sub', id: 'disp-auto-help' }, sentence('Sets what Match Ingredients does on a recipe, the button that appears when a recipe has ingredients not matched to foods') + ' ' + sentence('Search is the default, is free and fills in suggested matches for you to review') + ' ' + sentence('Claude matches the ingredients with Claude, and Search Then Claude asks Claude only about the ingredients Search did not match') + ' ' + sentence('Claude uses Claude requests, shows the cost first when Confirm before using Claude is on, and falls back to Search when it is not set up') + ' ' + sentence('Off makes Match Ingredients offer a choice of ways instead of running one') + ' ' + sentence('With Full Claude Use on, Search runs as Search Then Claude')),
     h('label', { class: 'field', for: 'disp-refresh' }, h('span', null, 'Refresh Nutrients'), refSel), refWhy, refHelp,
     h('h3', { class: 'field-cap', id: 'disp-est-head' }, 'Estimated Weights'),
     h('p', { class: 'sub', id: 'disp-est-help' }, ESTIMATE_HELP));

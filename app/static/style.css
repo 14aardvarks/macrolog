@@ -415,8 +415,6 @@ textarea { font: inherit; color: inherit; width: 100%; min-height: 160px; paddin
 .saved-note { display: flex; align-items: center; gap: 10px; margin: 0 0 8px; font-weight: 600; }
 .saved-tag { padding: 2px 10px; border-radius: 99px; background: var(--accent); color: var(--accent-text); }
 .match-count { font-weight: 600; margin: 0 0 8px; }
-.match-bulk { margin: 0 0 8px; }
-.match-bulk .check { margin: 0; flex: none; }
 .match-add { margin: 8px 0 12px; }
 .match-state { display: inline-block; padding: 0 8px; border-radius: 99px; border: 1px solid var(--line); font-size: .8125rem; }
 /* A field with a hint under it (Settings, Claude): the hint sits close to its box. */
@@ -650,10 +648,6 @@ body.has-undo main { padding-bottom: 96px; }  /* room to scroll the last rows ab
 /* Recipe screen ingredients (v77, issue #49): one compact line per ingredient, the + and Claude + at the right, the three dot menu last.
    Buttons keep 44 px targets; text wraps beside them, so the row only grows when a suggestion or editor opens below it. */
 .ing-count { margin: 0 0 6px; font-weight: 600; }
-.ing-tools { margin: 0 0 8px; }
-.match-prompt { margin: 0 0 10px; }
-.match-prompt .match-prompt-text { margin: 0 0 8px; font-weight: 600; }
-.match-prompt[hidden] { display: none; }
 .ing-list { list-style: none; margin: 0 0 8px; padding: 0; }
 .ing-row { padding: 6px 0 6px 2px; border-bottom: 1px solid var(--line); }
 .ing-row:last-child { border-bottom: 0; }
@@ -700,14 +694,20 @@ body.has-undo main { padding-bottom: 96px; }  /* room to scroll the last rows ab
   color: var(--text); text-align: left; font: inherit; cursor: pointer; }
 .ing-result:hover, .ing-result:focus { background: var(--track); }
 .ing-result-sub { display: block; font-size: .8125rem; }
-.split-btn { position: relative; display: inline-flex; }
-.split-btn .split-main { border-radius: 10px 0 0 10px; gap: 6px; font-weight: 600; border-color: var(--accent); color: var(--accent); }
-.split-btn .split-main .plus { font-size: 1.25rem; line-height: 1; }
-.split-btn .split-menu { position: static; }
-.split-btn .split-more { min-width: 44px; padding: 0; border-left: 0; border-radius: 0 10px 10px 0; border-color: var(--accent); color: var(--accent); }
-.split-btn .split-menu .card-menu { left: 0; right: auto; top: 48px; min-width: 220px; }
-.split-btn .split-menu .card-menu.up { top: auto; bottom: 48px; }
-.caret { width: 0; height: 0; border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 6px solid currentColor; }
+/* The Match block (issue #56): count line, the choice of Match or Match With Claude as two joined segments, Start, Continue Without Matching. */
+.match-block { margin: 0 0 10px; }
+.match-block [hidden] { display: none; }
+.match-count-row { align-items: center; gap: 0 8px; }
+.match-count-row .ing-count { margin: 0; }
+.match-choice { gap: 8px; margin: 8px 0 0; align-items: center; }
+.match-modes { gap: 0; flex-wrap: nowrap; }
+.match-modes .match-mode { border-radius: 0; min-height: 44px; padding: 0 12px; white-space: nowrap; }
+.match-modes .match-mode:first-child { border-radius: 20px 0 0 20px; }
+.match-modes .match-mode:last-child { border-radius: 0 20px 20px 0; border-left: 0; }
+.match-block .btn.ghost { margin-top: 4px; }
+.walk .walk-pick { margin: 4px 0 0; }
+.walk .walk-nav { border-top: 1px solid var(--line); padding-top: 8px; }
+.ing-list[hidden] { display: none; }
 .review-one { margin: 0 0 10px; padding: 10px 12px; border-color: var(--accent); }
 .review-one h3 { margin: 0 0 4px; font-size: .875rem; color: var(--muted); }
 .review-one h3:focus { outline: none; }

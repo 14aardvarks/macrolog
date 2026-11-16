@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  notCounted, notCountedText, unmatchedIds, pendingProposals, acceptAllText, servingSizeBody, yieldText,
+  notCounted, notCountedText, unmatchedIds, servingSizeBody, yieldText,
   portionUnits, portionFraction, portionItems, portionNote, portionAmount, photoPick, PHOTOS_TEXT, MAX_PHOTOS,
 } from '../../app/static/js/recipeimport.js';
 import { setAmountFormat } from '../../app/static/js/util.js';
@@ -19,14 +19,6 @@ test('not counted rows and the quiet sentence', () => {
 
 test('unmatchedIds lists rows with no food that are not skipped', () => {
   assert.deepEqual(unmatchedIds([un(1), ok(2), ok(3, { check: true }), { ...un(4), skipped: true }, un(5)]), [1, 5]);
-});
-
-test('Accept All counts proposals with a food on rows that are not skipped', () => {
-  const items = [un(1), un(2), { ...un(3), skipped: true }, un(4)];
-  const props = { 1: { food: F }, 2: { kind: 'none', food: null }, 3: { food: F }, 4: { food: { name: 'Est' } } };
-  assert.deepEqual(pendingProposals(items, props).map((x) => x.item.id), [1, 4]);
-  assert.equal(acceptAllText(6), 'Accept 6 Suggested Matches');
-  assert.equal(acceptAllText(1), 'Accept 1 Suggested Match');
 });
 
 test('servingSizeBody validates servings and the optional yield', () => {
@@ -94,58 +86,20 @@ test('portionAmount converts a share into a unit, rounded for the box', () => {
   assert.equal(portionAmount(logMeal(), 0.25, 'cup'), null);
 });
 
-// ---------- Auto-Match After Import ----------
+// ---------- Match and Match With Claude (issue #56; Auto-Match After Import is gone) ----------
 import {
-  autoMatchOn, autoMatchIds, autoMatchResult, autoMatchPlan, autoClaudeBatch, AUTO_CLAUDE_OFF, AUTO_CLAUDE_FAILED, AUTO_CLAUDE_CANCELLED, rateLimitNote, RATE_LIMIT_NOTE, AUTO_MATCH_LOADING, AUTO_MATCH_FAILED,
+  autoMatchResult, AUTO_CLAUDE_FAILED, rateLimitNote, RATE_LIMIT_NOTE, AUTO_MATCH_LOADING, AUTO_MATCH_FAILED,
 } from '../../app/static/js/recipeimport.js';
-import { AUTO_MATCHES, autoMatch, DEFAULT_DISPLAY, sentence } from '../../app/static/js/util.js';
+import * as UTIL from '../../app/static/js/util.js';
+import * as IMPORT from '../../app/static/js/recipeimport.js';
+const { DEFAULT_DISPLAY, sentence } = UTIL;
 
 const amRow = (id, over) => ({ id, food: null, food_id: null, skipped: false, check: false, src: { text: 'r' + id }, ...over });
 
-test('Auto-Match After Import: Search by default, four choices, anything odd means Search', () => {
-  assert.deepEqual(AUTO_MATCHES.map((o) => o.value), ['search', 'claude', 'search_claude', 'off']);
-  assert.deepEqual(AUTO_MATCHES.map((o) => o.label), ['Search', 'Claude', 'Search Then Claude', 'Off']);
-  assert.equal(DEFAULT_DISPLAY.auto_match, 'search');
-  for (const v of ['off', 'claude', 'search_claude', 'search']) assert.equal(autoMatch(v), v);
-  for (const v of [undefined, null, '', 'OFF', 'Claude', 'bogus']) assert.equal(autoMatch(v), 'search');
-  for (const v of ['search', 'claude', 'search_claude']) assert.equal(autoMatchOn({ auto_match: v }), true);
-  assert.equal(autoMatchOn({ auto_match: 'off' }), false);
-  assert.equal(autoMatchOn({}), true);
-  assert.equal(autoMatchOn(undefined), true);
-});
-
-test('auto-match plan: what runs for each setting, with and without Claude', () => {
-  assert.deepEqual(autoMatchPlan('search', true), { search: true, claude: false, note: '' });
-  assert.deepEqual(autoMatchPlan('search', false), { search: true, claude: false, note: '' });
-  assert.deepEqual(autoMatchPlan('off', true), { search: false, claude: false, note: '' });
-  assert.deepEqual(autoMatchPlan('claude', true), { search: false, claude: true, note: '' });
-  assert.deepEqual(autoMatchPlan('search_claude', true), { search: true, claude: true, note: '' });
-  // Claude not set up, or the recipe switch is off: Search only, with a short note
-  assert.deepEqual(autoMatchPlan('claude', false), { search: true, claude: false, note: AUTO_CLAUDE_OFF });
-  assert.deepEqual(autoMatchPlan('search_claude', false), { search: true, claude: false, note: AUTO_CLAUDE_OFF });
-  assert.deepEqual(autoMatchPlan(undefined, true), { search: true, claude: false, note: '' });
-  for (const t of [AUTO_CLAUDE_OFF, AUTO_CLAUDE_FAILED, AUTO_CLAUDE_CANCELLED]) assert.ok(/\.$/.test(t) && !t.includes('\u2014'));
-});
-
-test('auto-match Claude rows: unmatched rows without a food proposal, up to the Claude cap of 15', () => {
-  const items = [amRow(1), amRow(2), amRow(3, { food: { id: 9 }, food_id: 9 }), amRow(4, { skipped: true }), amRow(5), amRow(6)];
-  assert.deepEqual(autoClaudeBatch(items, {}).send, [1, 2, 5, 6]);  // Claude only: nothing proposed yet
-  const props = { 1: { item_id: 1, food: { name: 'a' } }, 2: { item_id: 2, food: null }, 6: { item_id: 6, food: { name: 'b' } } };
-  assert.deepEqual(autoClaudeBatch(items, props), { send: [2, 5], rest: [] });  // Search Then Claude: rows with no proposal only
-  assert.deepEqual(autoClaudeBatch(items, undefined).send, [1, 2, 5, 6]);
-  const many = Array.from({ length: 20 }, (_, i) => amRow(i + 1));
-  const b = autoClaudeBatch(many, {});
-  assert.equal(b.send.length, 15);
-  assert.deepEqual(b.rest, [16, 17, 18, 19, 20]);
-  assert.deepEqual(autoClaudeBatch([], {}), { send: [], rest: [] });
-});
-
-test('auto-match searches unmatched rows only, up to the Search cap of 40', () => {
-  const items = [amRow(1), amRow(2, { food: { id: 9 }, food_id: 9 }), amRow(3, { skipped: true }), amRow(4, { food: { id: 9 }, check: true }), amRow(5)];
-  assert.deepEqual(autoMatchIds(items), [1, 5]);
-  const many = Array.from({ length: 45 }, (_, i) => amRow(i + 1));
-  assert.equal(autoMatchIds(many).length, 40);
-  assert.deepEqual(autoMatchIds([]), []);
+test('the Auto-Match After Import setting and its helpers are gone', () => {
+  assert.ok(!('auto_match' in DEFAULT_DISPLAY));
+  for (const k of ['AUTO_MATCHES', 'autoMatch', 'effectiveAutoMatch']) assert.ok(!(k in UTIL), k);
+  for (const k of ['autoMatchOn', 'autoMatchPlan', 'autoMatchIds', 'autoClaudeBatch', 'claudeOffNote', 'acceptAllText', 'previousCountText', 'matchDoneText']) assert.ok(!(k in IMPORT), k);
 });
 
 test('auto-match answers for rows matched or skipped meanwhile are dropped, and found lists rows that got a food', () => {
@@ -168,5 +122,5 @@ test('the USDA rate limit note is one quiet sentence, only when rows were skippe
 
 test('loading and failure texts follow the house style', () => {
   assert.equal(AUTO_MATCH_LOADING, 'Finding Matches...');
-  assert.ok(!AUTO_MATCH_FAILED.includes('—') && /\.$/.test(AUTO_MATCH_FAILED));
+  for (const t of [AUTO_MATCH_FAILED, AUTO_CLAUDE_FAILED]) assert.ok(!t.includes('\u2014') && !t.includes(':') && /\.$/.test(t) && !/Match All/.test(t));
 });

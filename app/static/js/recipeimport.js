@@ -1,5 +1,5 @@
 // Pure helpers for Import Recipe and matching ingredients on the recipe screen. No DOM access, safe to import from node.
-import { cleanUnitText, canonUnit, unitWord, RECIPE_UNITS, isMeasureUnit, weightReasonLine, ingredientText, printedSize, sizeText, isCountish, checkReasonLine, PACKAGE_UNITS, FUZZY_UNITS, PLAIN_COUNTS, plural, parseAmount, amountBoxValue, fmtAmount, qtyText, servingText, amountText, roundTo, matchedAmountText, sentence, centsText, stepsCheck, MEALS, MEAL_LABELS, MICROS, autoMatch } from './util.js';
+import { cleanUnitText, canonUnit, unitWord, RECIPE_UNITS, isMeasureUnit, weightReasonLine, ingredientText, printedSize, sizeText, isCountish, checkReasonLine, PACKAGE_UNITS, FUZZY_UNITS, PLAIN_COUNTS, plural, parseAmount, amountBoxValue, fmtAmount, qtyText, servingText, amountText, roundTo, matchedAmountText, sentence, centsText, stepsCheck, MEALS, MEAL_LABELS, MICROS } from './util.js';
 
 // Unit words found at the start of an ingredient line, mapped to the server's canonical units. Package and fuzzy units
 // (clove, can, pinch, util.js COUNTISH) are found through canonUnit too, so every plural works ("bunches", "boxes").
@@ -391,69 +391,20 @@ export const MATCH_MAX = { search: 40, claude: 15 };  // same as recipe_ai.SEARC
 // The rows to send now and the ones left for the next run.
 export const methodBatch = (method, ids) => matchBatch(ids, MATCH_MAX[method === 'claude' ? 'claude' : 'search']);
 
-// The note after a run: how many rows Search found nothing for, and how many are left past the cap for the next Match All.
-export function matchDoneText(method, proposals, restCount, costText) {
-  const none = (proposals || []).filter((p) => !p.food).length;
-  const found = (proposals || []).length - none;
-  const lead = method === 'search' && !found ? 'No suggestions were found.' : 'Check the suggestions, then accept them all or one by one.';
-  return lead + (method === 'search' && found && none ? ' ' + none + (none === 1 ? ' ingredient had' : ' ingredients had') + ' no match.' : '')
-    + (costText ? ' ' + costText : '')
-    + (restCount ? ' ' + restCount + (restCount === 1 ? ' more is' : ' more are') + ' still unmatched. Tap Match All again for them.' : '');
-}
-
 // The heading of a waiting proposal: Search suggestions say so, so nobody mistakes them for a Claude answer.
 export const proposalHead = (p) => (p && p.method === 'search' ? (p.food ? 'Suggested Match' : 'Search Result') : 'Claude Suggests');
 
-// ---------- Match Ingredients (the Auto-Match After Import setting) ----------
-// The recipe screen's Match Ingredients banner runs the setting on the unmatched rows when asked, so suggestions wait on the rows.
+// ---------- Match and Match With Claude on the recipe screen (issue #56) ----------
 
 export const AUTO_MATCH_LOADING = 'Finding Matches...';
-export const AUTO_MATCH_FAILED = sentence('Suggestions could not be found just now. Match All tries again');
+export const AUTO_MATCH_FAILED = sentence('Suggestions could not be found just now. Start Match again to try once more');
 export const RATE_LIMIT_NOTE = sentence('USDA lookup limit reached. Rows below were not searched');
-
-export const AUTO_CLAUDE_OFF = sentence('Claude is not available, so Search ran instead');
-// Why Claude was skipped, so a skip is never silent: the administrator's switch for recipe import and matching, else no usable key.
-export const AUTO_CLAUDE_SWITCH = sentence('Claude recipe matching is turned off on this server, so Search ran instead');
-export const AUTO_CLAUDE_NO_KEY = sentence('Claude is not set up for you, so Search ran instead');
-export const claudeOffNote = (st) => (st && st.features && st.features.recipe === false ? AUTO_CLAUDE_SWITCH : AUTO_CLAUDE_NO_KEY);
-export const AUTO_CLAUDE_FAILED = sentence('Claude could not match the rest just now. Match All With Claude tries again');
-export const AUTO_CLAUDE_CANCELLED = sentence('Claude was not asked. Match All With Claude runs it later');
-
-// Auto-Match runs for every setting except Off.
-export const autoMatchOn = (display) => autoMatch(display && display.auto_match) !== 'off';
-
-// What the setting does right now. aiOn: Claude is set up for this user and the recipe switch is on. A Claude setting without Claude
-// falls back to Search with a short note. { search: run Search, claude: then ask Claude for the rows without a proposal, note }.
-export function autoMatchPlan(setting, aiOn) {
-  const s = autoMatch(setting);
-  if (s === 'off') return { search: false, claude: false, note: '' };
-  const wantsClaude = s !== 'search';
-  const claude = wantsClaude && !!aiOn;
-  return { search: s !== 'claude' || !claude, claude, note: wantsClaude && !claude ? AUTO_CLAUDE_OFF : '' };
-}
-
-// The rows to search: every unmatched row, up to the Search cap (rows beyond it stay for the next Match All).
-export const autoMatchIds = (items) => methodBatch('search', unmatchedIds(items)).send;
-
-// The rows to ask Claude about: unmatched rows with no proposal (nothing waiting, or a Search Result with no food), up to the Claude
-// cap. all (Full Claude Use, or Match All With Claude): rows Search already proposed a food for are asked too, because Search nearly
-// always finds something and Claude would otherwise never run; only a proposal from a previous recipe is left alone. send: ask now,
-// rest: left for the next Match All.
-export const autoClaudeBatch = (items, proposals, all) =>
-  methodBatch('claude', unmatchedIds(items).filter((id) => {
-    const p = proposals && proposals[id];
-    return !(p && p.food) || (!!all && !p.from_previous);
-  }));
+export const AUTO_CLAUDE_FAILED = sentence('Claude could not match the rest just now. Match With Claude tries again');
 
 // Claude's answers to keep: a row Claude found no food for keeps the Search proposal it already has.
 export const claudeKeep = (answers, proposals) =>
   (answers || []).filter((p) => p.food || !(proposals && proposals[p.item_id] && proposals[p.item_id].food));
 
-// "2 of these are From Previous Recipe." under Accept Suggested Matches, else ''.
-export function previousCountText(pending) {
-  const n = (pending || []).filter((x) => x.p && x.p.from_previous).length;
-  return n ? sentence(n === 1 ? '1 of these is From Previous Recipe' : n + ' of these are From Previous Recipe') : '';
-}
 export const PREVIOUS_CUE = 'From Previous Recipe';
 
 // What to do with the answer. Rows that were matched or skipped while it ran are left alone. found: rows that got a food.
@@ -523,13 +474,6 @@ export const notCountedText = (n) => sentence(ingredientsText(n, 'counted.'));
 
 // Every unmatched row (no food, not skipped).
 export const unmatchedIds = (items) => items.filter((i) => matchState(i) === 'unmatched').map((i) => i.id);
-
-// Claude suggestions that Accept All would apply: a food was proposed and the row is not skipped.
-export function pendingProposals(items, props) {
-  return items.filter((it) => !it.skipped && props[it.id] && props[it.id].food).map((it) => ({ item: it, p: props[it.id] }));
-}
-
-export function acceptAllText(n) { return 'Accept ' + n + (n === 1 ? ' Suggested Match' : ' Suggested Matches'); }
 
 // ---------- serving size and logging part of a recipe ----------
 

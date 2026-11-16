@@ -1,19 +1,20 @@
-// The Ingredients section of the recipe screen (v77, issue #49): one compact line per ingredient, matched in place. An unmatched
-// row has one + (Match Ingredient: Search for that row, one request, the top suggestion shows on the row with Accept and Change)
-// and, when Claude is usable, a small Claude + (Match With Claude, the usual confirm, cost and cap). Everything else sits in the
-// row's three dot menu. Match All matches every unmatched row (Search, Claude or Search Then Claude), Review One By One walks them.
-// Every change is written at once and the recipe's totals follow live through opts.onMeal.
+// The Ingredients section of the recipe screen (v77, issue #49; matching reworked in issue #56): one compact line per ingredient,
+// matched in place. One block at the top holds the count line, a choice of Match (default: a free search for every open row, then a
+// walk through them one at a time) or Match With Claude (search, then Claude, accepting every confident pick on its own), Start, and
+// Continue Without Matching. Choosing and tapping Start is the confirmation, so no dialog shows. An unmatched row has + (Find Match,
+// the free search for that row) and, when Claude is usable, the Claude sparkle (Use Claude, one tap). Everything else sits in the
+// row's three dot menu. Every change is written at once and the recipe's totals follow live through opts.onMeal.
 import { api } from './api.js';
 import { h, svg, clear, field, message, show, sourceBadge, unitControl, kcalCue, checkBlock, weightTagNode } from './dom.js';
-import { confirmClaude } from './notice.js';
-import { unitChoices, fmtNum, sentence, amountMemo, matchAmount, linePick, isMeasureUnit, weightReasonLine, centsText, checkReasonLine, effectiveAutoMatch, CLAUDE_CAP_NOTE, ESTIMATE_SOURCES, weightTag, qtyText, unitWord } from './util.js';
+import { unitChoices, fmtNum, sentence, amountMemo, linePick, isMeasureUnit, weightReasonLine, checkReasonLine, CLAUDE_CAP_NOTE, ESTIMATE_SOURCES, weightTag, qtyText, unitWord } from './util.js';
 import {
-  parseIngredientLine, matchWhat, matchDoneText, pendingProposals, acceptAllText, previousCountText, PREVIOUS_CUE, AUTO_MATCH_LOADING,
-  AUTO_MATCH_FAILED, autoMatchResult, claudeKeep, claudeOffNote, AUTO_CLAUDE_FAILED, AUTO_CLAUDE_CANCELLED, rateLimitNote, unmatchedIds,
+  parseIngredientLine, PREVIOUS_CUE, AUTO_MATCH_LOADING, AUTO_MATCH_FAILED, autoMatchResult, claudeKeep, AUTO_CLAUDE_FAILED, rateLimitNote,
+  unmatchedIds,
 } from './recipeimport.js';
 import {
-  rowState, rowActions, ACTION_LABELS, rowChip, rowLine, foodText, MATCH_ALL_MODES, searchIds, matchAllPlan, claudeIds, reviewOrder,
-  reviewNext, reviewPos, lineOf, searchStart, topResults, matchedLine, restoreRowBody, matchPromptCount, matchPromptShows, matchPromptText,
+  rowState, rowActions, ACTION_LABELS, rowChip, rowLine, foodText, matchModes, matchMode, matchBlock, openCount, searchIds, claudeIds,
+  confidentIds, chunks, claudeDoneText, walkDoneText, MATCH_MAX, reviewOrder, reviewNext, reviewPos, lineOf, searchStart, topResults,
+  matchedLine, restoreRowBody,
 } from './rowmatch.js';
 import { menuButton } from './menu.js';
 
@@ -36,18 +37,16 @@ export function ingredientSection(meal, ctx, opts) {
   const aiOn = edit && !!(st && st.enabled && !(st.features && st.features.recipe === false));
   const props = ctx.flow.proposals(meal.id);  // suggestions waiting for Accept, kept for the session (the finder and back keep them)
   const busy = {};  // item id -> 'search' | 'claude' while that row's request runs
-  let running = false;  // Match All or Match Ingredients is running
-  let acted = false;  // a Match All, Match Ingredients or Review One By One started in this visit: the banner stays hidden
+  let running = null;  // 'walk' or 'claude' while Start runs its search (and Claude)
+  let mode = 'walk';  // the choice next to Start: Match (default) or Match With Claude
+  let expanded = false;  // the Match link was tapped on a recipe where Continue Without Matching was chosen
   let panel = null;  // { id, kind: 'search' | 'amount' | 'grams' } the one open editor on a row
   const status = h('div', { class: 'ing-status-box', 'aria-live': 'polite' });
   const limitNote = h('div', { 'aria-live': 'polite' });
   const count = h('p', { class: 'match-count ing-count' });
   const checks = h('div');
   const list = h('ul', { class: 'ing-list' });
-  const reviewBox = h('div');
-  const acceptBtn = h('button', { class: 'btn primary', type: 'button', onclick: acceptAll }, '');
-  const previousNote = h('span', { class: 'sub match-previous' });
-  const acceptRow = h('div', { class: 'row wrap match-bulk' }, acceptBtn, previousNote);
+  const walkBox = h('div');
   const fail = (e) => show(status, message(e.message, 'error'));
   const say = (t) => show(status, t ? message(t) : null);
   const itemOf = (id) => meal.items.find((x) => x.id === id);
@@ -99,22 +98,6 @@ export function ingredientSection(meal, ctx, opts) {
       return ok;
     } catch (e) { fail(e); return false; }
   }
-  async function acceptAll() {
-    const pending = pendingProposals(meal.items, props);
-    if (!pending.length) return;
-    acceptBtn.disabled = true;
-    try {
-      const rows = [];
-      for (const { item, p } of pending) {
-        const food = await foodOf(p);
-        rows.push({ id: item.id, food_id: food.id, amount: p.amount, unit: p.unit, ...(p.check ? { check: true } : {}) });
-      }
-      setMeal(await api.matchItems(meal.id, rows));
-      drop(rows.map((r) => r.id));
-      paint();
-      say(rows.length + (rows.length === 1 ? ' suggestion accepted.' : ' suggestions accepted.'));
-    } catch (e) { fail(e); } finally { acceptBtn.disabled = false; }
-  }
   async function removeRow(item) {
     const at = meal.items.findIndex((x) => x.id === item.id);
     const head = rowLine(item).head;
@@ -143,178 +126,204 @@ export function ingredientSection(meal, ctx, opts) {
       const { fresh } = autoMatchResult(meal.items, r.proposals);
       fresh.forEach((p) => { props[p.item_id] = p; });
       say(null);
-    } catch (e) { fail(e); } finally { delete busy[item.id]; paint(item.id, props[item.id] && props[item.id].food ? 'accept' : 'change'); }
+    } catch (e) { fail(e); } finally { delete busy[item.id]; paint(item.id, props[item.id] && props[item.id].food ? 'accept' : 'menu'); }
   }
+  // Use Claude on one row: a single tap, no dialog (the row is the choice). The monthly cap still applies on the server.
   async function claudeRow(item) {
-    if (!(await confirmClaude(ctx.settings, { what: matchWhat(1), query: { match_rows: 1 } }))) return;
     busy[item.id] = 'claude';
     paintRow(item.id, 'busy');
     try {
       const r = await api.matchIngredients(meal.id, [item.id]);
       claudeKeep(r.proposals, props).forEach((p) => { props[p.item_id] = p; });
-      say(r.cost != null ? 'This cost about ' + centsText(r.cost) + '.' : null);
-    } catch (e) { fail(e); } finally { delete busy[item.id]; paint(item.id, props[item.id] && props[item.id].food ? 'accept' : 'change'); }
+      say(null);
+    } catch (e) { fail(e); } finally { delete busy[item.id]; paint(item.id, props[item.id] && props[item.id].food ? 'accept' : 'menu'); }
   }
+  function scanRow(item) { delete props[item.id]; ctx.flow.find(meal, item, 'scan'); }
 
-  // ---------- Match All ----------
-  // mode: search, claude or search_claude. auto: Auto-Match After Import (Full Claude Use sends without asking, the cap gives a
-  // quiet note); otherwise the usual confirm for the Claude step. Never blocks the page; a failure only leaves rows unmatched.
-  async function runAll(mode, auto) {
-    if (running) return;
-    const full = ctx.settings.full_claude === true;
-    const base = matchAllPlan(mode, aiOn, full);
-    const plan = base.note ? { ...base, note: claudeOffNote(st) } : base;
-    if (!plan.search && !plan.claude) return;
-    acted = true;
-    running = true;
-    status.setAttribute('aria-busy', 'true');
+  // ---------- Start: Match or Match With Claude ----------
+  const keep = (r) => {
+    const { fresh } = autoMatchResult(meal.items, r.proposals);
+    fresh.forEach((p) => { props[p.item_id] = p; });
+    return fresh;
+  };
+  // The free search for every unmatched row without a food suggested (an earlier recipe's food first, on the server), 40 per request.
+  async function searchAll() {
     show(limitNote, null);
-    paintHead();
-    const keep = (r) => {
-      const { fresh } = autoMatchResult(meal.items, r.proposals);
-      fresh.forEach((p) => { props[p.item_id] = p; });
-      return fresh;
-    };
-    let text = '';
-    try {
-      if (plan.search) {
-        const b = searchIds(meal.items, props);
-        if (b.send.length) {
-          b.send.forEach((id) => { busy[id] = 'search'; });
-          paintRows();
-          say(auto ? AUTO_MATCH_LOADING : 'Searching for ' + b.send.length + (b.send.length === 1 ? ' ingredient...' : ' ingredients...'));
-          let r;
-          try { r = await api.matchSearch(meal.id, b.send, ctx.flow.searchSource()); } finally { b.send.forEach((id) => { delete busy[id]; }); }
-          const fresh = keep(r);
-          showLimit(r);
-          text = matchDoneText('search', fresh, b.rest.length, '');
-          paintRows();
-          say(text);
-        }
-      }
-      if (plan.claude) {
-        const b = claudeIds(meal.items, props, plan.all);
-        if (b.send.length) {
-          let go = true;
-          if (auto) {
-            let left = null;  // the monthly cap: automatic Claude steps stop there with one quiet note, nothing is sent
-            try { left = (await api.aiStatus()).remaining; } catch (e) { left = null; }
-            if (left != null && left <= 0) { go = false; text = [text, CLAUDE_CAP_NOTE].filter(Boolean).join(' '); }
-            else if (!full) go = await confirmClaude(ctx.settings, { what: matchWhat(b.send.length), query: { match_rows: b.send.length } });
-            if (!go && !(left != null && left <= 0)) text = [text, AUTO_CLAUDE_CANCELLED].filter(Boolean).join(' ');
-          } else {
-            go = await confirmClaude(ctx.settings, { what: matchWhat(b.send.length), query: { match_rows: b.send.length } });
-            if (!go) text = [text, AUTO_CLAUDE_CANCELLED].filter(Boolean).join(' ');
-          }
-          if (go) {
-            b.send.forEach((id) => { busy[id] = 'claude'; });
-            paintRows();
-            say('Claude is matching ' + b.send.length + (b.send.length === 1 ? ' ingredient...' : ' ingredients...'));
-            try {
-              const r = await api.matchIngredients(meal.id, b.send);
-              keep({ ...r, proposals: claudeKeep(r.proposals, props) });
-              text = matchDoneText('claude', b.send.map((id) => props[id]).filter(Boolean), b.rest.length, r.cost != null ? 'This cost about ' + centsText(r.cost) + '.' : '');
-            } catch (e) { text = [text, AUTO_CLAUDE_FAILED].filter(Boolean).join(' '); } finally { b.send.forEach((id) => { delete busy[id]; }); }
-          }
-        }
-      }
-      if (!text && !plan.note && !searchIds(meal.items, props).send.length) text = 'Every ingredient has a match or a suggestion.';
-      running = false;
-      paint();
-      say([text, plan.note].filter(Boolean).join(' '));
-    } catch (e) {
-      Object.keys(busy).forEach((k) => { delete busy[k]; });
-      running = false;
-      paint();
-      if (auto) say(AUTO_MATCH_FAILED); else fail(e);
-    } finally { running = false; status.removeAttribute('aria-busy'); paintHead(); }
+    for (const ids of chunks(searchIds(meal.items, props), MATCH_MAX.search)) {
+      ids.forEach((id) => { busy[id] = 'search'; });
+      paintRows();
+      try {
+        const r = await api.matchSearch(meal.id, ids, ctx.flow.searchSource());
+        keep(r);
+        showLimit(r);
+      } finally { ids.forEach((id) => { delete busy[id]; }); }
+    }
   }
-  // Match Ingredients (the banner): the Auto-Match After Import setting (Full Claude Use turns the default Search into Search Then Claude).
-  // Off opens the choice menu instead of running anything.
-  function matchPrompted() {
-    const eff = effectiveAutoMatch(ctx.display.auto_match, ctx.settings.full_claude === true);
-    if (eff.value === 'off') { const m = promptWrap.querySelector('.split-more'); if (m) m.click(); return; }
-    runAll(eff.value, true);
+  function begin(kind) {
+    running = kind;
+    status.setAttribute('aria-busy', 'true');
+    say(AUTO_MATCH_LOADING);
+    paintHead();
+  }
+  function end() {
+    running = null;
+    status.removeAttribute('aria-busy');
+  }
+  async function start() {
+    if (running || walk) return;
+    if (matchMode(mode, aiOn) === 'claude') runClaude(); else runWalk();
+  }
+  // Match: search every open row, then walk through them one at a time.
+  async function runWalk() {
+    begin('walk');
+    let note = '';
+    try { await searchAll(); } catch (e) { note = AUTO_MATCH_FAILED; }
+    end();
+    paintRows();
+    say(note || null);
+    startWalk();
+  }
+  // Match With Claude: asks nothing. Search, then Claude for every row the search was not sure of (with Full Claude Use for every
+  // row except a previous recipe's food), 15 per request, then accept every confident pick. The rest wait as suggestions on the rows.
+  async function runClaude() {
+    begin('claude');
+    const notes = [];
+    try { await searchAll(); } catch (e) { notes.push(AUTO_MATCH_FAILED); }
+    const ask = claudeIds(meal.items, props, ctx.settings.full_claude === true);
+    if (ask.length) {
+      let left = null;  // the monthly cap: nothing is sent at the cap, with one quiet note
+      try { left = (await api.aiStatus()).remaining; } catch (e) { left = null; }
+      if (left != null && left <= 0) notes.push(CLAUDE_CAP_NOTE);
+      else {
+        for (const ids of chunks(ask, MATCH_MAX.claude)) {
+          ids.forEach((id) => { busy[id] = 'claude'; });
+          paintRows();
+          try {
+            const r = await api.matchIngredients(meal.id, ids);
+            keep({ ...r, proposals: claudeKeep(r.proposals, props) });
+          } catch (e) { notes.push(AUTO_CLAUDE_FAILED); break; } finally { ids.forEach((id) => { delete busy[id]; }); }
+        }
+      }
+    }
+    let accepted = 0;
+    const sure = confidentIds(meal.items, props);
+    if (sure.length) {
+      try {
+        const rows = [];
+        for (const id of sure) {
+          const p = props[id];
+          const food = await foodOf(p);
+          rows.push({ id, food_id: food.id, amount: p.amount, unit: p.unit, ...(p.check ? { check: true } : {}) });
+        }
+        setMeal(await api.matchItems(meal.id, rows));
+        drop(rows.map((x) => x.id));
+        accepted = rows.length;
+      } catch (e) { notes.push(e.message); }
+    }
+    end();
+    paint();
+    const open = unmatchedIds(meal.items);
+    const waiting = open.filter((id) => props[id] && props[id].food).length;
+    say([claudeDoneText(accepted, waiting, open.length - waiting, ''), ...notes].join(' '));
+    focusChoice();
   }
   async function dismissPrompt() {
     dismissBtn.disabled = true;
     try {
       const m = await api.patchMeal(meal.id, { match_prompt_dismissed: true });
       meal.match_prompt_dismissed = m.match_prompt_dismissed;
+      expanded = false;
     } catch (e) { fail(e); } finally { dismissBtn.disabled = false; }
     paintHead();
+    if (matchLink && !matchLink.hidden) matchLink.focus();
   }
 
-  // Match All: a split button. The main part runs Search (free); the small menu offers Claude, Search Then Claude and Review One By One.
-  const allBtn = h('button', { class: 'btn split-main', type: 'button', 'aria-label': 'Match All With Search', onclick: () => runAll('search', false) },
-    h('span', { class: 'plus', 'aria-hidden': 'true' }, '+'), ' Match All');
-  const allWrap = h('div', { class: 'split-btn' });
-  const modes = MATCH_ALL_MODES.filter(([k]) => k === 'search' || aiOn).map(([key, label]) => ({ key, label }));
-  const modeItems = [...modes, { key: 'review', label: 'Review One By One' }];
-  const pickMode = (k) => (k === 'review' ? startReview() : runAll(k, false));
-  const moreFace = () => ({ btnClass: 'btn split-more', wrapClass: 'card-menu-wrap split-menu', title: 'More Ways to Match', face: h('span', { class: 'caret', 'aria-hidden': 'true' }) });
-  allWrap.append(allBtn, menuButton(allWrap, modeItems, 'More Ways to Match', (k) => (k === 'review' ? startReview() : runAll(k, false)), moreFace()));
-  const tools = h('div', { class: 'row wrap ing-tools' }, allWrap);
-
-  // The banner: Match Ingredients with a small menu of the other ways, and Continue Without Matching.
-  const promptText = h('p', { class: 'match-prompt-text' });
-  const promptWrap = h('div', { class: 'split-btn' });
-  promptWrap.append(h('button', { class: 'btn split-main', type: 'button', onclick: matchPrompted }, 'Match Ingredients'),
-    menuButton(promptWrap, modeItems, 'More Ways to Match Ingredients', pickMode, moreFace()));
+  // The block: the count line, the choice (two segments, only Match without Claude), Start and Continue Without Matching.
+  const modes = matchModes(aiOn);
+  const segBtns = modes.map(([key, label]) => h('button', { class: 'chip match-mode', type: 'button', 'data-mode': key, 'aria-pressed': key === mode ? 'true' : 'false',
+    onclick: () => { mode = key; paintHead(); } }, label));
+  const seg = h('div', { class: 'row match-modes', role: 'group', 'aria-label': 'How to match' }, segBtns);
+  const startBtn = h('button', { class: 'btn primary match-start', type: 'button', onclick: start }, modes.length > 1 ? 'Start' : 'Match');
   const dismissBtn = h('button', { class: 'btn ghost', type: 'button', onclick: dismissPrompt }, 'Continue Without Matching');
-  const prompt = h('div', { class: 'sheet match-prompt', role: 'group', 'aria-label': 'Match Ingredients', hidden: true },
-    promptText, h('div', { class: 'row wrap' }, promptWrap, dismissBtn));
+  const choiceRow = h('div', { class: 'row wrap match-choice' }, modes.length > 1 ? seg : null, startBtn);
+  const matchLink = h('button', { class: 'link-btn match-link', type: 'button', hidden: true,
+    onclick: () => { expanded = true; paintHead(); startBtn.focus(); } }, 'Match');
+  const block = h('div', { class: 'match-block', role: 'group', 'aria-labelledby': 'ing-count' },
+    h('div', { class: 'row wrap match-count-row' }, count, matchLink), checks, choiceRow, h('div', { class: 'row wrap' }, dismissBtn));
+  count.id = 'ing-count';
+  function focusChoice() { if (!choiceRow.hidden) startBtn.focus(); else if (!matchLink.hidden) matchLink.focus(); }
 
-  // ---------- Review One By One ----------
-  let review = null;  // { order, i, searching }
-  function startReview() {
+  // ---------- Match: one ingredient at a time ----------
+  // The place is kept for the session (ctx.flow.walk), so Scan Barcode leaves for the scanner and comes back to the same walk.
+  let walk = ctx.flow.walk(meal.id);  // { order, i }
+  let walkSearch = false;  // Search Again is open on this step
+  const tried = {};  // rows the walk already searched once in this visit
+  function startWalk() {
     const order = reviewOrder(meal.items, props);
-    acted = true;
     if (!order.length) { say('Every ingredient has a food.'); return; }
-    review = { order, i: reviewNext(order, meal.items, props, null), search: false, tried: {} };
-    paintReview(true);
+    walk = { order, i: reviewNext(order, meal.items, props, null) };
+    ctx.flow.walk(meal.id, walk);
+    walkSearch = false;
+    paint();
+    paintWalk(true);
   }
-  function stepReview() {
-    if (!review) return;
-    review.i = reviewNext(review.order, meal.items, props, review.i);
-    review.search = false;
-    if (review.i < 0) { review = null; show(reviewBox, null); say('Review done.'); focusTools(); return; }
-    paintReview(true);
+  function stepWalk() {
+    if (!walk) return;
+    walk.i = reviewNext(walk.order, meal.items, props, walk.i);
+    walkSearch = false;
+    if (walk.i < 0) { finishWalk(); return; }
+    paintWalk(true);
   }
-  function endReview() { review = null; show(reviewBox, null); paintHead(); focusTools(); }
-  function focusTools() { const b = tools.querySelector('.split-main'); if (b && !b.closest('[hidden]')) b.focus(); }
-  async function paintReview(focus) {
-    if (!review) return;
-    const item = itemOf(review.order[review.i]);
-    if (!item) { stepReview(); return; }
+  function finishWalk() {
+    if (!walk) return;
+    const order = walk.order;
+    walk = null;
+    ctx.flow.walk(meal.id, null);
+    show(walkBox, null);
+    paint();
+    const matched = order.filter((id) => { const it = itemOf(id); return it && it.food && !it.skipped; }).length;
+    say(walkDoneText(matched, openCount(meal.items, props)));
+    const head = document.getElementById('ing-head');
+    if (head) { if (head.scrollIntoView) head.scrollIntoView({ block: 'start' }); head.focus(); }
+  }
+  async function paintWalk(focus) {
+    if (!walk) return;
+    const item = itemOf(walk.order[walk.i]);
+    if (!item) { stepWalk(); return; }
     const p = props[item.id];
+    const now = rowState(item, p);
+    if (now !== 'unmatched' && now !== 'suggested') return;  // matched or skipped just now: stepWalk moves on
     const line = rowLine(item);
-    const head = h('h3', { id: 'review-title', tabindex: '-1' }, reviewPos(review.i, review.order.length));
+    const head = h('h3', { id: 'walk-title', tabindex: '-1' }, reviewPos(walk.i, walk.order.length));
     const body = [];
-    if (busy[item.id]) body.push(h('p', { class: 'sub' }, busy[item.id] === 'claude' ? 'Claude is matching...' : 'Searching...'));
-    else if (p && p.food) body.push(suggestionNode(item, p));
+    const working = busy[item.id];
+    if (working) body.push(h('p', { class: 'sub' }, working === 'claude' ? 'Claude is matching...' : 'Searching...'));
+    else if (p && p.food) body.push(h('p', { class: 'walk-pick' }, h('span', { class: 'match-state ing-chip chip-suggested' }, rowChip('suggested', p)), ' ', suggestionNode(item, p)));
     else if (p) body.push(h('p', { class: 'sub' }, sentence(p.note || 'No match found')));
-    const btns = h('div', { class: 'row wrap' },
-      p && p.food && !busy[item.id] ? h('button', { class: 'btn primary', type: 'button', onclick: async () => { if (await accept(item, p)) stepReview(); } }, 'Accept') : null,
-      h('button', { class: 'btn', type: 'button', onclick: () => { review.search = !review.search; paintReview(false); } }, 'Change'),
-      h('button', { class: 'btn', type: 'button', onclick: async () => { if (await apply(item, { skipped: true })) stepReview(); } }, 'Skip'),
-      h('button', { class: 'btn', type: 'button', onclick: stepReview }, 'Next'),
-      h('button', { class: 'btn ghost', type: 'button', onclick: endReview }, 'Done'));
-    show(reviewBox, h('div', { class: 'sheet review-one', role: 'group', 'aria-labelledby': 'review-title' },
+    const b = (label, cls, onclick, act) => h('button', { class: cls, type: 'button', 'data-act': act, disabled: !!working, onclick }, label);
+    const btns = h('div', { class: 'row wrap walk-acts' },
+      p && p.food ? b('Accept', 'btn primary', async () => { if (await accept(item, p)) stepWalk(); }, 'accept') : null,
+      b('Search Again', 'btn', () => { walkSearch = !walkSearch; paintWalk(false); }, 'search'),
+      b('Scan Barcode', 'btn', () => scanRow(item), 'scan'),
+      aiOn ? b('Use Claude', 'btn', async () => { await claudeRow(item); paintWalk(false); }, 'claude') : null);
+    const nav = h('div', { class: 'row wrap walk-nav' },
+      b('Skip', 'btn ghost', stepWalk, 'skip'),
+      b('Finish', 'btn ghost', finishWalk, 'finish'));
+    show(walkBox, h('div', { class: 'sheet review-one walk', role: 'group', 'aria-labelledby': 'walk-title' },
       head, h('p', { class: 'review-line' }, line.head, line.note ? h('span', { class: 'ing-note' }, ', ' + line.note) : null),
       body, btns,
-      review.search ? searchBox(item, async (f) => { if (await pickFood(item, f)) stepReview(); }, () => { review.search = false; paintReview(false); }) : null));
+      walkSearch ? searchBox(item, async (f) => { if (await pickFood(item, f)) stepWalk(); }, () => { walkSearch = false; paintWalk(false); }) : null,
+      nav));
     if (focus) head.focus();
-    if (!p && !busy[item.id] && !review.tried[item.id]) {  // no suggestion yet: one Search for this row, once
-      review.tried[item.id] = true;
+    if (!p && !working && !tried[item.id]) {  // no pick yet (a row added or skipped earlier): one free search for this row, once
+      tried[item.id] = true;
       busy[item.id] = 'search';
-      paintReview(false);
+      paintWalk(false);
       try {
         const r = await api.matchSearch(meal.id, [item.id], ctx.flow.searchSource());
-        autoMatchResult(meal.items, r.proposals).fresh.forEach((x) => { props[x.item_id] = x; });
+        keep(r);
       } catch (e) { fail(e); } finally { delete busy[item.id]; }
-      paintRows();
-      paintReview(false);
+      paintWalk(false);
     }
   }
 
@@ -429,7 +438,6 @@ export function ingredientSection(meal, ctx, opts) {
         if (k === 'match') side.appendChild(btn('match', 'ing-plus', h('span', { 'aria-hidden': 'true' }, '+'), () => searchRow(item)));
         else if (k === 'claude') side.appendChild(btn('claude', 'ing-claude', sparkle(), () => claudeRow(item)));
         else if (k === 'accept') below.appendChild(h('button', { class: 'btn small primary', type: 'button', 'data-act': 'accept', disabled: isBusy, 'aria-describedby': lineId, onclick: () => accept(item, p) }, 'Accept'));
-        else if (k === 'change') below.appendChild(h('button', { class: 'btn small', type: 'button', 'data-act': 'change', disabled: isBusy, 'aria-describedby': lineId, onclick: () => openPanel(item, 'search') }, 'Change'));
         else if (k === 'amount') below.appendChild(h('button', { class: 'btn small', type: 'button', 'data-act': 'amount', disabled: isBusy, 'aria-describedby': lineId, onclick: () => openPanel(item, 'amount') }, 'Edit Amount'));
       }
       const li = h('li');
@@ -465,7 +473,8 @@ export function ingredientSection(meal, ctx, opts) {
   }
   function menuAct(item, key) {
     if (key === 'claude') claudeRow(item);
-    else if (key === 'change') openPanel(item, 'search');
+    else if (key === 'change' || key === 'search') openPanel(item, 'search');
+    else if (key === 'scan') scanRow(item);
     else if (key === 'find') { delete props[item.id]; ctx.flow.find(meal, item, 'search'); }
     else if (key === 'amount') openPanel(item, 'amount');
     else if (key === 'grams') openPanel(item, 'grams');
@@ -479,7 +488,7 @@ export function ingredientSection(meal, ctx, opts) {
     const li = document.getElementById('ing-' + id);
     if (!li) return;
     const pick = (sel) => li.querySelector(sel);
-    const el = (key === 'accept' && pick('[data-act=accept]')) || (key === 'change' && pick('[data-act=change]')) || (key === 'menu' && pick('.ing-menu-btn'))
+    const el = (key === 'accept' && pick('[data-act=accept]')) || (key === 'menu' && pick('.ing-menu-btn'))
       || (key === 'busy' && pick('[data-act=match]')) || pick('[data-act=accept]') || pick('[data-act=match]') || pick('[data-act=amount]') || pick('.ing-menu-btn') || li;
     if (el && !el.disabled) el.focus({ preventScroll: false }); else li.focus();
   }
@@ -494,20 +503,14 @@ export function ingredientSection(meal, ctx, opts) {
   function paintHead() {
     count.textContent = matchedLine(meal, props);
     show(checks, checkBlock(meal));
-    const open = unmatchedIds(meal.items).length;
-    tools.hidden = !edit || !open;
-    const showPrompt = matchPromptShows(meal, props, { edit, running, acted });
-    if (showPrompt) promptText.textContent = matchPromptText(matchPromptCount(meal.items, props));
-    prompt.hidden = !showPrompt;
-    allBtn.disabled = running;
-    const more = tools.querySelector('.split-more');
-    if (more) more.disabled = running;
-    const pending = pendingProposals(meal.items, props);
-    acceptRow.hidden = !edit || !pending.length || running;
-    acceptBtn.textContent = acceptAllText(pending.length);
-    const before = previousCountText(pending);
-    previousNote.textContent = before;
-    previousNote.hidden = !before;
+    const b = matchBlock(meal, props, { edit, expanded });
+    choiceRow.hidden = !b.choice || !!walk;
+    dismissBtn.parentNode.hidden = !b.dismiss || !!walk;
+    matchLink.hidden = !b.link || !!walk;
+    segBtns.forEach((x) => { x.setAttribute('aria-pressed', x.dataset.mode === matchMode(mode, aiOn) ? 'true' : 'false'); x.disabled = !!running; });
+    startBtn.disabled = !!running;
+    list.hidden = !!walk;  // Match shows one ingredient at a time; Finish brings the list back
+    addRow0.hidden = !!walk || !edit;
   }
   function paintRows() {
     const had = list.contains(document.activeElement) ? document.activeElement.closest('.ing-row') : null;
@@ -515,7 +518,7 @@ export function ingredientSection(meal, ctx, opts) {
     meal.items.forEach((it) => list.appendChild(rowNode(it)));
     paintHead();
     if (had && !list.contains(document.activeElement)) focusRow(Number(had.id.slice(4)));
-    if (review) paintReview(false);
+    if (walk) paintWalk(false);
   }
   function paint(focusId, focusKey) {
     paintRows();
@@ -547,12 +550,20 @@ export function ingredientSection(meal, ctx, opts) {
     line.input.focus();
   }
   const addBtn = h('button', { class: 'btn', type: 'button', onclick: addForm }, 'Add Ingredient');
+  const addRow0 = h('div', { class: 'row wrap' }, addBtn);
 
+  // Back from Scan Barcode during Match: the same walk goes on at the same row, or the next one when that row was matched.
+  if (walk) {
+    if (!edit) { walk = null; ctx.flow.walk(meal.id, null); } else {
+      walk.i = reviewNext(walk.order, meal.items, props, walk.i - 1);
+      if (walk.i < 0) { walk = null; ctx.flow.walk(meal.id, null); }
+    }
+  }
   paintRows();
   const el = h('div', { class: 'ing-section' },
-    h('h2', { id: 'ing-head' }, 'Ingredients'), edit ? prompt : null, count, checks,
-    edit ? tools : null, edit ? acceptRow : null,
-    status, limitNote, reviewBox, list,
-    edit ? h('div', { class: 'row wrap' }, addBtn) : null, addBox);
-  return { el, focus: (id) => focusRow(id) };
+    h('h2', { id: 'ing-head', tabindex: '-1' }, 'Ingredients'), block,
+    status, limitNote, walkBox, list,
+    edit ? addRow0 : null, addBox);
+  if (walk) setTimeout(() => paintWalk(true), 0);
+  return { el, focus: (id) => (walk ? paintWalk(true) : focusRow(id)) };
 }

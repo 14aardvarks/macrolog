@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  ROW_STATES, rowState, rowActions, ACTION_LABELS, rowChip, rowLine, foodText, MATCH_ALL_MODES, searchIds, matchAllPlan, claudeIds, moreText,
+  ROW_STATES, rowState, rowActions, ACTION_LABELS, rowChip, rowLine, foodText, MATCH_MODES, matchModes, matchMode, matchBlock, openCount,
+  searchIds, claudeIds, confidentIds, isConfident, chunks, claudeDoneText, walkDoneText,
   reviewOrder, reviewNext, reviewPos, lineOf, searchStart, topResults, SEARCH_RESULTS, matchedLine, restoreRowBody,
 } from '../../app/static/js/rowmatch.js';
-import { AUTO_CLAUDE_OFF } from '../../app/static/js/recipeimport.js';
+import * as ROWMATCH from '../../app/static/js/rowmatch.js';
 import { setAmountFormat, sentence } from '../../app/static/js/util.js';
 
 setAmountFormat('fraction');
@@ -27,18 +28,18 @@ test('row state machine: unmatched, suggested, accepted, check and skipped come 
   assert.equal(rowState(null), 'unmatched');
 });
 
-test('each state shows one primary action set and puts the rest in the menu', () => {
-  assert.deepEqual(rowActions('unmatched', { aiOn: false }), { primary: ['match'], menu: ['change', 'find', 'skip', 'remove'] });
-  assert.deepEqual(rowActions('unmatched', { aiOn: true }).primary, ['match', 'claude']);
-  assert.deepEqual(rowActions('suggested', { aiOn: true }), { primary: ['accept', 'change'], menu: ['claude', 'find', 'skip', 'remove'] });
-  assert.deepEqual(rowActions('suggested', { aiOn: false }).menu, ['find', 'skip', 'remove']);
-  assert.deepEqual(rowActions('accepted', {}), { primary: [], menu: ['change', 'find', 'amount', 'grams', 'skip', 'remove'] });
+test('each state shows one primary action and puts the rest in the menu (issue #56)', () => {
+  assert.deepEqual(rowActions('unmatched', { aiOn: false }), { primary: ['match'], menu: ['search', 'scan', 'find', 'skip', 'remove'] });
+  assert.deepEqual(rowActions('unmatched', { aiOn: true }).primary, ['match', 'claude']);  // + and the Claude sparkle, one tap each
+  assert.deepEqual(rowActions('suggested', { aiOn: true }), { primary: ['accept'], menu: ['search', 'scan', 'claude', 'find', 'skip', 'remove'] });
+  assert.deepEqual(rowActions('suggested', { aiOn: false }).menu, ['search', 'scan', 'find', 'skip', 'remove']);
+  assert.deepEqual(rowActions('accepted', {}), { primary: [], menu: ['change', 'scan', 'find', 'amount', 'grams', 'skip', 'remove'] });
   assert.deepEqual(rowActions('check', {}).primary, ['amount']);
   assert.deepEqual(rowActions('skipped', {}), { primary: [], menu: ['unskip', 'remove'] });
   assert.ok(!rowActions('accepted', { canRemove: false }).menu.includes('remove'));  // the last row stays
   for (const s of ROW_STATES) for (const k of [...rowActions(s, { aiOn: true }).primary, ...rowActions(s, { aiOn: true }).menu]) assert.ok(ACTION_LABELS[k], k);
-  assert.equal(ACTION_LABELS.match, 'Match Ingredient');
-  assert.equal(ACTION_LABELS.claude, 'Match With Claude');
+  assert.deepEqual([ACTION_LABELS.match, ACTION_LABELS.claude, ACTION_LABELS.search, ACTION_LABELS.scan, ACTION_LABELS.accept],
+    ['Find Match', 'Use Claude', 'Search Again', 'Scan Barcode', 'Accept']);
 });
 
 test('chips say the state in words', () => {
@@ -59,26 +60,50 @@ test('rowLine shows amount, unit and name, with the note apart', () => {
   assert.equal(foodText(null), '');
 });
 
-test('Match All: modes, the rows Search looks up and the plan with and without Claude', () => {
-  assert.deepEqual(MATCH_ALL_MODES.map((m) => m[0]), ['search', 'claude', 'search_claude']);
-  const items = [un(1), un(2), ok(3), un(4, { skipped: true }), un(5)];
-  assert.deepEqual(searchIds(items, { 2: sug(2) }), { send: [1, 5], rest: [] });  // a suggested row already has one
-  assert.deepEqual(searchIds(items, { 2: { item_id: 2, food: null } }).send, [1, 2, 5]);  // no result before: search again
-  const many = Array.from({ length: 45 }, (_, i) => un(i + 1));
-  assert.deepEqual([searchIds(many, {}).send.length, searchIds(many, {}).rest.length], [40, 5]);
-  assert.deepEqual(matchAllPlan('search', true, false), { search: true, claude: false, note: '', all: false });
-  assert.deepEqual(matchAllPlan('claude', true, false), { search: false, claude: true, note: '', all: true });
-  assert.deepEqual(matchAllPlan('search_claude', true, false), { search: true, claude: true, note: '', all: false });
-  assert.deepEqual(matchAllPlan('search_claude', true, true).all, true);  // Full Claude Use asks every row
-  assert.deepEqual(matchAllPlan('claude', false, true), { search: true, claude: false, note: AUTO_CLAUDE_OFF, all: false });
-  assert.deepEqual(claudeIds(items, { 1: sug(1) }, false).send, [2, 5]);
-  assert.deepEqual(claudeIds(items, { 1: sug(1), 2: sug(2, { from_previous: true }) }, true).send, [1, 5]);
-  assert.equal(moreText(0), '');
-  assert.equal(moreText(1), '1 more is still unmatched. Tap Match All again for them.');
-  assert.equal(moreText(5), sentence('5 more are still unmatched. Tap Match All again for them'));
+test('one Match block: a choice of Match or Match With Claude, Start, and Continue Without Matching', () => {
+  assert.deepEqual(MATCH_MODES, [['walk', 'Match'], ['claude', 'Match With Claude']]);
+  assert.deepEqual(matchModes(false).map((m) => m[0]), ['walk']);  // Match With Claude only when Claude is usable
+  assert.deepEqual(matchModes(true).map((m) => m[0]), ['walk', 'claude']);
+  assert.equal(matchMode(undefined, true), 'walk');  // Match is the default
+  assert.equal(matchMode('claude', true), 'claude');
+  assert.equal(matchMode('claude', false), 'walk');
+  for (const k of ['MATCH_ALL_MODES', 'matchAllPlan', 'moreText', 'matchPromptShows', 'matchPromptText', 'matchPromptCount']) assert.ok(!(k in ROWMATCH), k);
+  const rows = [un(1), ok(2), un(3, { skipped: true }), un(4)];
+  const meal = (over) => ({ items: rows, match_prompt_dismissed: false, ...over });
+  assert.equal(openCount(rows, {}), 2);
+  assert.equal(openCount(rows, { 1: sug(1) }), 2);  // a waiting suggestion is still open
+  assert.deepEqual(matchBlock(meal(), {}, { edit: true }), { choice: true, dismiss: true, link: false });
+  assert.deepEqual(matchBlock(meal(), {}, { edit: false }), { choice: false, dismiss: false, link: false });
+  assert.deepEqual(matchBlock(meal({ match_prompt_dismissed: true }), {}, { edit: true }), { choice: false, dismiss: false, link: true });
+  assert.deepEqual(matchBlock(meal({ match_prompt_dismissed: true }), {}, { edit: true, expanded: true }), { choice: true, dismiss: false, link: false });
+  assert.deepEqual(matchBlock({ items: [ok(1), un(2, { skipped: true })] }, {}, { edit: true }), { choice: false, dismiss: false, link: false });
 });
 
-test('Review One By One walks unmatched and suggested rows in list order and skips rows matched meanwhile', () => {
+test('Match With Claude: the rows to search, to ask Claude about and to accept on their own', () => {
+  const items = [un(1), un(2), ok(3), un(4, { skipped: true }), un(5), un(6)];
+  const props = { 2: sug(2), 5: sug(5, { confident: true }), 6: { item_id: 6, food: null } };
+  assert.deepEqual(searchIds(items, props), [1, 6]);  // a row with a food suggested already has one; no result before: search again
+  assert.deepEqual(searchIds(Array.from({ length: 45 }, (_, i) => un(i + 1)), {}).length, 45);
+  assert.equal(isConfident(sug(1, { confident: true })), true);
+  assert.equal(isConfident(sug(1)), false);
+  assert.equal(isConfident({ item_id: 1, food: null, confident: true }), false);
+  assert.deepEqual(claudeIds(items, props, false), [1, 2, 6]);
+  assert.deepEqual(claudeIds(items, props, true), [1, 2, 5, 6]);
+  assert.deepEqual(claudeIds(items, { 5: sug(5, { confident: true, from_previous: true }) }, true), [1, 2, 6]);
+  assert.deepEqual(confidentIds(items, props), [5]);
+  assert.deepEqual(confidentIds([ok(5)], props), []);  // matched meanwhile
+  assert.deepEqual(chunks([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]]);
+  assert.deepEqual(chunks([], 15), []);
+  assert.equal(claudeDoneText(8, 3, 1, ''), 'Matched 8 ingredients. 3 suggestions are waiting for a look. Tap Accept on a row or start Match to go through them. 1 ingredient had no match.');
+  assert.equal(claudeDoneText(1, 0, 0, ''), 'Matched 1 ingredient.');
+  assert.equal(claudeDoneText(0, 1, 0, ''), 'Nothing was sure enough to match on its own. 1 suggestion is waiting for a look. Tap Accept on a row or start Match to go through them.');
+  assert.equal(walkDoneText(5, 2), 'Matched 5 ingredients. 2 ingredients are still open.');
+  assert.equal(walkDoneText(1, 1), 'Matched 1 ingredient. 1 ingredient is still open.');
+  assert.equal(walkDoneText(0, 0), 'Nothing was matched.');
+  for (const t of [claudeDoneText(2, 2, 2, ''), walkDoneText(2, 2)]) assert.ok(!t.includes(':') && !t.includes('\u2014'));
+});
+
+test('Match walks unmatched and suggested rows in list order and skips rows matched meanwhile', () => {
   const items = [ok(1), un(2), un(3, { skipped: true }), un(4), ok(5, { check: true }), un(6)];
   const props = { 4: sug(4) };
   const order = reviewOrder(items, props);
@@ -111,21 +136,4 @@ test('the count line and the Undo body of a removed row', () => {
   assert.equal(matchedLine({ matched: 1, needed: 2, skipped: 1, items: [] }, {}), '1 of 2 matched, 1 skipped');
   assert.deepEqual(restoreRowBody(ok(3, { check: true }), 2), { position: 2, src: src('butter', 1, 'tbsp'), food_id: 9, amount: 1, unit: 'tbsp', check: true });
   assert.deepEqual(restoreRowBody(un(4, { skipped: true }), 0), { position: 0, src: src('row 4', 1, 'cup'), skipped: true });
-});
-
-import { matchPromptCount, matchPromptShows, matchPromptText } from '../../app/static/js/rowmatch.js';
-
-test('Match Ingredients banner shows only for editable recipes with unmatched rows and no dismissal', () => {
-  const meal = (items, over) => ({ items, match_prompt_dismissed: false, ...over });
-  const rows = [un(1), ok(2), un(3, { skipped: true }), un(4)];
-  assert.equal(matchPromptCount(rows, {}), 2);
-  assert.equal(matchPromptCount(rows, { 1: sug(1) }), 1);  // a waiting suggestion is not unmatched
-  assert.equal(matchPromptShows(meal(rows), {}, { edit: true }), true);
-  assert.equal(matchPromptShows(meal(rows), {}, { edit: false }), false);
-  assert.equal(matchPromptShows(meal(rows, { match_prompt_dismissed: true }), {}, { edit: true }), false);
-  assert.equal(matchPromptShows(meal(rows), {}, { edit: true, running: true }), false);
-  assert.equal(matchPromptShows(meal(rows), {}, { edit: true, acted: true }), false);
-  assert.equal(matchPromptShows(meal([ok(1), un(2, { skipped: true })]), {}, { edit: true }), false);
-  assert.equal(matchPromptText(1), '1 ingredient is not matched to a food yet');
-  assert.equal(matchPromptText(3), '3 ingredients are not matched to foods yet');
 });

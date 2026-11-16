@@ -1,7 +1,7 @@
 // Pure helpers for matching ingredients on the recipe screen (v77, issue #49). No DOM access, safe to import from node.
 // The recipe is saved first with every ingredient unmatched; each row is then matched in place, one compact line per ingredient.
 import { qtyText, unitWord, fmtNum, sentence, matchedAmountText } from './util.js';
-import { unmatchedIds, methodBatch, autoClaudeBatch, autoMatchPlan, MATCH_MAX } from './recipeimport.js';
+import { unmatchedIds, MATCH_MAX } from './recipeimport.js';
 
 // ---------- row state machine ----------
 // unmatched: no food and no suggestion waiting. suggested: a suggestion with a food waits for Accept or Change. accepted: a food is
@@ -17,24 +17,26 @@ export function rowState(item, proposal) {
 }
 
 // What each state offers: the buttons on the row (primary) and the entries of its three dot menu. aiOn: Claude is usable for this
-// user. canRemove: more than one row is left (a recipe keeps at least one).
-//   unmatched: + (Search, one request) and, with Claude, the Claude +.  suggested: Accept and Change.  check: Edit Amount.
+// user. canRemove: more than one row is left (a recipe keeps at least one). Issue #56: an unmatched or suggested row offers Search Again
+// (inline search), Scan Barcode and Use Claude, each a single tap; the primary action stays on the row, the rest sit in the menu.
+//   unmatched: + (finds the best pick, one free request) and, with Claude, the Claude sparkle.  suggested: Accept.  check: Edit Amount.
 //   accepted and skipped: nothing on the row, everything in the menu.
 export function rowActions(state, opts) {
   const o = opts || {};
   const menu = (keys) => keys.filter((k) => k !== 'remove' || o.canRemove !== false);
+  const claude = o.aiOn ? ['claude'] : [];
   switch (state) {
-    case 'suggested': return { primary: ['accept', 'change'], menu: menu([...(o.aiOn ? ['claude'] : []), 'find', 'skip', 'remove']) };
-    case 'accepted': return { primary: [], menu: menu(['change', 'find', 'amount', 'grams', 'skip', 'remove']) };
-    case 'check': return { primary: ['amount'], menu: menu(['grams', 'change', 'find', 'skip', 'remove']) };
+    case 'suggested': return { primary: ['accept'], menu: menu(['search', 'scan', ...claude, 'find', 'skip', 'remove']) };
+    case 'accepted': return { primary: [], menu: menu(['change', 'scan', 'find', 'amount', 'grams', 'skip', 'remove']) };
+    case 'check': return { primary: ['amount'], menu: menu(['grams', 'change', 'scan', 'find', 'skip', 'remove']) };
     case 'skipped': return { primary: [], menu: menu(['unskip', 'remove']) };
-    default: return { primary: ['match', ...(o.aiOn ? ['claude'] : [])], menu: menu(['change', 'find', 'skip', 'remove']) };
+    default: return { primary: ['match', ...claude], menu: menu(['search', 'scan', 'find', 'skip', 'remove']) };
   }
 }
 
 export const ACTION_LABELS = {
-  match: 'Match Ingredient', claude: 'Match With Claude', accept: 'Accept', change: 'Change', find: 'Search Another', amount: 'Edit Amount',
-  grams: 'Enter Grams', skip: 'Skip', unskip: 'Unskip', remove: 'Remove',
+  match: 'Find Match', claude: 'Use Claude', accept: 'Accept', search: 'Search Again', scan: 'Scan Barcode', change: 'Change',
+  find: 'More Options', amount: 'Edit Amount', grams: 'Enter Grams', skip: 'Skip', unskip: 'Unskip', remove: 'Remove',
 };
 
 // The status chip of a row, in words so color is never the only cue.
@@ -68,35 +70,78 @@ export function foodText(food, amount, unit, grams, kcal) {
   return name + ', ' + matchedAmountText(amount, unit, grams) + (kcal == null ? '' : ', ' + fmtNum(kcal, 0) + ' kcal');
 }
 
-// ---------- Match All ----------
-// Match All (Search, Claude or Search Then Claude) matches every unmatched row, then Accept N Suggested Matches appears once.
+// ---------- Match and Match With Claude (issue #56) ----------
+// One block at the top of the Ingredients: the count line, a choice of Match (default, walks the rows one at a time) or Match With
+// Claude (only when Claude is usable; asks nothing, accepts what is confident), Start, and Continue Without Matching. Choosing and
+// tapping Start is the confirmation: no dialog and no cost text.
 
-export const MATCH_ALL_MODES = [['search', 'Match All With Search'], ['claude', 'Match All With Claude'], ['search_claude', 'Search Then Claude']];
+export const MATCH_MODES = [['walk', 'Match'], ['claude', 'Match With Claude']];
+export const matchModes = (aiOn) => MATCH_MODES.filter(([k]) => k === 'walk' || aiOn);
+export const matchMode = (mode, aiOn) => (mode === 'claude' && aiOn ? 'claude' : 'walk');
 
-// The rows Search should look up: unmatched rows with no suggestion waiting (a suggested row already has one), up to 40.
-export const searchIds = (items, props) => methodBatch('search', unmatchedIds(items).filter((id) => !(props && props[id] && props[id].food)));
+// Rows still open: unmatched or with a suggestion waiting.
+export const openCount = (items, props) => (items || []).filter((it) => {
+  const s = rowState(it, props && props[it.id]);
+  return s === 'unmatched' || s === 'suggested';
+}).length;
 
-// The plan of one Match All run. mode: search, claude or search_claude. aiOn: Claude is usable. full: Full Claude Use (Claude then asks
-// about every row Search did not take from a previous recipe). { search: run Search first, claude: then ask Claude, all: the Claude
-// step also asks rows Search suggested, note: Claude was wanted but is not available }.
-export function matchAllPlan(mode, aiOn, full) {
-  const p = autoMatchPlan(mode, aiOn);
-  return { ...p, all: p.claude && (mode === 'claude' || !!full) };
+// What the block shows. edit: the viewer can change the recipe. expanded: the Match link was tapped after Continue Without Matching.
+// { choice: the mode choice and Start, dismiss: Continue Without Matching, link: the small Match link of a dismissed recipe }.
+export function matchBlock(meal, props, opts) {
+  const o = opts || {};
+  const open = o.edit ? openCount(meal && meal.items, props) : 0;
+  const dismissed = !!(meal && meal.match_prompt_dismissed);
+  const choice = open > 0 && (!dismissed || !!o.expanded);
+  return { choice, dismiss: choice && !dismissed, link: open > 0 && dismissed && !o.expanded };
 }
 
-// The rows to ask Claude about after Search ran (or at once for Claude only): { send (at most 15), rest }.
-export const claudeIds = (items, props, all) => autoClaudeBatch(items, props, all);
+// The rows the free search looks up: unmatched rows with no food suggested yet (a row that found nothing before is searched again).
+export const searchIds = (items, props) => unmatchedIds(items).filter((id) => !(props && props[id] && props[id].food));
 
-// "4 more are still unmatched. Tap Match All again for them." when a run left rows past the cap, else ''.
-export function moreText(rest) {
-  if (!rest) return '';
-  return sentence(rest + (rest === 1 ? ' more is' : ' more are') + ' still unmatched. Tap Match All again for them');
+// A suggestion Match With Claude accepts on its own: the server marked it confident (Search: the same name or an earlier recipe's
+// food; Claude: a chosen candidate at medium or high confidence).
+export const isConfident = (p) => !!(p && p.food && p.confident === true);
+
+// The rows to ask Claude about after the search: every unmatched row without a confident suggestion. full (Full Claude Use): also the
+// confident ones, except a food from a previous recipe.
+export const claudeIds = (items, props, full) => unmatchedIds(items).filter((id) => {
+  const p = props && props[id];
+  return !isConfident(p) || (!!full && !p.from_previous);
+});
+
+// The suggestions to accept on their own: open rows whose waiting suggestion is confident.
+export const confidentIds = (items, props) => unmatchedIds(items).filter((id) => isConfident(props && props[id]));
+
+// Splits ids into requests of at most n (40 for the search, 15 for Claude, as the server allows).
+export function chunks(ids, n) {
+  const out = [];
+  for (let i = 0; i < (ids || []).length; i += n) out.push(ids.slice(i, i + n));
+  return out;
+}
+
+export const countWord = (n, one, many) => n + ' ' + (n === 1 ? one : many);
+
+// The note after Match With Claude: "Matched 8 ingredients. 3 suggestions are waiting for a look. 1 ingredient had no match."
+export function claudeDoneText(accepted, waiting, none, cost) {
+  const parts = [];
+  parts.push(accepted ? 'Matched ' + countWord(accepted, 'ingredient', 'ingredients') + '.' : 'Nothing was sure enough to match on its own.');
+  if (waiting) parts.push(countWord(waiting, 'suggestion is', 'suggestions are') + ' waiting for a look. Tap Accept on a row or start Match to go through them.');
+  if (none) parts.push(countWord(none, 'ingredient', 'ingredients') + ' had no match.');
+  if (cost) parts.push(cost);
+  return parts.join(' ');
+}
+
+// The note when Match ends: "Matched 5 ingredients. 2 are still open."
+export function walkDoneText(matched, left) {
+  const a = matched ? 'Matched ' + countWord(matched, 'ingredient', 'ingredients') + '.' : 'Nothing was matched.';
+  return left ? a + ' ' + countWord(left, 'ingredient is', 'ingredients are') + ' still open.' : a;
 }
 
 export { MATCH_MAX };
 
-// ---------- Review One By One ----------
-// Walks the rows that still need a food (unmatched or suggested), in list order, one at a time with Accept, Change and Skip.
+// ---------- Match: one at a time ----------
+// Walks the rows that still need a food (unmatched or suggested), in list order, one at a time with Accept, Search Again, Scan Barcode
+// and Use Claude, plus Skip (leave it for later) and Finish.
 
 export const reviewOrder = (items, props) => (items || []).filter((it) => {
   const s = rowState(it, props && props[it.id]);
@@ -143,16 +188,6 @@ export function matchedLine(meal, props) {
   if (waiting) t += ', ' + waiting + ' suggested';
   return meal.skipped ? t + ', ' + meal.skipped + ' skipped' : t;
 }
-
-// The Match Ingredients banner (v78): shown at the top of the Ingredients while some row is still unmatched (not skipped, no food, no
-// suggestion waiting), the viewer can edit, it was not dismissed for the recipe and no match is running or already started in this visit.
-export const matchPromptCount = (items, props) => (items || []).filter((it) => rowState(it, props && props[it.id]) === 'unmatched').length;
-export function matchPromptShows(meal, props, opts) {
-  const o = opts || {};
-  if (!o.edit || o.running || o.acted || (meal && meal.match_prompt_dismissed)) return false;
-  return matchPromptCount(meal && meal.items, props) > 0;
-}
-export const matchPromptText = (n) => (n === 1 ? '1 ingredient is not matched to a food yet' : n + ' ingredients are not matched to foods yet');
 
 // The body that puts a removed row back at its place (POST /api/meals/{id}/items), for Undo after Remove.
 export function restoreRowBody(item, position) {

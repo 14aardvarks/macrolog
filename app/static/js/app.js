@@ -36,7 +36,7 @@ import { tabOf, routeUrl, formatRoute, startRoute } from './routes.js';
 const main = document.getElementById('main');
 const nav = document.getElementById('nav');
 const state = { user: null, settings: { start_screen: 'today', default_meal: null, use_last: true, confirm_ai: true, amount_format: 'fraction', full_claude: false }, display: DEFAULT_DISPLAY, cleanup: null, depth: 0, tab: 'favorites', addMeal: null, quickMeal: null, draft: null, recipe: null, source: null, aiSt: null, claude: null, fallback: null,
-  importInput: null, importDraft: null, importBase: 0, proposals: {}, matchFocus: null, hold: null };  // Import Recipe and matching on the recipe screen  // addMeal, source (null = the Default Search Source setting), aiSt (last /api/ai/status) and claude (last Claude estimate) live for the session only
+  importInput: null, importDraft: null, importBase: 0, proposals: {}, walks: {}, matchFocus: null, hold: null };  // Import Recipe and matching on the recipe screen  // addMeal, source (null = the Default Search Source setting), aiSt (last /api/ai/status) and claude (last Claude estimate) live for the session only
 const FINDER = ['add', 'picker', 'scan', 'lookup', 'manual', 'ai'];  // screens New Recipe and the recipe screen's Search Another borrow from Add
 
 // The bottom bar button to mark: params.nav when a screen is opened from another tab, the Recipes tab while a recipe
@@ -93,6 +93,12 @@ const ctx = {
     },
     cancel() { state.importDraft = null; state.importInput = null; backThen(state.depth - state.importBase, () => {}); },
     proposals(id) { return state.proposals[id] || (state.proposals[id] = {}); },
+    // Match (issue #56) walks the open rows one at a time. Its place is kept for the session, so Scan Barcode or More Options on a step
+    // returns to the same walk. walk(id) reads it, walk(id, v) sets it, walk(id, null) ends it.
+    walk(id, v) {
+      if (v !== undefined) { if (v) state.walks[id] = v; else delete state.walks[id]; }
+      return state.walks[id] || null;
+    },
     // searchSource is what Search looks in: the Source chosen on Add (else the Default Search Source), as all, off or fdc;
     // Claude estimates are not a database source, so ai means all.
     searchSource() { const s = state.source == null ? state.display.search_source : state.source; return s === 'off' || s === 'fdc' ? s : 'all'; },
@@ -908,7 +914,7 @@ async function settingsScreen(root) {
       h('p', { class: 'sub', id: 'amount-format-help' }, 'Fractions apply to servings, cups, spoons and counts. Grams, millilitres, ounces and pounds always show decimals.'),
       h('div', { class: 'switch-row' },
         h('label', { for: 'confirm-ai' }, confirmAi, h('span', null, 'Confirm before using Claude')),
-        h('p', { class: 'sub', id: 'confirm-ai-help' }, 'On: you see the request count and estimated cost before anything is sent.')),
+        h('p', { class: 'sub', id: 'confirm-ai-help' }, 'When on, you see the request count and estimated cost before anything is sent. Matching ingredients with Claude runs when you tap it.')),
       h('h2', null, 'Daily Goals'), kcal, h('div', { class: 'grid3' }, pcts.map((p) => p[1])), total, micro.node, status,
       h('button', { class: 'btn primary', type: 'submit' }, 'Save')),
     h('div', { class: 'col-b' },

@@ -91,9 +91,10 @@ export function renderSignIn(cfg, me0) {
 // The hint under Full Claude Use. It states the default first.
 export const FULL_CLAUDE_HELP = [
   'Off by default.',
-  sentence('When on, Claude runs on its own where it helps: Match Ingredients set to Search becomes Search Then Claude, '
+  sentence('When on, Claude runs on its own where it helps'),
+  sentence('Match With Claude also checks the ingredients the search was sure of, except foods from an earlier recipe, '
     + 'a search with no result asks Claude for an estimate, a barcode that is not found offers a Claude estimate, '
-    + 'Refresh Nutrients lets Claude fill blanks the source left, and a recipe import, text or photo, sends and matches with Claude without asking'),
+    + 'Refresh Nutrients lets Claude fill blanks the source left, and a recipe import, text or photo, sends without asking'),
   sentence('Each step needs a Claude key and the feature allowed by the administrator, otherwise it is skipped quietly'),
   sentence('The monthly request limit always applies, and the other Claude steps still follow Confirm before using Claude'),
 ].join(' ');

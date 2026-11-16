@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  MATCH_MAX, methodBatch, matchDoneText, proposalHead, proposalText, parseIngredientLine,
+  MATCH_MAX, methodBatch, proposalHead, proposalText, parseIngredientLine,
 } from '../../app/static/js/recipeimport.js';
 
 const F = { id: 9, name: 'Oats' };
@@ -17,16 +17,6 @@ test('Claude sends up to 15 rows, Search up to 40, and the rest wait for the nex
   assert.deepEqual([s.send.length, s.rest.length, s.rest[0]], [40, 5, 41]);
   assert.equal(methodBatch('search', ids.slice(0, 12)).rest.length, 0);
   assert.equal(methodBatch('anything', ids).send.length, 40);
-});
-
-test('the note after a run counts rows without a match and rows left past the cap', () => {
-  const found = { food: F }, none = { food: null };
-  assert.equal(matchDoneText('search', [found, found], 0), 'Check the suggestions, then accept them all or one by one.');
-  assert.equal(matchDoneText('search', [found, none, none], 0), 'Check the suggestions, then accept them all or one by one. 2 ingredients had no match.');
-  assert.equal(matchDoneText('search', [found, none], 5), 'Check the suggestions, then accept them all or one by one. 1 ingredient had no match. 5 more are still unmatched. Tap Match All again for them.');
-  assert.equal(matchDoneText('search', [none], 0), 'No suggestions were found.');
-  assert.equal(matchDoneText('claude', [found, none], 3, 'This cost about 2 cents.'),
-    'Check the suggestions, then accept them all or one by one. This cost about 2 cents. 3 more are still unmatched. Tap Match All again for them.');
 });
 
 test('a Search proposal says it is a search result, and no match reads as a short note', () => {

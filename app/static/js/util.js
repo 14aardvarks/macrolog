@@ -972,12 +972,6 @@ export const SEARCH_SOURCES = [
 ];
 export function searchSource(v) { return SEARCH_SOURCES.some((s) => s.value === v) ? v : 'all'; }
 
-// Settings, Display, Match Ingredients (stored as auto_match): what the banner's Match Ingredients does on the recipe screen. Search (default) is the free
-// name search. Claude matches the unmatched rows with Claude. Search Then Claude searches first, then asks Claude only about the rows
-// Search left without a proposal. Off makes Match Ingredients open the choice menu instead. Same values as core.AUTO_MATCHES.
-export const AUTO_MATCHES = [{ value: 'search', label: 'Search' }, { value: 'claude', label: 'Claude' },
-  { value: 'search_claude', label: 'Search Then Claude' }, { value: 'off', label: 'Off' }];
-export const autoMatch = (v) => (AUTO_MATCHES.some((o) => o.value === v) ? v : 'search');
 export const MAX_AI_TEXT = 200;  // same as ai.MAX_TEXT on the server
 
 // What one search does. remote is true for Enter or the Search button, false while typing.
@@ -1042,7 +1036,7 @@ export const MICROS = [
 
 // What the screens show before /api/settings/display answers. Matches the server defaults.
 export const DEFAULT_DISPLAY = { show_macros: true, show_micros: true, show_split: true, show_macro_bar: true, show_table: true,
-  micros_open: false, micros_shown: MICROS.map((m) => m.key), today_view: 'list', auto_match: 'search', recipe_owner: 'mine', refresh_mode: 'search', refresh_mode_set: false };
+  micros_open: false, micros_shown: MICROS.map((m) => m.key), today_view: 'list', recipe_owner: 'mine', refresh_mode: 'search', refresh_mode_set: false };
 
 // The nutrients to list, in order. Empty when the section is switched off.
 export function shownMicros(display) {
@@ -1269,14 +1263,6 @@ export function cookToggle(checked, key) {
 // when the administrator's switch and a usable key allow it, inside the monthly cap and its cost reservation.
 
 export const CLAUDE_CAP_NOTE = sentence('Monthly Claude limit reached, so Claude was not used');
-
-// Match Ingredients with Full Claude Use: Search (the default, which a stored explicit "search" cannot be told from) becomes
-// Search Then Claude. Claude, Search Then Claude and Off are never changed. forced: Full Claude Use made the change. Under Full
-// Claude Use the Claude step asks about every row Search did not take from a previous recipe (see autoClaudeBatch).
-export function effectiveAutoMatch(setting, full) {
-  const s = autoMatch(setting);
-  return full && s === 'search' ? { value: 'search_claude', forced: true } : { value: s, forced: false };
-}
 
 // ---------- Refresh Nutrients mode ----------
 // Every refresh run is Search Only (source lookups, free, never calls Claude) or Search Then Claude (source first, then Claude fills
