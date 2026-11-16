@@ -1,5 +1,5 @@
 // Pure helpers for Import Recipe and matching ingredients on the recipe screen. No DOM access, safe to import from node.
-import { cleanUnitText, canonUnit, unitWord, RECIPE_UNITS, isMeasureUnit, weightReasonLine, ingredientText, printedSize, sizeText, isCountish, checkReasonLine, PACKAGE_UNITS, FUZZY_UNITS, PLAIN_COUNTS, plural, parseAmount, amountBoxValue, fmtAmount, qtyText, servingText, amountText, roundTo, matchedAmountText, sentence, centsText, stepsCheck, MEALS, MEAL_LABELS, MICROS } from './util.js';
+import { cleanUnitText, canonUnit, unitWord, RECIPE_UNITS, isMeasureUnit, weightReasonLine, ingredientText, printedSize, sizeText, isCountish, checkReasonLine, PACKAGE_UNITS, FUZZY_UNITS, PLAIN_COUNTS, plural, parseAmount, amountBoxValue, fmtAmount, qtyText, servingText, amountText, roundTo, matchedAmountText, sentence, stepsCheck, MEALS, MEAL_LABELS, MICROS } from './util.js';
 
 // Unit words found at the start of an ingredient line, mapped to the server's canonical units. Package and fuzzy units
 // (clove, can, pinch, util.js COUNTISH) are found through canonUnit too, so every plural works ("bunches", "boxes").
@@ -166,8 +166,6 @@ export async function claudeRead(kind, rawNote, send, extra) {
 // Anthropic's web fetch tool reads the page for Claude. This server never opens the address, so these checks are input hygiene only.
 
 export const URL_MAX = 2000;  // same as core.SOURCE_URL_MAX on the server
-export const URL_TEXT = sentence('Claude reads the page through Anthropic, never through this server. Long pages are cut at a size limit');
-
 // The typed address checked like core.clean_source_url: { url } or { error }.
 export function urlCheck(text) {
   const v = String(text == null ? '' : text).trim();
@@ -195,14 +193,6 @@ export function startKind(input, urlOn) {
   const k = input && input.kind;
   if (input && input.picked && k && (k !== 'url' || urlOn)) return k;
   return importKinds(urlOn)[0][0];
-}
-
-// The line under Read With Claude with Full Claude Use on: the upper cost, the size limit and the requests left.
-export function recipeUrlCostLine(st) {
-  const c = st && st.action_costs;
-  const cost = c && Number.isFinite(c.recipe_url) ? 'Up to about ' + centsText(c.recipe_url) + ' per import' + (c.sample ? ' at sample prices' : '') + ', an upper estimate. ' : '';
-  const left = st && Number.isFinite(st.remaining) ? st.remaining + ' of ' + st.cap + ' Claude requests left this month.' : '';
-  return ('Full Claude Use is on, so Read With Claude sends the address at once. ' + cost + left).trim();
 }
 
 // The source of a saved recipe as a link: { href, text } for http and https only (text is the site name), else null.
@@ -426,13 +416,6 @@ export function proposalText(p) {
   return name + ', ' + matchedAmountText(p.amount, p.unit, p.grams) + (p.check ? ' (check the amount)' : '');
 }
 
-// What "ingredients" means in the Claude notice, for example "3 ingredients and their database matches".
-export function matchWhat(n) { return n + (n === 1 ? ' ingredient' : ' ingredients') + ' with database candidates'; }
-export function importWhat(kind, n) {
-  if (kind === 'url') return 'a web address';
-  return kind === 'photos' ? n + (n === 1 ? ' photo' : ' photos') + ' of a recipe' : 'your recipe text (' + n + ' characters)';
-}
-
 // ---------- Recipes tab ----------
 
 // Meal tags as a short label: "Breakfast, Dinner", or "Untagged".
@@ -579,7 +562,7 @@ export const partsText = (n) => plural(n, 'ingredient');
 // ---------- Import Recipe photos ----------
 
 export const MAX_PHOTOS = 3;  // same as ai.MAX_IMAGES on the server
-export const PHOTOS_TEXT = 'Choose up to 3 photos or screenshots of the ingredient list. Claude reads them and you check the result.';
+export const PHOTOS_TEXT = 'Choose up to 3 photos or screenshots of the ingredient list.';
 
 // The photos to send: at most MAX_PHOTOS, with a clear warning when more were chosen. { files, warning }
 export function photoPick(files, max = MAX_PHOTOS) {

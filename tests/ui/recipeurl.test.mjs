@@ -1,7 +1,7 @@
 import test from 'node:test';
+import { sentence } from '../../app/static/js/util.js';
 import assert from 'node:assert/strict';
-import { urlCheck, urlImportOn, recipeUrlCostLine, sourceLink, URL_TEXT, URL_MAX, importWhat, reviewDraft, reviewBody } from '../../app/static/js/recipeimport.js';
-import { noticeLines, sentence } from '../../app/static/js/util.js';
+import { urlCheck, urlImportOn, sourceLink, URL_MAX, reviewDraft, reviewBody } from '../../app/static/js/recipeimport.js';
 
 test('urlCheck mirrors the server: http or https with a host, no credentials, no spaces or control characters, length cap', () => {
   assert.deepEqual(urlCheck('  https://example.com/pancakes?x=1#top '), { url: 'https://example.com/pancakes?x=1#top' });
@@ -28,22 +28,6 @@ test('urlImportOn needs Claude for the user, recipe import and the URL switch', 
   assert.equal(urlImportOn(null), false);
 });
 
-test('the cost notice for a URL import says it is an upper estimate', () => {
-  const r = noticeLines({ cap: 100, remaining: 40, est_cost_label: 0.0035, est_upper: true }, importWhat('url'));
-  assert.equal(r.lines[0], 'Sends a web address to Claude.');
-  assert.equal(r.lines[2], 'Estimated cost up to about 0.35 cents. This is an upper estimate, for a page at the size limit.');
-  assert.equal(noticeLines({ cap: 100, remaining: 40, est_cost_label: 0.0035 }, 'x').lines[2], 'Estimated cost about 0.35 cents.');
-  assert.equal(noticeLines({ cap: 100, remaining: 40, est_cost_label: null, est_upper: true }, 'x').lines[2], 'Cost not available.');
-  for (const t of r.lines) assert.ok(!/—|–/.test(t));
-});
-
-test('Full Claude Use line for URL import states the upper cost and requests left', () => {
-  const st = { remaining: 7, cap: 100, action_costs: { recipe_url: 0.0035, sample: true } };
-  assert.equal(recipeUrlCostLine(st), 'Full Claude Use is on, so Read With Claude sends the address at once. '
-    + 'Up to about 0.35 cents per import at sample prices, an upper estimate. 7 of 100 Claude requests left this month.');
-  assert.equal(recipeUrlCostLine({ remaining: 1, cap: 5, action_costs: {} }), 'Full Claude Use is on, so Read With Claude sends the address at once. 1 of 5 Claude requests left this month.');
-});
-
 test('sourceLink renders only http and https addresses, named by their site', () => {
   assert.deepEqual(sourceLink('https://www.example.com/pancakes'), { href: 'https://www.example.com/pancakes', text: 'example.com' });
   assert.deepEqual(sourceLink('http://blog.example.org/a?b=1'), { href: 'http://blog.example.org/a?b=1', text: 'blog.example.org' });
@@ -58,12 +42,6 @@ test('the review draft keeps the source address and the save body sends it', () 
   const plain = reviewDraft({ ...recipe, source_url: undefined });
   assert.equal(plain.sourceUrl, null);
   assert.ok(!('source_url' in reviewBody(plain).body));
-});
-
-test('URL help text is a sentence without em dashes', () => {
-  assert.equal(sentence(URL_TEXT), URL_TEXT);
-  assert.ok(!/—|–/.test(URL_TEXT));
-  assert.match(URL_TEXT, /never through this server/);
 });
 
 import { importKinds, startKind } from '../../app/static/js/recipeimport.js';

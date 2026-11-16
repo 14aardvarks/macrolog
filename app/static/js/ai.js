@@ -1,7 +1,6 @@
 import { api } from './api.js';
 import { h, field, message, show, loadImage, sourceBadge } from './dom.js';
-import { fitSize, photosText, centsText, sourceNote, aiFeature, aiFeatureOff } from './util.js';
-import { confirmClaude } from './notice.js';
+import { fitSize, aiFeature, aiFeatureOff } from './util.js';
 import { renderFoodForm } from './foodform.js';
 
 // Re-encode any photo (HEIC, huge phone photos) as a JPEG of at most 1280 px on the long side.
@@ -25,8 +24,6 @@ export async function toJpeg(file) {
 // The editable draft from a Claude reply ({ draft, warnings, cost }). described: it came from a text description, not a label photo.
 export function showDraft(root, r, ctx, described) {
   renderFoodForm(root, { draft: r.draft, warnings: r.warnings, barcode: r.barcode, described }, ctx);
-  const title = root.querySelector('h1');
-  if (title && r.cost != null) title.after(h('p', { class: 'sub' }, (described ? 'This estimate' : 'This read') + ' cost about ' + centsText(r.cost) + '.'));
 }
 
 // params: { barcode? } for a label read, or { draft, warnings, cost } to check a text estimate from the Add search.  ctx: { go, back }
@@ -52,9 +49,7 @@ export async function renderAi(root, params, ctx) {
   root.appendChild(h('section', { class: 'screen' },
     h('div', { class: 'bar' }, h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back')),
     h('h1', null, 'Ask Claude ', sourceBadge('ai')),
-    h('p', { class: 'sub' }, 'This is not a food database search. Claude reads your photo and estimates the values. ' + sourceNote('ai')),
     h('p', { class: 'sub' }, 'Photograph the nutrition label. If you can, get the barcode in the same photo. Up to 3 photos.'),
-    h('p', { class: 'sub' }, 'Used ' + st.used_this_month + ' of ' + st.cap + ' this month.'),
     h('label', { class: 'btn' }, 'Choose or Take Photos', files), list, hint, code, status,
     h('div', { class: 'row wrap' }, go, manualBtn)));
 
@@ -66,7 +61,6 @@ export async function renderAi(root, params, ctx) {
 
   async function send() {
     go.disabled = true;
-    if (!(await confirmClaude(ctx.settings, { what: photosText(chosen.length), images: chosen.length }))) { go.disabled = !chosen.length; return; }
     show(status, message('Preparing photos...'));
     try {
       const form = new FormData();

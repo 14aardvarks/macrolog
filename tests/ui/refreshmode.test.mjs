@@ -47,10 +47,9 @@ test('Claude unavailable: the run is Search Only and the reason says why, in ord
   for (const t of [REFRESH_NO_KEY, REFRESH_SWITCH, REFRESH_CAPPED]) assert.ok(/^[A-Z].*\.$/.test(t) && !/—/.test(t));
 });
 
-test('refreshClaudePlan follows Confirm before using Claude, with no Full Claude Use needed', () => {
-  assert.equal(refreshClaudePlan({ confirm_ai: true }, st()), 'confirm');
-  assert.equal(refreshClaudePlan({ confirm_ai: false, full_claude: false }, st()), 'run');
-  assert.equal(refreshClaudePlan({ full_claude: true }, st()), 'confirm');
+test('refreshClaudePlan runs without asking and needs no Full Claude Use', () => {
+  assert.equal(refreshClaudePlan({}, st()), 'run');
+  assert.equal(refreshClaudePlan({ full_claude: true }, st()), 'run');
   assert.equal(refreshClaudePlan({}, st({ remaining: 0 })), 'cap');
   assert.equal(refreshClaudePlan({}, st({ enabled: false })), 'off');
   assert.equal(refreshClaudePlan({}, st({ features: { lookup: false } })), 'off');
@@ -83,7 +82,7 @@ async function setup({ full, confirm = false, display = { refresh_mode: 'search'
     return { ok: true, status: 200, json: async () => body };
   };
   const mod = await import('../../app/static/js/refresh.js?' + Math.random());
-  mod.useSettings(() => ({ full_claude: full, confirm_ai: confirm }), () => display);
+  mod.useSettings(() => ({ full_claude: full }), () => display);
   return { mod, calls };
 }
 

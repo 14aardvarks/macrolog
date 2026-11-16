@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseIngredientLine, parseIngredientText, servingsFrom, isHeading, reviewDraft, reviewBody, rowText, blankRow,
-  matchState, matchCountText, recipeSubText, matchBatch, proposalText, matchWhat, importWhat,
+  matchState, matchCountText, recipeSubText, matchBatch, proposalText,
   NOTE_MAX, NOTE_LABEL, NOTE_HINT, NOTE_EXAMPLES, RERUN_LABEL, noteCheck, canRerun, rerunInput, claudeRead,
 } from '../../app/static/js/recipeimport.js';
 
@@ -122,9 +122,6 @@ test('proposal and notice wording', () => {
   assert.equal(proposalText({ kind: 'estimate', food: { name: 'Flour' }, amount: 30, unit: 'g', grams: null, check: true }), 'Flour, 30 g (check the amount)');
   assert.equal(proposalText({ kind: 'none', food: null, note: 'Salt has no calories' }), 'Salt has no calories.');
   assert.match(proposalText({ kind: 'none', food: null, note: null }), /no match/);
-  assert.equal(matchWhat(1), '1 ingredient with database candidates');
-  assert.equal(importWhat('photos', 2), '2 photos of a recipe');
-  assert.equal(importWhat('text', 120), 'your recipe text (120 characters)');
 });
 
 // ---------- Recipes tab ----------

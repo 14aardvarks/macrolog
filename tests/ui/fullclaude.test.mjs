@@ -1,14 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  autoClaudePlan, fullClaudeRows, fullClaudePriceNote, aiMicrosText, microsWhat, recipeTextCostLine, fullClaudeWarning,
-  noticeLines, bulkSummary, CLAUDE_CAP_NOTE, FALLBACK_TEXT, FALLBACK_FAILED, sentence,
+  autoClaudePlan, aiMicrosText, 
+  bulkSummary, CLAUDE_CAP_NOTE, FALLBACK_TEXT, FALLBACK_FAILED, sentence,
 } from '../../app/static/js/util.js';
 import { claudeKeep } from '../../app/static/js/recipeimport.js';
 import { claudeIds } from '../../app/static/js/rowmatch.js';
 import { GUIDE } from '../../app/static/js/guide.js';
 
-const ON = { full_claude: true, confirm_ai: true };
+const ON = { full_claude: true };
 const st = (over) => ({ enabled: true, remaining: 10, cap: 100, features: { label: true, lookup: true, recipe: true }, ...over });
 
 test('Match With Claude asks about rows the search was not sure of, and Full Claude Use about every row (issue #40)', () => {
@@ -29,8 +29,8 @@ test('a proposal from a previous recipe is not sent to Claude, and Claude findin
   assert.ok(/^[A-Z].*\.$/.test(CLAUDE_CAP_NOTE) && !CLAUDE_CAP_NOTE.includes('\u2014'));
 });
 
-test('autoClaudePlan: setting, switch, key, cap and confirm', () => {
-  assert.equal(autoClaudePlan({ full_claude: false, confirm_ai: true }, st(), 'lookup'), 'off');
+test('autoClaudePlan: setting, switch, key and cap', () => {
+  assert.equal(autoClaudePlan({ full_claude: false }, st(), 'lookup'), 'off');
   assert.equal(autoClaudePlan({}, st(), 'lookup'), 'off');
   assert.equal(autoClaudePlan(null, st(), 'lookup'), 'off');
   assert.equal(autoClaudePlan(ON, st({ enabled: false }), 'lookup'), 'off');  // no key: silent
@@ -38,24 +38,9 @@ test('autoClaudePlan: setting, switch, key, cap and confirm', () => {
   assert.equal(autoClaudePlan(ON, null, 'lookup'), 'off');
   assert.equal(autoClaudePlan(ON, st({ remaining: 0 }), 'lookup'), 'cap');
   assert.equal(autoClaudePlan(ON, st({ remaining: undefined }), 'lookup'), 'cap');  // unknown counts as none left: never past the cap
-  assert.equal(autoClaudePlan(ON, st(), 'lookup'), 'confirm');
-  assert.equal(autoClaudePlan({ full_claude: true, confirm_ai: false }, st(), 'lookup'), 'run');
-  assert.equal(autoClaudePlan({ full_claude: true, confirm_ai: false }, st({ remaining: 0 }), 'recipe'), 'cap');
-});
-
-test('cost rows come from the server numbers and are labelled estimates', () => {
-  const costs = { label: 0.00043, lookup: 0.00027, micros: 0.000135, recipe_text: 0.00114, match: 0.00196,
-    heavy_month: 0.0415, heavy_requests: 86, sample: true };
-  const rows = fullClaudeRows(costs);
-  assert.equal(rows.length, 6);
-  assert.deepEqual(rows[0], { label: 'Claude lookup when a search finds nothing', text: 'about 0.03 cents' });
-  assert.deepEqual(rows[2], { label: 'Label photo', text: 'about 0.04 cents' });
-  assert.deepEqual(rows[5], { label: 'Heavy month (86 requests)', text: 'about $0.04' });
-  assert.deepEqual(fullClaudeRows(null), []);
-  assert.match(fullClaudePriceNote(costs), /^Estimates at the Haiku 5\.5 sample prices of 0\.10 USD input and 0\.50 USD output per million tokens/);
-  assert.equal(fullClaudePriceNote({ ...costs, sample: false }), 'Estimates at your model prices.');
-  assert.equal(fullClaudeRows({ ...costs, heavy_month: 0.004 })[5].text, 'about 0.4 cents');
-  for (const r of rows) assert.ok(!r.text.includes('—') && !r.label.includes('—'));
+  assert.equal(autoClaudePlan(ON, st(), 'lookup'), 'run');
+  assert.equal(autoClaudePlan({ full_claude: true }, st(), 'lookup'), 'run');
+  assert.equal(autoClaudePlan({ full_claude: true }, st({ remaining: 0 }), 'recipe'), 'cap');
 });
 
 test('aiMicrosText names the Claude estimates in nutrient order', () => {
@@ -67,13 +52,6 @@ test('aiMicrosText names the Claude estimates in nutrient order', () => {
   assert.equal(aiMicrosText({ ai_micros: ['iron', 'sodium', 'fiber'] }), 'Claude estimated fiber, sodium and iron. These are estimates.');
 });
 
-test('notice lines say how many requests a batch may use', () => {
-  const s = { remaining: 7, cap: 100, est_cost_label: 0.00135 };
-  assert.equal(noticeLines(s, microsWhat(10), 10).lines[1], 'Uses up to 10 of your 100 monthly requests (7 left).');
-  assert.equal(noticeLines(s, microsWhat(1)).lines[1], 'Uses 1 of your 100 monthly requests (7 left).');
-  assert.equal(noticeLines({ ...s, remaining: 0 }, 'x', 3).blocked, true);
-});
-
 test('bulk summary counts Claude estimates and adds the cap note once', () => {
   const base = { checked: 3, filled: 5, failed: 0, left: 0, stopped: false };
   assert.equal(bulkSummary(base), 'Checked 3 foods and filled 5 values');
@@ -81,23 +59,10 @@ test('bulk summary counts Claude estimates and adds the cap note once', () => {
     'Checked 3 foods and filled 5 values (2 estimated by Claude). Monthly Claude limit reached, so Claude was not used.');
 });
 
-test('the warning next to the checkbox says imports run without asking and cites the monthly limit', () => {
-  assert.equal(fullClaudeWarning({ cap: 100 }), 'Claude will be used on its own, and recipe imports and their matching run without asking, so costs add up. Your monthly limit is 100 Claude requests, and it still applies.');
-  assert.equal(fullClaudeWarning(null), 'Claude will be used on its own, and recipe imports and their matching run without asking, so costs add up.');
-  assert.ok(!fullClaudeWarning({ cap: 5 }).includes('—'));
-});
-
-test('recipe text line shows the cost before the tap', () => {
-  const line = recipeTextCostLine(st({ remaining: 12, action_costs: { recipe_text: 0.00114, sample: true } }));
-  assert.equal(line, 'Full Claude Use is on, so Read With Claude sends the text at once. Up to about 0.11 cents per import at sample prices. 12 of 100 Claude requests left this month.');
-});
-
-test('other Claude paths still follow Confirm Before Using Claude with Full Claude Use on', async () => {
+test('Full Claude steps never ask and stop quietly at the cap', async () => {
   const { autoClaude } = await import('../../app/static/js/notice.js');
-  const { confirmClaude } = await import('../../app/static/js/notice.js');
-  assert.equal(await confirmClaude({ full_claude: true, confirm_ai: false }, { what: 'x', chars: 5 }), true);  // off: quiet
-  assert.deepEqual(await autoClaude({ full_claude: true, confirm_ai: false }, st(), 'lookup', { what: 'x' }), { go: true, note: '' });
-  assert.deepEqual(await autoClaude({ full_claude: true, confirm_ai: true }, st({ remaining: 0 }), 'lookup', { what: 'x' }), { go: false, note: CLAUDE_CAP_NOTE });
+  assert.deepEqual(await autoClaude({ full_claude: true }, st(), 'lookup'), { go: true, note: '' });
+  assert.deepEqual(await autoClaude({ full_claude: true }, st({ remaining: 0 }), 'lookup'), { go: false, note: CLAUDE_CAP_NOTE });
 });
 
 test('Full Claude copy: sentences end with a period, no em dashes, guide covers it', () => {
@@ -115,5 +80,4 @@ test('the Full Claude Use hint states the default first', async () => {
   assert.ok(FULL_CLAUDE_HELP.startsWith('Off by default.'));
   assert.ok(!FULL_CLAUDE_HELP.includes('—'));
   assert.ok(FULL_CLAUDE_HELP.includes('monthly request limit'));
-  assert.ok(FULL_CLAUDE_HELP.includes('still follow Confirm before using Claude'));
 });

@@ -5,18 +5,16 @@ import { api } from './api.js';
 import { h, clear, field, message, show, extLink, unitControl } from './dom.js';
 import { toJpeg } from './ai.js';
 import { importPhotoChoice, loadPhotoConfig } from './photo.js';
-import { confirmClaude } from './notice.js';
 import { stepsEditor } from './steps.js';
-import { centsText, sentence, aiFeature, aiFeatureOff, CLAUDE_CAP_NOTE, recipeTextCostLine, unitPreviewText } from './util.js';
+import { sentence, aiFeature, aiFeatureOff, CLAUDE_CAP_NOTE, unitPreviewText } from './util.js';
 import {
-  parseIngredientText, reviewDraft, reviewBody, blankRow, importUnitOptions, importWhat, photoPick, PHOTOS_TEXT, reviewFlag, pkgNote, estimateNote, tidyAmountBox,
-  urlCheck, urlImportOn, importKinds, startKind, recipeUrlCostLine, sourceLink, URL_TEXT, URL_MAX,
+  parseIngredientText, reviewDraft, reviewBody, blankRow, importUnitOptions, photoPick, PHOTOS_TEXT, reviewFlag, pkgNote, estimateNote, tidyAmountBox,
+  urlCheck, urlImportOn, importKinds, startKind, sourceLink, URL_MAX,
   NOTE_MAX, noteCheck, NOTE_LABEL, NOTE_HINT, NOTE_EXAMPLES, RERUN_LABEL, RERUN_TEXT, canRerun, rerunInput, claudeRead,
 } from './recipeimport.js';
 
 const MAX_TEXT = 20000;  // same as ai.RECIPE_TEXT_MAX on the server
 const bar = (ctx) => h('div', { class: 'bar' }, h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Back'));
-const costLine = (cost, what) => (cost == null ? null : h('p', { class: 'sub' }, what + ' cost about ' + centsText(cost) + '.'));
 
 // ---------- step 1: source ----------
 
@@ -31,11 +29,9 @@ export async function renderImport(root, ctx, params) {
   try { st = await api.aiStatus(); } catch (e) { st = { enabled: false }; }
   loadPhotoConfig();  // fresh for the review screen's Use As Recipe Photo
   const aiOn = aiFeature(st, 'recipe');
-  // Full Claude Use: Read With Claude (text or photos) runs without the extra confirm, and the matching offered by the banner on the recipe screen
-  // uses Claude on its own. The cost is shown where the setting is turned on; the text line shows it again, and at the monthly
-  // cap the buttons are off with one quiet note.
-  const direct = aiOn && ctx.settings.full_claude === true;
-  const capped = direct && !(st.remaining > 0);
+  // Read With Claude is a plain button: pressing it is the choice, so nothing asks first. At the monthly cap the buttons are
+  // off with one quiet note.
+  const capped = aiOn && !(st.remaining > 0);
   const status = h('div', { 'aria-live': 'polite' });
   const panel = h('div');
   const cancelRerun = rerun ? h('button', { class: 'btn ghost', type: 'button', onclick: ctx.back }, 'Cancel') : null;
@@ -49,9 +45,9 @@ export async function renderImport(root, ctx, params) {
     maxlength: String(URL_MAX), placeholder: 'https://example.com/pancakes', 'aria-describedby': 'import-url-help' });
   urlBox.input.addEventListener('input', () => { input.url = urlBox.input.value; });
   urlBox.input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); sendUrl(); } });
-  const urlHelp = h('p', { class: 'sub', id: 'import-url-help' }, URL_TEXT + ' ' + sentence('No photo is imported'));
-  const readUrl = h('button', { class: 'btn primary', type: 'button', onclick: sendUrl, disabled: capped, 'aria-describedby': direct ? 'import-url-direct' : null }, 'Read With Claude');
-  const urlDirect = direct ? h('p', { class: 'sub', id: 'import-url-direct' }, capped ? CLAUDE_CAP_NOTE : recipeUrlCostLine(st)) : null;
+  const urlHelp = h('p', { class: 'sub', id: 'import-url-help' }, sentence('No photo is imported'));
+  const readUrl = h('button', { class: 'btn primary', type: 'button', onclick: sendUrl, disabled: capped }, 'Read With Claude');
+  const capNote = capped ? h('p', { class: 'sub', role: 'status' }, CLAUDE_CAP_NOTE) : null;
 
   const area = h('textarea', { rows: '10', maxlength: String(MAX_TEXT), autocomplete: 'off', placeholder: 'Paste the recipe or just its ingredient list' });
   area.value = input.text || '';
@@ -66,8 +62,7 @@ export async function renderImport(root, ctx, params) {
   fileList.textContent = fileText();
   const photoNote = h('div', { 'aria-live': 'polite' });
 
-  const readText = h('button', { class: 'btn primary', type: 'button', onclick: sendText, disabled: capped, 'aria-describedby': direct ? 'import-direct' : null }, 'Read With Claude');
-  const directNote = direct ? h('p', { class: 'sub', id: 'import-direct' }, capped ? CLAUDE_CAP_NOTE : recipeTextCostLine(st)) : null;
+  const readText = h('button', { class: 'btn primary', type: 'button', onclick: sendText, disabled: capped }, 'Read With Claude');
   const splitText = h('button', { class: 'btn', type: 'button', onclick: splitLocal }, 'Split Lines Without Claude');
   const readPhotos = h('button', { class: 'btn primary', type: 'button', disabled: capped || !chosen.length, onclick: sendPhotos }, 'Read With Claude');
   const noAi = aiOn ? null : message((aiFeatureOff(st, 'recipe') ? 'Claude recipe import is turned off on this server' : 'Claude is not set up for you')
@@ -77,16 +72,16 @@ export async function renderImport(root, ctx, params) {
     tabs.querySelectorAll('button').forEach((b) => b.setAttribute('aria-selected', b.dataset.kind === input.kind ? 'true' : 'false'));
     show(status, null);
     if (input.kind === 'url') {
-      show(panel, h('div', null, urlBox, urlHelp, noteBox, h('div', { class: 'row wrap' }, readUrl, cancelRerun), urlDirect));
+      show(panel, h('div', null, urlBox, urlHelp, noteBox, h('div', { class: 'row wrap' }, readUrl, cancelRerun), capNote));
     } else if (input.kind === 'photos') {
       show(panel, h('div', null,
         h('p', { class: 'sub' }, PHOTOS_TEXT),
-        aiOn ? [h('label', { class: 'btn' }, 'Choose or Take Photos', files), fileList, photoNote, noteBox, h('div', { class: 'row wrap' }, readPhotos, cancelRerun), capped ? h('p', { class: 'sub' }, CLAUDE_CAP_NOTE) : null] : noAi));
+        aiOn ? [h('label', { class: 'btn' }, 'Choose or Take Photos', files), fileList, photoNote, noteBox, h('div', { class: 'row wrap' }, readPhotos, cancelRerun), capNote] : noAi));
     } else {
       show(panel, h('div', null,
         h('label', { class: 'field' }, h('span', null, 'Recipe text'), area),
-        h('p', { class: 'sub' }, 'Split Lines Without Claude reads one ingredient per line and costs nothing. Claude copes with whole pages.'),
-        aiOn ? noteBox : noAi, h('div', { class: 'row wrap' }, aiOn ? readText : null, rerun ? null : splitText, cancelRerun), directNote));
+        h('p', { class: 'sub' }, 'Split Lines Without Claude reads one ingredient per line. Claude copes with whole pages.'),
+        aiOn ? noteBox : noAi, h('div', { class: 'row wrap' }, aiOn ? readText : null, rerun ? null : splitText, cancelRerun), capNote));
     }
   }
   function onFiles() {
@@ -110,10 +105,10 @@ export async function renderImport(root, ctx, params) {
   // One Claude read: a failure shows inline here and the review (if any) stays as it was; only a result replaces it.
   async function read(kind, send, extra) {
     const out = await claudeRead(kind, note.input.value, send, extra);
-    if (out.error) { show(status, message(out.status === 429 && direct ? CLAUDE_CAP_NOTE : out.error, 'error')); return; }
+    if (out.error) { show(status, message(out.status === 429 ? CLAUDE_CAP_NOTE : out.error, 'error')); return; }
     done(out.draft);
   }
-  // The note is checked before the cost notice, so nobody confirms a request that would be refused.
+  // The note is checked first, so a request that would be refused is never sent.
   function noteOk() {
     const n = noteCheck(note.input.value);
     if (n.error) { show(status, message(n.error, 'error')); note.input.focus(); }
@@ -125,7 +120,6 @@ export async function renderImport(root, ctx, params) {
     if (!noteOk()) return;
     readText.disabled = true;
     try {
-      if (!direct && !(await confirmClaude(ctx.settings, { what: importWhat('text', text.length), query: { recipe_chars: text.length } }))) return;
       show(status, message('Claude is reading the recipe...'));
       await read('text', (n) => api.recipeFromText(text, n));
     } finally { readText.disabled = capped; }
@@ -137,7 +131,6 @@ export async function renderImport(root, ctx, params) {
     if (!noteOk()) return;
     readUrl.disabled = true;
     try {
-      if (!direct && !(await confirmClaude(ctx.settings, { what: importWhat('url'), query: { recipe_url: 1 } }))) return;
       show(status, message('Claude is reading the page...'));
       await read('url', (n) => api.recipeFromUrl(c.url, n));
     } finally { readUrl.disabled = capped; }
@@ -146,7 +139,6 @@ export async function renderImport(root, ctx, params) {
     if (!noteOk()) return;
     readPhotos.disabled = true;
     try {
-      if (!direct && !(await confirmClaude(ctx.settings, { what: importWhat('photos', chosen.length), query: { recipe_images: chosen.length } }))) return;
       show(status, message('Preparing photos...'));
       const forms = new FormData();
       for (let i = 0; i < chosen.length; i++) forms.append('images', await toJpeg(chosen[i]), 'recipe' + (i + 1) + '.jpg');
@@ -269,7 +261,6 @@ export function renderReview(root, ctx) {
 
   root.appendChild(h('section', { class: 'screen import review' }, bar(ctx), h('h1', null, 'Check the Recipe'),
     h('p', { class: 'sub' }, sentence('Fix anything that looks wrong, then tap Save Recipe. You match the ingredients on the recipe screen')),
-    costLine(draft.cost, 'This read'),
     sourceNode(draft.sourceUrl),
     warns.length ? h('ul', { class: 'warnings', role: 'alert' }, warns) : null,
     h('div', { class: 'grid2 review-head' }, name, servings),

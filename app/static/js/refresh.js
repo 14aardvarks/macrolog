@@ -1,10 +1,10 @@
 // Refresh Nutrients: fills blank micronutrients from the food's original source. Never changes existing values.
 import { api } from './api.js';
 import { h, message, show, clear } from './dom.js';
-import { missingMicros, kcalEstimated, refreshTargets, bulkSummary, pendingPlan, microsWhat, sentence, CLAUDE_CAP_NOTE, REFRESH_CAPPED, resolveRefreshMode, refreshFallbackNote } from './util.js';
+import { missingMicros, kcalEstimated, refreshTargets, bulkSummary, pendingPlan, sentence, CLAUDE_CAP_NOTE, REFRESH_CAPPED, resolveRefreshMode, refreshFallbackNote } from './util.js';
 import { refreshClaude } from './notice.js';
 
-// app.js hands over the signed-in user's settings (Full Claude Use, Confirm before using Claude) and the display settings (refresh_mode),
+// app.js hands over the signed-in user's settings (Full Claude Use) and the display settings (refresh_mode),
 // so every Refresh Nutrients button uses the Search Only or Search Then Claude choice saved in Settings, Display.
 let settingsOf = () => null;
 let displayOf = () => null;
@@ -30,7 +30,7 @@ const wantsClaude = () => modeNow(seen.st).value === 'search_claude';
 
 // Whether Claude may fill blanks for the next n foods: nothing for Search Only (even with Full Claude Use on). A chosen Search Then Claude
 // that cannot be used falls back to Search Only with one quiet note naming the reason (Full Claude Use as the default stays silent,
-// except a note at the cap). Else the usual confirm with the cost (Confirm before using Claude on) or nothing (off).
+// except a note at the cap). Else it goes ahead.
 export async function claudeGo(n) {
   if (!n) return { go: false, note: '' };
   const st = await claudeStatus(true);
@@ -39,7 +39,7 @@ export async function claudeGo(n) {
     if (m.wanted === 'search_claude' && (!m.forced || m.reason === REFRESH_CAPPED)) return { go: false, note: refreshFallbackNote(m.reason) };
     return { go: false, note: '' };
   }
-  return refreshClaude(settingsOf(), st, { what: microsWhat(n), requests: n, query: { micros: Math.min(10, n) } });
+  return refreshClaude(settingsOf(), st);
 }
 
 // food is updated in place. onDone(result) runs after a successful call. Returns { el } with a button and a status line.

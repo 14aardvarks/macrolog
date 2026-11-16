@@ -3,7 +3,7 @@ import { h, clear, select, field, message, show, cameraIcon, sourceBadge, kcalCu
 import {
   MEALS, MEAL_LABELS, parseDecimal, parseAmount, amountText, servingText, qtyText, amountMemo, setAmountFormat, unitLabel, fmtNum, fmtAmount, groupByMeal, mealGroupsAll, quickLabel, checkedItems, canSaveRecipe, rowAmountText, applyRowPick, draftFits, localDate, progressText, remainingText,
   sentence, matchAmount, linePick, newRecipeDraft, recipeAddRow, recipeSetRow, stepsBack, barWidth, barState, debounce, digitsOnly, guessMeal, pctTotal, latestGuard, MEAL_FILTERS, MEAL_FILTER_LABELS, filterByMeal, filterSaved, pageOf, PAGE_SIZE, emptyText,
-  entryKey, todayHold, holdFresh, holdTarget, DEFAULT_DISPLAY, searchSource, searchAction, searchHint, DESCRIPTION_TEXT, aiFeature, aiFeatureOff, searchSources, startSource,
+  entryKey, todayHold, holdFresh, holdTarget, DEFAULT_DISPLAY, searchSource, searchAction, searchHint, aiFeature, aiFeatureOff, searchSources, startSource,
   ownerText, sortRecipes, MAX_AI_TEXT, CLAUDE_CAP_NOTE, FALLBACK_TEXT, FALLBACK_FAILED,
 } from './util.js';
 import { microSection, displaySection, microTargets } from './micros.js';
@@ -12,7 +12,7 @@ import { todayView } from './tablemodel.js';
 import { renderPicker } from './picker.js';
 import { renderScan } from './scan.js';
 import { renderAi } from './ai.js';
-import { confirmClaude, autoClaude } from './notice.js';
+import { autoClaude } from './notice.js';
 import { renderFoodForm } from './foodform.js';
 import { splitChart, macroBar } from './chart.js';
 import { renderGuide } from './guide-view.js';
@@ -35,7 +35,7 @@ import { tabOf, routeUrl, formatRoute, startRoute } from './routes.js';
 
 const main = document.getElementById('main');
 const nav = document.getElementById('nav');
-const state = { user: null, settings: { start_screen: 'today', default_meal: null, use_last: true, confirm_ai: true, amount_format: 'fraction', full_claude: false }, display: DEFAULT_DISPLAY, cleanup: null, depth: 0, tab: 'favorites', addMeal: null, quickMeal: null, draft: null, recipe: null, source: null, aiSt: null, claude: null, fallback: null,
+const state = { user: null, settings: { start_screen: 'today', default_meal: null, use_last: true, amount_format: 'fraction', full_claude: false }, display: DEFAULT_DISPLAY, cleanup: null, depth: 0, tab: 'favorites', addMeal: null, quickMeal: null, draft: null, recipe: null, source: null, aiSt: null, claude: null, fallback: null,
   importInput: null, importDraft: null, importBase: 0, proposals: {}, walks: {}, matchFocus: null, hold: null };  // Import Recipe and matching on the recipe screen  // addMeal, source (null = the Default Search Source setting), aiSt (last /api/ai/status) and claude (last Claude estimate) live for the session only
 const FINDER = ['add', 'picker', 'scan', 'lookup', 'manual', 'ai'];  // screens New Recipe and the recipe screen's Search Another borrow from Add
 
@@ -565,13 +565,8 @@ function addScreen(root, params) {
     } catch (e) { if (mine === searchSeq) show(listBox, message(e.message, 'error')); }
   }
 
-  // One Claude estimate for the typed description, after the usual confirm step. Nothing is saved until the draft is checked.
+  // One Claude estimate for the typed description, with no dialog (pressing Search with the Claude source is the choice). Nothing is saved until the draft is checked.
   async function askClaude(text, mine) {
-    if (!(await confirmClaude(ctx.settings, { what: DESCRIPTION_TEXT, chars: text.length }))) {
-      if (mine === searchSeq) show(listBox, message(searchHint('ai', 'wait')));
-      return;
-    }
-    if (mine !== searchSeq) return;
     show(listBox, message('Asking Claude...'));
     try {
       const r = await api.aiLookup(text);
@@ -581,13 +576,12 @@ function addScreen(root, params) {
   }
 
   // Full Claude Use: a database search with no result asks Claude for an estimate of the typed text, when the lookup switch and a
-  // key allow it (else nothing changes). The usual confirm with the cost when Confirm before using Claude is on; at the monthly cap
-  // one quiet note and nothing is sent. Returns true when it painted the list.
+  // key allow it (else nothing changes). At the monthly cap one quiet note and nothing is sent. Returns true when it painted the list.
   async function claudeFallback(text, source, mine, none) {
     let st = null;
     try { st = await api.aiStatus(null, text.length); } catch (e) { return false; }
     if (mine !== searchSeq) return true;
-    const plan = await autoClaude(state.settings, st, 'lookup', { what: DESCRIPTION_TEXT, chars: text.length });
+    const plan = await autoClaude(state.settings, st, 'lookup');
     if (mine !== searchSeq) return true;
     if (!plan.go) {
       if (!plan.note) return false;
@@ -613,7 +607,7 @@ function addScreen(root, params) {
     tabBar.querySelectorAll('button').forEach((b) => b.setAttribute('aria-selected', 'false'));
     show(listBox, h('div', null, h('ul', { class: 'list' }, foodRow(foodTitle({ name: d.name || 'Unnamed food', brand: d.brand }),
       (d.label_text || unitText(d.serving_amount, d.serving_unit)) + kcal, open, null, d, 'ai')),
-    h('p', { class: 'sub' }, fallback ? FALLBACK_TEXT : 'Values are estimates from Claude. Tap the result to check and save it.'),
+    h('p', { class: 'sub' }, fallback ? FALLBACK_TEXT : 'Tap the result to check and save it.'),
     fallback ? h('button', { class: 'btn', type: 'button', onclick: () => go('manual', {}) }, 'Enter Manually') : null));
   }
   const liveSearch = debounce(() => search(false), 400);
@@ -737,14 +731,13 @@ async function describeOffer(code) {
     if (!text) { show(status, message('Describe the food first.', 'error')); return; }
     btn.disabled = true;
     try {
-      if (!(await confirmClaude(state.settings, { what: DESCRIPTION_TEXT, chars: text.length }))) return;
       show(status, message('Asking Claude...'));
       const r = await api.aiLookup(text);
       await go('ai', { draft: { ...r.draft, barcode: code }, warnings: r.warnings, cost: r.cost, barcode: code });
     } catch (err) { show(status, message(err.status === 429 ? CLAUDE_CAP_NOTE : err.message, 'error')); } finally { btn.disabled = false; }
   }
   return h('form', { class: 'describe', onsubmit: send }, h('h2', null, 'Claude Estimate'),
-    h('p', { class: 'sub' }, 'Full Claude Use is on. Describe the product and Claude estimates one serving. Values are estimates.'),
+    h('p', { class: 'sub' }, 'Describe the product and Claude estimates one serving.'),
     what, h('div', { class: 'row wrap' }, btn), status);
 }
 
@@ -870,7 +863,6 @@ async function settingsScreen(root) {
   const mealSel = select([{ value: 'none', label: 'Guess from the time' }, ...MEALS.map((m) => ({ value: m, label: MEAL_LABELS[m] }))],
     s.default_meal || 'none', { 'aria-label': 'Default meal' });
   const useLast = h('input', { type: 'checkbox', id: 'use-last', checked: s.use_last !== false, 'aria-describedby': 'use-last-help' });
-  const confirmAi = h('input', { type: 'checkbox', id: 'confirm-ai', checked: s.confirm_ai !== false, 'aria-describedby': 'confirm-ai-help' });
   const fmtSel = select([{ value: 'fraction', label: 'Fractions (1/2)' }, { value: 'decimal', label: 'Decimals (0.5)' }],
     s.amount_format === 'decimal' ? 'decimal' : 'fraction', { 'aria-label': 'Show amounts as', 'aria-describedby': 'amount-format-help' });
   fmtSel.addEventListener('change', () => setAmountFormat(fmtSel.value));  // applies at once; Save keeps it
@@ -896,7 +888,7 @@ async function settingsScreen(root) {
     const mt = micro.read();
     if (mt.error) { show(status, message(mt.error, 'error')); return; }
     try {
-      state.settings = await api.saveSettings({ start_screen: startSel.value, default_meal: mealSel.value === 'none' ? null : mealSel.value, use_last: useLast.checked, confirm_ai: confirmAi.checked, amount_format: fmtSel.value });
+      state.settings = await api.saveSettings({ start_screen: startSel.value, default_meal: mealSel.value === 'none' ? null : mealSel.value, use_last: useLast.checked, amount_format: fmtSel.value });
       setAmountFormat(state.settings.amount_format);
       await api.saveGoals({ kcal: k, carb_pct: v[0], protein_pct: v[1], fat_pct: v[2] });
       await api.saveMicroGoals(mt.targets);
@@ -912,9 +904,6 @@ async function settingsScreen(root) {
       h('label', { class: 'field' }, h('span', null, 'Default meal'), mealSel),
       h('label', { class: 'field' }, h('span', null, 'Show amounts as'), fmtSel),
       h('p', { class: 'sub', id: 'amount-format-help' }, 'Fractions apply to servings, cups, spoons and counts. Grams, millilitres, ounces and pounds always show decimals.'),
-      h('div', { class: 'switch-row' },
-        h('label', { for: 'confirm-ai' }, confirmAi, h('span', null, 'Confirm before using Claude')),
-        h('p', { class: 'sub', id: 'confirm-ai-help' }, 'When on, you see the request count and estimated cost before anything is sent. Matching ingredients with Claude runs when you tap it.')),
       h('h2', null, 'Daily Goals'), kcal, h('div', { class: 'grid3' }, pcts.map((p) => p[1])), total, micro.node, status,
       h('button', { class: 'btn primary', type: 'submit' }, 'Save')),
     h('div', { class: 'col-b' },
@@ -973,5 +962,5 @@ function hideSplash() {
   hideSplash();
 })();
 
-useSettings(() => state.settings, () => state.display);  // Refresh Nutrients reads Full Claude Use, Confirm before using Claude and the Search Only or Search Then Claude choice from Settings, Display
+useSettings(() => state.settings, () => state.display);  // Refresh Nutrients reads Full Claude Use and the Search Only or Search Then Claude choice from Settings, Display
 startUpdates();

@@ -2,7 +2,7 @@
 // import review's typical weight before matching, and the grams typed in the tag.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { weightTag, estimateList, estimateSummary, unitPreviewText, tagGrams, WEIGHT_SOURCE_WORDS, ESTIMATE_HELP, FULL_CLAUDE_ACTIONS } from '../../app/static/js/util.js';
+import { weightTag, estimateList, estimateSummary, unitPreviewText, tagGrams, WEIGHT_SOURCE_WORDS, ESTIMATE_HELP } from '../../app/static/js/util.js';
 
 const row = (o) => ({ id: 1, food: { name: 'garlic' }, src: { name: 'garlic', unit: 'clove' }, amount: 2, unit: 'clove', check: false, ...o });
 
@@ -62,5 +62,4 @@ test('grams typed in the tag', () => {
 test('words, settings hint and cost label', () => {
   assert.deepEqual(['fdc', 'off', 'table', 'ai', 'user'].map((k) => WEIGHT_SOURCE_WORDS[k]), ['USDA', 'Open Food Facts', 'Typical Weight', 'Claude Estimate', 'Your Weight']);
   assert.ok(/Estimated Weight/.test(ESTIMATE_HELP) && !/—/.test(ESTIMATE_HELP));
-  assert.equal(FULL_CLAUDE_ACTIONS.find(([k]) => k === 'match')[1], 'Claude match of 15 ingredients, with weights');
 });

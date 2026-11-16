@@ -617,7 +617,7 @@ def test_goals_validation(a, patch):
 
 
 def test_settings_default_put_validate_and_isolation(a, b):
-    d = {"start_screen": "today", "default_meal": None, "use_last": True, "confirm_ai": True, "amount_format": "fraction",
+    d = {"start_screen": "today", "default_meal": None, "use_last": True, "amount_format": "fraction",
          "full_claude": False}
     assert a.get("/api/settings").json() == d
     r = a.put("/api/settings", json={"start_screen": "scan", "default_meal": "lunch"})
@@ -640,7 +640,7 @@ def test_use_last_persists_and_is_per_user(a, b):
     # other settings keep their values and the flag survives them
     a.put("/api/settings", json={"start_screen": "search"})
     assert a.get("/api/settings").json() == {"start_screen": "search", "default_meal": None, "use_last": False,
-                                             "confirm_ai": True, "amount_format": "fraction", "full_claude": False}
+                                             "amount_format": "fraction", "full_claude": False}
     assert a.put("/api/settings", json={"use_last": True}).json()["use_last"] is True
     assert a.get("/api/settings").json()["use_last"] is True
 
@@ -662,19 +662,10 @@ def test_use_last_column_is_added_to_an_old_settings_table(tmp_path):
     assert c.execute("SELECT start_screen, use_last FROM settings").fetchone() == ("scan", 1)
 
 
-def test_confirm_ai_persists_per_user_and_is_boolean(a, b):
-    assert a.get("/api/settings").json()["confirm_ai"] is True
-    assert a.put("/api/settings", json={"confirm_ai": False}).json()["confirm_ai"] is False
-    assert a.get("/api/settings").json()["confirm_ai"] is False
-    assert b.get("/api/settings").json()["confirm_ai"] is True
-    a.put("/api/settings", json={"use_last": False})  # other settings keep it
-    assert a.get("/api/settings").json()["confirm_ai"] is False
-
-
-@pytest.mark.parametrize("v", ["yes", "false", 0, 1, None, [], {}])
-def test_confirm_ai_invalid_value_400(a, v):
-    assert a.put("/api/settings", json={"confirm_ai": v}).status_code == 400
-    assert a.get("/api/settings").json()["confirm_ai"] is True
+def test_confirm_ai_is_gone_and_ignored(a):
+    assert "confirm_ai" not in a.get("/api/settings").json()
+    r = a.put("/api/settings", json={"confirm_ai": False, "use_last": False})
+    assert r.status_code == 200 and "confirm_ai" not in r.json() and r.json()["use_last"] is False
 
 
 def test_amount_format_persists_per_user(a, b):
@@ -682,7 +673,7 @@ def test_amount_format_persists_per_user(a, b):
     assert a.put("/api/settings", json={"amount_format": "decimal"}).json()["amount_format"] == "decimal"
     assert a.get("/api/settings").json()["amount_format"] == "decimal"
     assert b.get("/api/settings").json()["amount_format"] == "fraction"
-    a.put("/api/settings", json={"confirm_ai": False})
+    a.put("/api/settings", json={"use_last": False})
     assert a.get("/api/settings").json()["amount_format"] == "decimal"
     assert a.put("/api/settings", json={"amount_format": "fraction"}).json()["amount_format"] == "fraction"
 
@@ -702,7 +693,7 @@ def test_new_settings_columns_are_added_to_an_old_settings_table(tmp_path):
                     "INSERT INTO settings(user_id,start_screen) VALUES(1,'scan');")
     core.init(c)
     core.init(c)
-    assert c.execute("SELECT start_screen, confirm_ai, amount_format FROM settings").fetchone() == ("scan", 1, "fraction")
+    assert c.execute("SELECT start_screen, amount_format FROM settings").fetchone() == ("scan", "fraction")
 
 
 def test_every_route_requires_current_user(tmp_path, monkeypatch):

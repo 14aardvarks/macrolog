@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  amountLabel, amountText, servingText, setAmountFormat, getAmountFormat, parseAmount, centsText, dollarText, noticeLines, photosText,
+  amountLabel, amountText, servingText, setAmountFormat, getAmountFormat, parseAmount, centsText, dollarText,
 } from '../../app/static/js/util.js';
 import { GUIDE } from '../../app/static/js/guide.js';
 
@@ -65,28 +65,6 @@ test('centsText and dollarText', () => {
   assert.equal(dollarText(0), '$0.00');
   assert.equal(dollarText(0.001), 'under $0.01');
   assert.equal(dollarText(null), '');
-});
-
-test('notice lines for a normal request', () => {
-  const r = noticeLines({ cap: 100, remaining: 96, est_cost_label: 0.0045 }, photosText(1));
-  assert.equal(r.blocked, false);
-  assert.deepEqual(r.lines, ['Sends 1 photo of a label to Claude.', 'Uses 1 of your 100 monthly requests (96 left).', 'Estimated cost about 0.45 cents.']);
-  assert.equal(r.warn, '');
-  assert.equal(photosText(3), '3 photos of a label');
-});
-
-test('notice says cost not available when the price is unknown', () => {
-  const r = noticeLines({ cap: 100, remaining: 50, est_cost_label: null }, photosText(2));
-  assert.equal(r.lines[2], 'Cost not available.');
-});
-
-test('notice warns at 5 or fewer and blocks at 0', () => {
-  assert.equal(noticeLines({ cap: 100, remaining: 5, est_cost_label: 0.01 }, 'x').warn, 'Only 5 left this month.');
-  assert.equal(noticeLines({ cap: 100, remaining: 6, est_cost_label: 0.01 }, 'x').warn, '');
-  const b = noticeLines({ cap: 100, remaining: 0, est_cost_label: 0.01 }, 'x');
-  assert.equal(b.blocked, true);
-  assert.equal(b.lines.length, 1);
-  assert.match(b.lines[0], /Nothing can be sent/);
 });
 
 test('guide has a Claude group', () => {

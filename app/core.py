@@ -1014,13 +1014,13 @@ AMOUNT_FORMATS = ("fraction", "decimal")
 
 
 def read_settings(c, uid: int) -> dict:
-    row = c.execute("SELECT start_screen, default_meal, use_last, confirm_ai, amount_format, full_claude FROM settings WHERE user_id=?",
+    row = c.execute("SELECT start_screen, default_meal, use_last, amount_format, full_claude FROM settings WHERE user_id=?",
                     (uid,)).fetchone()
     if not row:
-        return {"start_screen": "today", "default_meal": None, "use_last": True, "confirm_ai": True, "amount_format": "fraction",
+        return {"start_screen": "today", "default_meal": None, "use_last": True, "amount_format": "fraction",
                 "full_claude": False}
     return {"start_screen": row["start_screen"], "default_meal": row["default_meal"], "use_last": bool(row["use_last"]),
-            "confirm_ai": bool(row["confirm_ai"]), "amount_format": row["amount_format"], "full_claude": bool(row["full_claude"])}
+            "amount_format": row["amount_format"], "full_claude": bool(row["full_claude"])}
 
 
 def full_claude_on(uid: int) -> bool:
@@ -1043,18 +1043,18 @@ def put_settings(user: CurrentUser, body: dict = Body(...)):
             s["start_screen"] = pick(body["start_screen"], SCREENS, "start_screen")
         if "default_meal" in body:
             s["default_meal"] = pick(body["default_meal"], MEALS, "default_meal", nullable=True)
-        for key in ("use_last", "confirm_ai", "full_claude"):
+        for key in ("use_last", "full_claude"):
             if key in body:
                 if not isinstance(body[key], bool):
                     raise bad(f"{key} must be true or false")
                 s[key] = body[key]
         if "amount_format" in body:
             s["amount_format"] = pick(body["amount_format"], AMOUNT_FORMATS, "amount_format")
-        c.execute("INSERT INTO settings(user_id,start_screen,default_meal,use_last,confirm_ai,amount_format,full_claude) VALUES(?,?,?,?,?,?,?) "
+        c.execute("INSERT INTO settings(user_id,start_screen,default_meal,use_last,amount_format,full_claude) VALUES(?,?,?,?,?,?) "
                   "ON CONFLICT(user_id) DO UPDATE SET start_screen=excluded.start_screen, "
-                  "default_meal=excluded.default_meal, use_last=excluded.use_last, confirm_ai=excluded.confirm_ai, "
+                  "default_meal=excluded.default_meal, use_last=excluded.use_last, "
                   "amount_format=excluded.amount_format, full_claude=excluded.full_claude",
-                  (user["id"], s["start_screen"], s["default_meal"], int(s["use_last"]), int(s["confirm_ai"]), s["amount_format"],
+                  (user["id"], s["start_screen"], s["default_meal"], int(s["use_last"]), s["amount_format"],
                    int(s["full_claude"])))
         return s
 

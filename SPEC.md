@@ -277,7 +277,7 @@ DELETE /api/meals/{id}/uncounted -> meal   # Save Without Them: removes every un
 PATCH /api/meals/{id} also takes "servings" (null = 1), "yield" ({"amount","unit"} or null) and "steps" (any time); "items" replaces only the counted rows (matched, not skipped, confirmed); the other rows stay after them as reference lines
 GET/PUT /api/goals   {"kcal","carb_pct","protein_pct","fat_pct"}  pcts total 100. Default 3000 and 50/30/20 (carbs/protein/fat).
         targets: carbs g = kcal*pct/4, protein same, fat g = kcal*pct/9. Goals are per user.
-GET/PUT /api/settings {"start_screen": "today"|"scan"|"search"|"ai", "default_meal": ..., "use_last", "confirm_ai", "full_claude": bool, "amount_format"}   # per user, validated
+GET/PUT /api/settings {"start_screen": "today"|"scan"|"search"|"ai", "default_meal": ..., "use_last", "full_claude": bool, "amount_format"}   # per user, validated  # confirm_ai was removed in v84 (issue #57): the key is ignored and never returned
         # full_claude is Full Claude Use (column settings.full_claude INTEGER NOT NULL DEFAULT 0, added in place; true or false only, else 400). See "Full Claude Use" below
 GET/PUT /api/settings/display {"show_macros","show_micros","show_split","show_macro_bar","show_table","micros_open": bool, "micros_shown": [nutrient...], "today_view": "list"|"table", "search_source": "all"|"off"|"fdc"|"ai", "recipe_owner": "mine"|"shared"|"all", "refresh_mode": "search"|"search_claude", "refresh_mode_set": bool (read only, true once picked)}
         # per user, stored in the settings table (micros_hidden comma list). PUT takes any subset, booleans only (today_view is the string list or table), 400 otherwise.
@@ -462,7 +462,7 @@ Screens: Login, Today, Add, Recipes, Picker, Claude fallback, Settings. Bottom n
   it starts at the per user Display setting Default Search Source (All Sources by default), and a change here lasts for the session,
   `searchAction`, `searchHint`) picks where the search box looks and is remembered for the session (state.source). All Sources is the
   Open Food Facts and USDA search and never calls Claude; Open Food Facts or USDA search only that source (local matches included).
-  Claude never runs while typing: Search or Enter sends the text (max 200 characters) to POST /api/ai/lookup after confirmClaude
+  Claude never runs while typing: Search or Enter sends the text (max 200 characters) to POST /api/ai/lookup with no dialog (v84, issue #57: no Claude action asks first or shows a cost line; the button or the Source choice is the confirmation)
   (opts.chars, so the notice shows the text estimate) and shows one result row with the Claude badge and Estimate; tapping it opens
   the `ai` screen with params.draft, the same editable draft form ("Check What Claude Estimated") that saves through POST /api/foods.
   The last estimate is kept for the session so Back does not ask again. Without Claude for the user, a short hint says so.
@@ -495,8 +495,8 @@ Screens: Login, Today, Add, Recipes, Picker, Claude fallback, Settings. Bottom n
   (Read With Claude, or Split Lines Without Claude which parses locally and uses no credit) or Photos ("Choose up to 3 photos", toJpeg;
   choosing more keeps the first 3 and says so, the server refuses more than 3), or Web Address (only when `urlImportOn(st)`: Claude usable,
   ai_allow_recipe and ai_allow_recipe_url on; input type url, Enter or Read With Claude, `urlCheck` mirrors the server checks inline,
-  the confirm notice asks /api/ai/status?recipe_url=1 and says "Estimated cost up to about ... This is an upper estimate" from est_upper;
-  Full Claude Use sends at once with `recipeUrlCostLine`; errors inline; v67), then a review
+  no cost notice (v84);
+  sends at once; errors inline; v67), then a review
   screen (name, servings, ingredient rows with amount, unit, name and note, add and remove, Steps, meal tag chips, Save and Continue, Rerun With Notes, Cancel;
   a URL import shows "Source example.com" and sends source_url). The input screen has a Note For Claude box (optional, 500 characters, hint and examples: amounts are in grams, ignore the sauce, split into two recipes), `noteCheck` mirrors the server.
   Rerun With Notes (v75, issue #46; only on a result Claude read, draft.claude): opens the import screen again (history entry params.rerun, no URL of its own) titled Rerun With Notes, with the pasted text, the chosen photos (flow.input.files), the web address and the previous note still filled in, on the source Claude read (draft.source). Read With Claude sends the same request as a normal import with the note (same cost notice or Full Claude Use line, confirm rule, monthly cap and key; no extra confirm), checked before the notice. ctx.flow.draft is replaced only by a successful read (`claudeRead` returns a draft or an error), then ctx.back() shows the new review; Back, Cancel or a failed read (error inline on the input screen) leave the previous review exactly as it was, edits included. Split Lines Without Claude is hidden there. Nothing is saved before Save and Continue. meals.source_url (TEXT, null = none; added in place by core.init) is
@@ -793,11 +793,11 @@ POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log i
 
 - Per user setting `full_claude` in GET/PUT /api/settings (settings.full_claude, default off, booleans only). Settings, Claude has a checkbox
   Full Claude Use right above the key section (claudekey.js `renderFullClaude`, saved at once) with the hint "Off by default. ..." (`FULL_CLAUDE_HELP`)
-  a cost table and a short warning (v61, issue #35: Claude is used on its own, recipe imports and their matching run without asking, costs add up, the monthly request limit applies; `fullClaudeWarning`). Confirm before using Claude stays a separate setting for every other Claude step.
+  no cost table and no warning (removed in v84, issue #57). No Confirm before using Claude setting exists.
 - When on, Claude runs on its own in four places. Each step needs the admin switch named and a usable key, else it is skipped silently; each
   uses the normal reservation and the monthly cap (never exceeded: at the cap nothing is sent and one quiet note says "Monthly Claude limit
-  reached, so Claude was not used.", util.js `CLAUDE_CAP_NOTE`); with Confirm before using Claude on the usual notice with the estimated cost
-  comes first, with it off it runs quietly (util.js `autoClaudePlan` gives off, cap, confirm or run; notice.js `autoClaude`).
+  reached, so Claude was not used.", util.js `CLAUDE_CAP_NOTE`); it then goes ahead with no dialog
+  (util.js `autoClaudePlan` gives off, cap or run; notice.js `autoClaude`).
   1. (Issue #56: superseded by Match With Claude, which under Full Claude Use asks Claude about every unmatched row except a food from a previous
      recipe; the setting and `effectiveAutoMatch` are gone. The rest of this item is history.) Auto-Match After Import (ai_allow_recipe): util.js `effectiveAutoMatch` turns Search (or an unset or bad value) into Search Then Claude;
      an explicit Claude, Search Then Claude or Off is never changed (a stored explicit "search" is the default and cannot be told from a choice, so it
@@ -832,17 +832,16 @@ POST   /api/entry-groups/{id}/copy {day?, meal?, amount?, unit?} -> recipe log i
      Search Only survives Full Claude Use. Search Then Claude cannot be used when `refreshClaudeReason(st)` is not empty (no key, administrator switch
      ai_allow_lookup off, monthly cap reached, in that order); the run is then Search Only and `claudeGo` returns one quiet note
      (`refreshFallbackNote(reason)`: "Search Then Claude is not available, so Search Only ran. <reason>"), shown with the result. When Full Claude Use only
-     made it the default the fallback is silent, except for a note at the cap. The cost notice and confirm follow `refreshClaudePlan`: the usual notice when Confirm before
-     using Claude is on, nothing when off, one quiet note at the cap. The hint states both defaults. Claude values stay estimates (foods.ai_micros).
-  4. Import Recipe, Read With Claude (ai_allow_recipe), text and photos (v61, issue #35), sends at once without the confirm notice
-     (matching no longer follows an import, see Match and Match With Claude). The line under the text button shows
-     the cost beforehand ("Up to about 0.11 cents per import ... N of M Claude requests left this month."); at the cap the buttons are
+     made it the default the fallback is silent, except for a note at the cap. `refreshClaudePlan` gives off, cap or run with no dialog (v84).
+     One quiet note at the cap. The hint states both defaults. Claude values stay estimates (foods.ai_micros).
+  4. Import Recipe, Read With Claude (ai_allow_recipe), text and photos (v61, issue #35), sends at once with no dialog
+     (matching no longer follows an import, see Match and Match With Claude). At the cap the buttons are
      disabled with the cap note, and a 429 shows that note. The label photo, typed lookup, Match Selected With Claude, Ask Claude on a row
-     and the bulk Refresh Nutrients batches keep the Confirm before using Claude behavior.
+     and the bulk Refresh Nutrients batches run with no dialog.
 - Cost estimates (GET /api/ai/status `action_costs`, ai.action_costs, from the same token figures as the cost notice, conservative: text at
   its longest typical size, outputs at the notice's upper estimate). Prices are the user's active prices when set (personal prices on a
   personal key, else the admin prices), otherwise the Haiku 5.5 sample prices 0.10 USD input and 0.50 USD output per million tokens
-  (`sample: true`, said under the table). These are estimates, not bills; the real cost is in Settings from ai_usage.
+  (`sample: true`). The server still sends them, but the app no longer shows them. These are estimates, not bills; the real cost is in Settings from ai_usage.
 
   | Action (estimates) | Tokens in / out | Sample prices |
   |---|---|---|
@@ -1145,7 +1144,7 @@ GET    /api/photos/{name}  -> image/jpeg, Cache-Control "private, max-age=315360
 - Row state machine (`rowState(item, proposal)`): unmatched, suggested (a suggestion with a food waits), accepted, check (Check Amount),
   skipped; derived from the saved row and the waiting suggestion, never stored. `rowActions(state, { aiOn, canRemove })` gives the row's
   buttons and menu: unmatched: + (accessible name Match Ingredient, described by the line; POST match-search for that row, one request) and,
-  when Claude is usable, the Claude + (sparkle icon, Match With Claude; POST /api/recipes/{id}/match with one row after `confirmClaude`);
+  when Claude is usable, the Claude + (sparkle icon, Match With Claude; POST /api/recipes/{id}/match with one row);
   suggested: Accept and Change; check: Edit Amount; accepted and skipped: menu only. The three dot menu (js/menu.js `menuButton`, shared with
   the recipe cards: aria-haspopup, arrows, Escape closes and returns focus, 44 px items) holds Change, Search Another (the full finder with
   Scan Barcode and Enter Manually, as before), Edit Amount, Enter Grams, Skip or Unskip, Remove (not on the last row; Undo puts the row back at
@@ -1258,8 +1257,7 @@ GET    /api/photos/{name}  -> image/jpeg, Cache-Control "private, max-age=315360
   "3 of 8 matched, 1 to check, 2 suggested"), `checkBlock`, then a choice and one action. The choice is a two segment control (`MATCH_MODES`,
   `matchModes(aiOn)`, `matchMode`; chip buttons with aria-pressed in a group labelled How to match): Match, the default, and Match With Claude,
   offered only when Claude is usable (a key and the ai_allow_recipe switch). Without Claude the segments are left out and the action reads Match;
-  with Claude it reads Start. Choosing and tapping Start is the confirmation: no dialog, no cost line and no warning text, whatever Confirm before using
-  Claude says (that setting still covers the other Claude steps). Continue Without Matching sits under it.
+  with Claude it reads Start. Choosing and tapping Start is the confirmation: no dialog, no cost line and no warning text. No other Claude action has a dialog either (v84). Continue Without Matching sits under it.
 - `matchBlock(meal, props, {edit, expanded})` decides { choice, dismiss, link }. The choice shows to an editor while any row is open (`openCount`:
   unmatched or with a suggestion waiting). Continue Without Matching (PATCH match_prompt_dismissed true, unchanged storage) hides the choice for that
   recipe and leaves a small Match link next to the count line; the link shows the choice again for the visit (nothing is stored). Rows keep every

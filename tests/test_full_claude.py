@@ -85,9 +85,8 @@ def test_default_off_per_user_and_validated(env):
         assert env["a"].put("/api/settings", json={"full_claude": bad}).status_code == 400
     assert env["a"].get("/api/settings").json()["full_claude"] is True
     # other settings leave it alone, and it leaves them alone
-    s = env["a"].put("/api/settings", json={"confirm_ai": False}).json()
-    assert s["full_claude"] is True and s["confirm_ai"] is False
-    assert env["a"].put("/api/settings", json={"full_claude": False}).json()["confirm_ai"] is False
+    assert env["a"].put("/api/settings", json={"use_last": False}).json()["full_claude"] is True
+    assert env["a"].put("/api/settings", json={"full_claude": False}).json()["use_last"] is False
 
 
 def test_column_is_added_in_place_off(tmp_path, monkeypatch):
@@ -296,7 +295,7 @@ def test_match_with_claude_route_honors_switch_key_and_cap(env, monkeypatch):
 
 def test_full_claude_survives_other_settings_saves_and_gives_the_client_what_match_with_claude_reads(env):
     full(env)
-    assert env["a"].put("/api/settings", json={"start_screen": "search", "confirm_ai": False}).json()["full_claude"] is True
+    assert env["a"].put("/api/settings", json={"start_screen": "search", "use_last": False}).json()["full_claude"] is True
     assert env["a"].put("/api/settings/display", json={"auto_match": "search"}).status_code == 200  # a stale client, ignored
     assert env["a"].get("/api/settings").json()["full_claude"] is True
     assert "auto_match" not in env["a"].get("/api/settings/display").json()

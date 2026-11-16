@@ -1,7 +1,7 @@
 import { api } from './api.js';
 import { h, clear, field, message, show, extLink } from './dom.js';
 import { claudeStatusLines, personalBody, personalHints, ssoView, PRICING_URL, PRICING_LINK_TEXT, PRICE_SAMPLE } from './adminutil.js';
-import { dollarText, sentence, fullClaudeRows, fullClaudePriceNote, fullClaudeWarning } from './util.js';
+import { dollarText, sentence } from './util.js';
 
 let seq = 0;
 // A labelled box with its hint read out by screen readers.
@@ -94,16 +94,16 @@ export const FULL_CLAUDE_HELP = [
   sentence('When on, Claude runs on its own where it helps'),
   sentence('Match With Claude also checks the ingredients the search was sure of, except foods from an earlier recipe, '
     + 'a search with no result asks Claude for an estimate, a barcode that is not found offers a Claude estimate, '
-    + 'Refresh Nutrients lets Claude fill blanks the source left, and a recipe import, text or photo, sends without asking'),
+    + 'Refresh Nutrients lets Claude fill blanks the source left, and a recipe import needs no extra step'),
   sentence('Each step needs a Claude key and the feature allowed by the administrator, otherwise it is skipped quietly'),
-  sentence('The monthly request limit always applies, and the other Claude steps still follow Confirm before using Claude'),
+  sentence('The monthly request limit always applies'),
 ].join(' ');
 
 // Settings, Full Claude Use (settings.full_claude, per user, off by default). Saved at once. ai: /api/ai/status for the
 // cost table; save(on) stores it and resolves the new settings.
 export function renderFullClaude(settings, ai, save) {
   const box = h('input', { type: 'checkbox', id: 'full-claude', checked: settings.full_claude === true,
-    'aria-describedby': 'full-claude-help full-claude-costs full-claude-warning' });
+    'aria-describedby': 'full-claude-help' });
   const status = h('div', { 'aria-live': 'polite' });
   box.addEventListener('change', async () => {
     const want = box.checked;
@@ -112,15 +112,8 @@ export function renderFullClaude(settings, ai, save) {
     catch (err) { box.checked = !want; show(status, message(err.message, 'error')); }
     box.disabled = false;
   });
-  const costs = ai && ai.action_costs;
-  const rows = fullClaudeRows(costs);
-  const table = rows.length ? h('table', { class: 'cost-table', id: 'full-claude-costs' },
-    h('caption', null, 'Estimated Cost per Action'),
-    h('thead', null, h('tr', null, h('th', { scope: 'col' }, 'Action'), h('th', { scope: 'col' }, 'Estimate'))),
-    h('tbody', null, rows.map((r) => h('tr', null, h('th', { scope: 'row' }, r.label), h('td', null, r.text))))) : null;
   return h('div', { class: 'switch-row full-claude' },
     h('label', { for: 'full-claude' }, box, h('span', null, 'Full Claude Use')),
     h('p', { class: 'sub', id: 'full-claude-help' }, FULL_CLAUDE_HELP),
-    table, h('p', { class: 'sub', id: table ? null : 'full-claude-costs' }, fullClaudePriceNote(costs)),
-    h('p', { class: 'badge full-claude-warning', id: 'full-claude-warning' }, fullClaudeWarning(ai)), status);
+    status);
 }

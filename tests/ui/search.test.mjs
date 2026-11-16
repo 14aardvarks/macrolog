@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { SEARCH_SOURCES, searchSource, searchAction, searchHint, MAX_AI_TEXT, DESCRIPTION_TEXT, noticeLines, sentence } from '../../app/static/js/util.js';
+import { SEARCH_SOURCES, searchSource, searchAction, searchHint, MAX_AI_TEXT, sentence } from '../../app/static/js/util.js';
 import { api } from '../../app/static/js/api.js';
 
 test('source options are the four choices in order, labels in Title Case', () => {
@@ -54,11 +54,6 @@ test('hints name the source and are full sentences', () => {
     assert.equal(sentence(t), t);
     assert.ok(!t.includes('—'));
   }
-});
-
-test('confirm notice for a description reads naturally', () => {
-  const st = { remaining: 9, cap: 100, est_cost_label: 0.001 };
-  assert.equal(noticeLines(st, DESCRIPTION_TEXT).lines[0], 'Sends your food description to Claude.');
 });
 
 test('api: search passes the source, aiStatus asks for a text estimate, aiLookup posts JSON', async () => {

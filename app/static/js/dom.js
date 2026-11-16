@@ -1,4 +1,4 @@
-import { sentence, sourceLabel, kcalEstimated, KCAL_ESTIMATE_CUE, isEstimate, sourceNote, checkList, checkSummary, estimateList, estimateSummary, weightTag, tagGrams } from './util.js';
+import { sentence, sourceLabel, kcalEstimated, KCAL_ESTIMATE_CUE, isEstimate, checkList, checkSummary, estimateList, estimateSummary, weightTag, tagGrams } from './util.js';
 
 // Tiny DOM helpers. Text always goes through textContent / text nodes, never innerHTML.
 
@@ -175,10 +175,10 @@ export function weightTagNode(it, name, onSave) {
 }
 const fmtGrams = (g) => (g >= 10 ? String(Math.round(g)) : String(Math.round(g * 10) / 10)) + ' g';
 
-// A line for the picker and the food form: the badge, and for Claude foods the estimate note.
+// A line for the picker and the food form: the badge.
 export function sourceLine(source) {
   const b = sourceBadge(source);
-  return b ? h('p', { class: 'sub src-line' }, 'Source ', b, isEstimate(source) ? ' ' + sourceNote(source) : null) : null;
+  return b ? h('p', { class: 'sub src-line' }, 'Source ', b) : null;
 }
 
 // Link to a page outside the app, opened in a new tab.
