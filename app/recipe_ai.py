@@ -74,11 +74,12 @@ IMPORT_TOOL = {
                 },
                 "required": ["text", "amount", "unit", "name", "note"]}},
             "confidence": {"type": "string", "description": "One short sentence on how readable the recipe was"},
-            # Optional (not in required): strict schemas allow few optional parameters, so this stays a plain list of text.
+            # Required (an empty list when there is no method): when it was optional, Claude often left it out on long pages. A plain
+            # list of text, not a union, so the strict schema's union count is unchanged.
             "steps": {"type": "array", "items": {"type": "string"},
                       "description": "The method in order, one short instruction per step, only the recipe's own steps"},
         },
-        "required": ["name", "servings", "ingredients", "confidence"],
+        "required": ["name", "servings", "ingredients", "confidence", "steps"],
     },
 }
 
@@ -366,7 +367,8 @@ URL_INSTRUCTION = (
     "Record one entry per ingredient line, in order. Leave section headings (such as \"For the sauce\"), equipment and method steps out of the ingredient list. "
     "Split each line into amount, unit, name and note. Do not convert units and do not invent amounts: leave amount null when the line has none. " + UNIT_RULE +
     "Record the method separately in steps, in order, one short instruction per step, copied from the recipe. Steps hold only the "
-    "method: no ingredient lists, headings, tips, stories, ads, nutrition or reader comments. Leave steps empty when there is no method. "
+    "method: no ingredient lists, headings, tips, stories, ads, nutrition or reader comments. Always fill steps from the recipe's "
+    "instructions or directions section, which usually follows the ingredients, and leave steps empty only when the page truly has no method. "
     "Set cut_off to true when the page text stops before the recipe ends. "
     "If the page could not be read or holds no recipe, record an empty ingredient list and say why in confidence. Always finish with {tool}."
 )

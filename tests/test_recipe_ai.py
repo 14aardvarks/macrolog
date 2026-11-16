@@ -241,10 +241,10 @@ def test_match_bad_estimate_becomes_none(env):
 
 # ---------- steps and amounts worked out from the line ----------
 
-def test_import_schema_has_optional_steps_and_returns_them(env):
+def test_import_schema_requires_steps_and_returns_them(env):
     schema = recipe_ai.IMPORT_TOOL["input_schema"]
     assert schema["properties"]["steps"] == {"type": "array", "items": {"type": "string"}, "description": schema["properties"]["steps"]["description"]}
-    assert "steps" not in schema["required"]
+    assert "steps" in schema["required"]
     env["reply"] = reply(recipe_ai.IMPORT_TOOL_NAME, {**RECIPE, "steps": ["  Mix   flour and eggs. ", "", 5, "Fry."]})
     body = env["c"].post("/api/recipes/import/text", json={"text": "x"}).json()
     assert body["recipe"]["steps"] == ["Mix flour and eggs.", "Fry."]

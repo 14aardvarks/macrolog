@@ -349,7 +349,7 @@ POST /api/recipes/import/text   {"text": 1..20000 chars, "note"?: ..500} -> {"re
      # note (all three import routes, issue #46, `recipe_ai.clean_note`): optional text, spaces folded, at most 500 characters, no control
      # characters (a line break or tab included); otherwise 400 before any key, cap or request. It goes into the prompt only as
      # <note>..</note> (angle brackets dropped) after the instruction that it is data, never instructions; no tag when empty.
-     # the import tool has one optional property, steps (a plain array of strings): the method only, no ingredient lists, ads or comments;
+     # the import tool has steps as a required property (an empty list when there is no method; optional made Claude skip it on long pages) (a plain array of strings): the method only, no ingredient lists, ads or comments;
      # cut to core's limits with a warning
 POST /api/recipes/import/photos multipart images (1 to 3, same limits as /label), note? (..500; hint is the older name, note wins) -> same   # nothing is saved
 POST /api/recipes/{meal_id}/match {"item_ids": [1..15 ids of my recipe]} -> {"proposals":[{item_id, kind: candidate|estimate|none,

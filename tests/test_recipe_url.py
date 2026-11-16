@@ -138,7 +138,7 @@ def test_strict_schema_stays_within_the_union_limit():
                 walk(v)
     walk(recipe_ai.URL_IMPORT_TOOL["input_schema"])
     assert unions <= 16
-    assert recipe_ai.IMPORT_TOOL["input_schema"]["required"] == ["name", "servings", "ingredients", "confidence"]  # text import unchanged
+    assert recipe_ai.IMPORT_TOOL["input_schema"]["required"] == ["name", "servings", "ingredients", "confidence", "steps"]  # steps required so Claude always fills them
 
 
 def test_content_limit_comes_from_the_admin_setting_within_bounds(env, monkeypatch):
