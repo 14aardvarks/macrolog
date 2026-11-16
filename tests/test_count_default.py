@@ -44,7 +44,9 @@ ROWS = {"name": "Stew", "servings": 2, "confidence": "Clear.", "ingredients": [
     {"text": "Salt to taste", "amount": 1, "unit": "tsp", "name": "salt", "note": None},
     {"text": "Pepper", "amount": None, "unit": None, "name": "pepper", "note": "as needed"},
     {"text": "Fresh parsley", "amount": None, "unit": None, "name": "parsley", "note": None}]}
-WANT = [(3, "count", "carrots", None), (2, "clove", "garlic", "minced"), (1, "can", "tomatoes", None), (2, "tbsp", "oil", None),
+# Issue #55: a stray count or fuzzy unit Claude sends anyway becomes grams through the typical weight tables (estimated, the wording
+# in the note); a can no table knows stays a can for the review to flag.
+WANT = [(183, "g", "carrots", "3 carrots"), (6, "g", "garlic", "2 cloves, minced"), (1, "can", "tomatoes", None), (2, "tbsp", "oil", None),
         (None, None, "salt", None), (1, "tsp", "salt", None), (None, None, "pepper", "as needed"), (None, None, "parsley", None)]
 
 
@@ -86,17 +88,16 @@ def test_import_prompts_and_schema_list_the_units_and_the_to_taste_rule():
     for text in (recipe_ai.import_text_request("x", "")["messages"][0]["content"][0]["text"],
                  recipe_ai.import_photo_request([("image/jpeg", JPEG)], "")["messages"][0]["content"][-1]["text"],
                  recipe_ai.import_url_request("https://a.example/r", "")["messages"][0]["content"][0]["text"]):
-        assert "Use only these units: " + ", ".join(recipe_ai.UNIT_NAMES) in text and "Use count when the line gives no unit" in text
+        assert "Use only these units: " + ", ".join(recipe_ai.UNIT_NAMES) in text and "Never use count" in text
         assert "to taste or as needed" in text and "leave amount and unit null" in text
-    assert recipe_ai.UNIT_NAMES == ("g", "kg", "oz", "lb", "ml", "l", "floz", "cup", "tbsp", "tsp", "count", *units.PACKAGE_UNITS, *units.FUZZY_UNITS)
-    for word in ("can", "clove", "stick", "pinch", "fillet", "carton"):
-        assert word in recipe_ai.UNIT_NAMES
-    assert "leave it out of the name" in recipe_ai.UNIT_RULE and "printed package size" in recipe_ai.UNIT_RULE
+    assert recipe_ai.UNIT_NAMES == ("g", "kg", "oz", "lb", "ml", "l", "floz", "cup", "tbsp", "tsp")  # issue #55: measures only
+    for word in ("can", "clove", "stick", "pinch", "fillet", "carton", "count"):
+        assert word not in recipe_ai.UNIT_NAMES and word in recipe_ai.MATCH_UNIT_NAMES
     props = recipe_ai.IMPORT_TOOL["input_schema"]["properties"]["ingredients"]["items"]["properties"]
-    assert "count" in props["unit"]["description"] and "to taste" in props["note"]["description"] and "to taste" in props["amount"]["description"]
+    assert "to taste" in props["note"]["description"] and "to taste" in props["amount"]["description"]
     assert recipe_ai.URL_IMPORT_TOOL["input_schema"]["properties"]["ingredients"] == recipe_ai.IMPORT_TOOL["input_schema"]["properties"]["ingredients"]
     assert "count" in recipe_ai.MATCH_TOOL["input_schema"]["properties"]["matches"]["items"]["properties"]["unit"]["description"]
-    assert "UNIT" not in recipe_ai.MATCH_INSTRUCTION and ", ".join(recipe_ai.UNIT_NAMES) in recipe_ai.MATCH_INSTRUCTION
+    assert "UNIT" not in recipe_ai.MATCH_INSTRUCTION and recipe_ai.MATCH_UNIT_LIST in recipe_ai.MATCH_INSTRUCTION
 
 
 def test_clean_unit_keeps_only_known_units():

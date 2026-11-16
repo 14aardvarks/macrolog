@@ -81,7 +81,7 @@ def test_import_text_returns_a_clean_draft(env):
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["recipe"]["name"] == "Pancakes" and body["recipe"]["servings"] == 4
-    assert [(i["amount"], i["unit"], i["name"]) for i in body["recipe"]["ingredients"]] == [(1.5, "cup", "flour"), (2, "count", "egg"), (None, None, "salt")]
+    assert [(i["amount"], i["unit"], i["name"]) for i in body["recipe"]["ingredients"]] == [(1.5, "cup", "flour"), (100, "g", "egg"), (None, None, "salt")]  # a stray count becomes grams (issue #55)
     assert body["recipe"]["ingredients"][2]["note"] == "to taste"
     assert body["warnings"] == ["Claude's note: Clear."]
     assert body["used_this_month"] == 1 and body["input_tokens"] == 900 and body["key_source"] == "global"
@@ -305,7 +305,7 @@ CLEAN_CASES = [
     ({"text": OIL, "amount": 1.5, "unit": "shell", "name": "olive oil", "note": "as needed"}, 1.5, "count", "olive oil", "as needed"),
     ({"text": "1 ½ cups flour", "amount": None, "name": "flour"}, 1.5, "cup", "flour", None),
     ({"text": "¾ tsp salt", "amount": None, "unit": None, "name": "salt"}, 0.75, "tsp", "salt", None),
-    ({"text": "2-3 cloves garlic", "amount": None, "name": "garlic"}, 2.5, "clove", "garlic", None),
+    ({"text": "2-3 cloves garlic", "amount": None, "name": "garlic"}, 7.5, "g", "garlic", "2.5 cloves"),  # issue #55: a typical weight
     ({"text": "1/2 cup (120 ml) milk", "amount": 0.5, "unit": "cup", "name": "milk", "note": "120 ml"}, 0.5, "cup", "milk", "120 ml"),
     ({"text": "1 tablespoon butter, melted (or more as needed)", "amount": 1, "unit": "tablespoon", "name": "butter",
       "note": "melted, or more as needed"}, 1, "tbsp", "butter", "melted, or more as needed"),

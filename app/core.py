@@ -50,12 +50,15 @@ MEAL_ITEMS_BODY = """
   id INTEGER PRIMARY KEY, meal_id INTEGER NOT NULL REFERENCES meals(id) ON DELETE CASCADE,
   food_id INTEGER REFERENCES foods(id), amount REAL, unit TEXT, position INTEGER NOT NULL DEFAULT 0,
   src_text TEXT, src_amount REAL, src_unit TEXT, src_name TEXT, src_note TEXT, skipped INTEGER NOT NULL DEFAULT 0,
-  needs_check INTEGER NOT NULL DEFAULT 0, item_pkg_amount REAL, item_pkg_unit TEXT, item_was_amount REAL, item_was_unit TEXT"""
+  needs_check INTEGER NOT NULL DEFAULT 0, item_pkg_amount REAL, item_pkg_unit TEXT, item_was_amount REAL, item_was_unit TEXT, item_est TEXT"""
 # needs_check: a food is attached but its amount could not be worked out from the recipe line (for example "1 cup" of a
 # food known only by weight). It counts for nothing, like an unmatched row, until the user confirms an amount.
 # item_pkg_amount and item_pkg_unit: the size printed on one package of the line ("1 (15 oz) can" is 15 oz), null when none.
 # item_was_amount and item_was_unit: the line before Use Grams on the review screen ("2 clove"), so the grams typed for it can be
 # saved as the user's own weight of one clove once the row is matched (issue #45). Null when Use Grams was not used.
+# item_est: the line's weight or volume is an import estimate (issue #55): "ai" when Claude turned a count, package or fuzzy unit
+# into it, "table" when the server did through the typical weight tables. item_was_* then hold the original wording (3 clove), so a
+# real portion (the user's own weight, USDA or Open Food Facts) replaces the estimate when the row is matched. Null = exact.
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS foods(
@@ -166,7 +169,8 @@ def init(c: sqlite3.Connection) -> None:
         c.execute("ALTER TABLE meal_items ADD COLUMN needs_check INTEGER NOT NULL DEFAULT 0")
     item_cols = {r[1] for r in c.execute("PRAGMA table_info(meal_items)")}
     for col, kind in (("item_pkg_amount", "REAL"), ("item_pkg_unit", "TEXT"),  # databases made before printed package sizes (null = none)
-                      ("item_was_amount", "REAL"), ("item_was_unit", "TEXT")):  # and before Use Grams kept the line (null = none)
+                      ("item_was_amount", "REAL"), ("item_was_unit", "TEXT"),  # and before Use Grams kept the line (null = none)
+                      ("item_est", "TEXT")):  # and before import estimates (issue #55, null = exact)
         if col not in item_cols:
             c.execute(f"ALTER TABLE meal_items ADD COLUMN {col} {kind}")
     c.execute("CREATE INDEX IF NOT EXISTS meal_items_meal ON meal_items(meal_id, position)")
@@ -1391,17 +1395,23 @@ def parse_items(c, raw, uid: int | None = None) -> list[tuple[dict, float, str]]
 SRC_KEYS = ("text", "amount", "unit", "name", "note")
 PKG_KEYS = ("pkg_amount", "pkg_unit")  # a printed package size on an imported line, stored as item_pkg_amount and item_pkg_unit
 WAS_KEYS = ("was_amount", "was_unit")  # the line before Use Grams (2 clove), stored as item_was_amount and item_was_unit
+EST_KEYS = ("estimated", "est_source")  # an import estimate (issue #55): estimated true with est_source ai or table, stored as item_est
+EST_SOURCES = ("ai", "table")
 
 
 def item_dict(c, it, uid: int | None = None) -> dict:
     """One recipe ingredient. Unmatched rows have food null and null nutrients; skipped rows count for nothing."""
     src = None
     if it["src_text"] is not None or it["src_name"] is not None:
-        src = {**{k: it["src_" + k] for k in SRC_KEYS}, "pkg_amount": it["item_pkg_amount"], "pkg_unit": it["item_pkg_unit"]}
+        src = {**{k: it["src_" + k] for k in SRC_KEYS}, "pkg_amount": it["item_pkg_amount"], "pkg_unit": it["item_pkg_unit"],
+               "estimated": bool(it["item_est"]), "est_source": it["item_est"], "was_amount": it["item_was_amount"], "was_unit": it["item_was_unit"],
+               "weight_reason": None}
     check = it["food_id"] is not None and bool(it["needs_check"])
     base = {"id": it["id"], "food_id": it["food_id"], "amount": it["amount"], "unit": it["unit"], "src": src,
             "skipped": bool(it["skipped"]), "matched": it["food_id"] is not None and not check, "check": check, "check_reason": None}
     if it["food_id"] is None:
+        if src and not it["skipped"]:  # a count, package or fuzzy unit no typical weight knows: it will need a check once matched
+            src["weight_reason"] = unit_preview(src).get("reason")
         return {**base, "food": None, "servings": None, "estimated": False, "kcal_estimated": False, "grams": None, **{k: None for k in (*MACROS, *MICROS)}}
     food = need_food(c, it["food_id"], uid)
     if check:  # why the amount needs a check (units.NO_WEIGHT, NO_SIZE, NO_CONVERT, NO_AMOUNT), None when the line does not say
@@ -1412,9 +1422,24 @@ def item_dict(c, it, uid: int | None = None) -> dict:
     # 1 g per ml guess. weight_source names the row a clove, can or large converted through, exact or not (user, fdc, off, table, ai);
     # weight_note says why (Standard can size assumed).
     wsrc, wnote = (None, None) if check else units.weight_info(food, it["unit"])
-    return {**base, "food": food, "grams": grams, **m, "weight_source": wsrc, "weight_note": wnote,
-            "estimate_source": estimate_word(units.estimate_source(food, it["unit"])) if m["estimated"] and not check else None,
-            "weight_grams": None if check else units.line_grams(food, it["amount"], it["unit"])}
+    out = {**base, "food": food, "grams": grams, **m, "weight_source": wsrc, "weight_note": wnote,
+           "estimate_source": estimate_word(units.estimate_source(food, it["unit"])) if m["estimated"] and not check else None,
+           "weight_grams": None if check else units.line_grams(food, it["amount"], it["unit"])}
+    est = None if check else line_estimate(it, food, it["amount"], it["unit"])
+    return {**out, **est} if est else out
+
+
+def line_estimate(it, food: dict, amount, unit) -> dict | None:
+    """The Estimated Weight fields of a row whose amount is still the import's estimate (issue #55): item_est is set and the row
+    keeps the line's own amount and unit (9 g of a 3 clove line). None once a real portion or the user's grams replaced it."""
+    est = it["item_est"]
+    a, sa = units._pos(amount), units._pos(it["src_amount"])
+    if not est or a is None or sa is None or unit != it["src_unit"] or abs(a - sa) > 1e-6 * max(1.0, sa):
+        return None
+    g = round(a * units.MASS[unit], 1) if unit in units.MASS else units.line_grams(food, a, unit)
+    ai_row = est == "ai"
+    return {"estimated": True, "estimate_source": "claude" if ai_row else "table", "weight_source": "ai" if ai_row else "table",
+            "weight_note": units.AI_NOTE if ai_row else None, "weight_grams": g, "line_estimate": True}
 
 
 def estimate_word(source: str | None) -> str | None:
@@ -1871,9 +1896,9 @@ def duplicate_meal(meal_id: int, user: CurrentUser, body: dict | None = Body(Non
             c.execute("UPDATE meals SET photo=? WHERE id=?", (photos.copy_file(row["photo"]), new))
         c.execute("INSERT INTO recipe_tags(meal_id, meal) SELECT ?, meal FROM recipe_tags WHERE meal_id=?", (new, meal_id))
         c.execute("INSERT INTO meal_items(meal_id, food_id, amount, unit, position, src_text, src_amount, src_unit, src_name, src_note, "
-                  "skipped, needs_check, item_pkg_amount, item_pkg_unit, item_was_amount, item_was_unit) SELECT ?, food_id, amount, unit, position, "
-                  "src_text, src_amount, src_unit, src_name, src_note, skipped, needs_check, item_pkg_amount, item_pkg_unit, item_was_amount, "
-                  "item_was_unit FROM meal_items WHERE meal_id=? ORDER BY position, id", (new, meal_id))
+                  "skipped, needs_check, item_pkg_amount, item_pkg_unit, item_was_amount, item_was_unit, item_est) SELECT ?, food_id, amount, unit, "
+                  "position, src_text, src_amount, src_unit, src_name, src_note, skipped, needs_check, item_pkg_amount, item_pkg_unit, item_was_amount, "
+                  "item_was_unit, item_est FROM meal_items WHERE meal_id=? ORDER BY position, id", (new, meal_id))
         return meal_dict(c, own_meal(c, user["id"], new), user)
 
 
@@ -1969,11 +1994,13 @@ def clean_photo_url(v) -> str | None:
 
 
 def import_row(raw) -> tuple:
-    """(text, amount, unit, name, note, pkg_amount, pkg_unit, was_amount, was_unit) of one imported ingredient line, validated. A known unit is stored
+    """(text, amount, unit, name, note, pkg_amount, pkg_unit, was_amount, was_unit, est) of one imported ingredient line, validated. A known unit is stored
     canonical (Cloves is clove), a typed word as typed. pkg_amount and pkg_unit are the size printed on one package ("1 (15 oz) can"):
     kept only on a count, package or fuzzy unit with an amount, read from text when not sent. was_amount and was_unit are the line
-    before Use Grams (2 clove), kept only on a line in a weight."""
-    if not isinstance(raw, dict) or set(raw) - set(SRC_KEYS) - set(PKG_KEYS) - set(WAS_KEYS):
+    before Use Grams (2 clove), kept only on a line in a weight. est (issue #55): estimated true (est_source ai, the default, or table)
+    marks a weight or volume an import worked out from a count, package or fuzzy unit; was_amount and was_unit are then the original
+    wording (3 clove) and may go with a volume too. Kept only on a weight or volume with an amount."""
+    if not isinstance(raw, dict) or set(raw) - set(SRC_KEYS) - set(PKG_KEYS) - set(WAS_KEYS) - set(EST_KEYS):
         raise bad("must be an object with text, amount, unit, name and note")
     name = short_text(raw.get("name"), "name", 200, required=True)
     amount = number(raw.get("amount"), "amount", optional=True)
@@ -2011,8 +2038,16 @@ def import_row(raw) -> tuple:
             ok = False
         if not ok:
             raise bad("was_unit must be a count, package or fuzzy unit")
-        was = (was_amount, units.known_unit(wu) or units.COUNT) if unit in units.MASS else None
-    return text, amount, unit, name, note, *(pkg or (None, None)), *(was or (None, None))
+        was = (was_amount, units.known_unit(wu) or units.COUNT)
+    if raw.get("estimated") is not None and not isinstance(raw.get("estimated"), bool):
+        raise bad("estimated must be true or false")
+    src = raw.get("est_source")
+    if src is not None and src not in EST_SOURCES:
+        raise bad("est_source must be ai or table")
+    est = (src or "ai") if raw.get("estimated") is True and amount is not None and amount > 0 and unit in units.MEASURES else None
+    if was and not (unit in units.MASS or (est and unit in units.VOLUME)):
+        was = None  # Use Grams keeps the line only on a weight, an import estimate on a weight or volume
+    return text, amount, unit, name, note, *(pkg or (None, None)), *(was or (None, None)), est
 
 
 @router.post("/meals/import")
@@ -2041,7 +2076,7 @@ def import_meal(user: CurrentUser, body: dict = Body(...)):
                         (user["id"], name, tags[0] if tags else None, servings, steps_json(steps), source_url))
         c.executemany("INSERT INTO recipe_tags(meal_id, meal) VALUES(?,?)", [(cur.lastrowid, m) for m in tags])
         c.executemany("INSERT INTO meal_items(meal_id, position, src_text, src_amount, src_unit, src_name, src_note, item_pkg_amount, item_pkg_unit, "
-                      "item_was_amount, item_was_unit) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                      "item_was_amount, item_was_unit, item_est) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                       [(cur.lastrowid, i, *r) for i, r in enumerate(rows)])
         return meal_dict(c, own_meal(c, user["id"], cur.lastrowid))
 
@@ -2090,9 +2125,11 @@ def remember_weight(c, uid: int, item_id: int, food: dict, amount: float, unit: 
     change (was, 2 clove or 1 cup, when it was matched in such a unit), else the line's own, without a printed size."""
     if unit not in units.MASS:
         return
-    it = c.execute("SELECT src_amount, src_unit, src_name, item_pkg_amount, item_was_amount, item_was_unit FROM meal_items WHERE id=?",
+    it = c.execute("SELECT src_amount, src_unit, src_name, item_pkg_amount, item_was_amount, item_was_unit, item_est FROM meal_items WHERE id=?",
                    (item_id,)).fetchone()
     grams = amount * units.MASS[unit]
+    if it["item_est"] and not typed:
+        return  # an import estimate is not the user's weight; grams they type for it are (below)
     if it["item_was_amount"] and it["item_was_unit"]:
         n, line_unit = it["item_was_amount"], it["item_was_unit"]
     elif typed and was and was[0] and was[1] not in units.MASS and _weighable(was[1]):
@@ -2133,6 +2170,8 @@ def apply_item(c, item_id: int, body: dict, uid: int | None = None) -> None:
             undelete(c, uid, food["id"])  # picking a deleted food again for a recipe brings it back
             if body.get("check") is not True:
                 remember_weight(c, uid, item_id, food, amount, unit, body.get("remember") is True, was)
+        if body.get("remember") is True and body.get("check") is not True:
+            c.execute("UPDATE meal_items SET item_est=NULL WHERE id=?", (item_id,))  # typed grams replace the import estimate
     if "skipped" in body:
         c.execute("UPDATE meal_items SET skipped=? WHERE id=?", (int(body["skipped"]), item_id))
 
@@ -2199,7 +2238,7 @@ def add_meal_item(meal_id: int, user: CurrentUser, body: dict = Body(...)):
         raise bad("check must be true or false and needs food_id")
     if "food_id" not in body and {"amount", "unit"} & body.keys():
         raise bad("Send food_id together with amount and unit")
-    src = import_row(body["src"]) if "src" in body else (None,) * 9
+    src = import_row(body["src"]) if "src" in body else (None,) * 10
     pos = body.get("position")
     if pos is not None and (isinstance(pos, bool) or not isinstance(pos, int) or pos < 0):
         raise bad("position must be a whole number of 0 or more")
@@ -2215,7 +2254,7 @@ def add_meal_item(meal_id: int, user: CurrentUser, body: dict = Body(...)):
             food_id = food["id"]
             undelete(c, user["id"], food_id)
         cur = c.execute("INSERT INTO meal_items(meal_id, food_id, amount, unit, position, src_text, src_amount, src_unit, src_name, src_note,"
-                        " item_pkg_amount, item_pkg_unit, item_was_amount, item_was_unit, skipped, needs_check) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        " item_pkg_amount, item_pkg_unit, item_was_amount, item_was_unit, item_est, skipped, needs_check) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (meal_id, food_id, amount, unit, len(ids), *src, int(body.get("skipped") is True), int(body.get("check") is True)))
         ids.insert(len(ids) if pos is None else min(pos, len(ids)), cur.lastrowid)
         c.executemany("UPDATE meal_items SET position=? WHERE id=?", [(i, x) for i, x in enumerate(ids)])

@@ -231,6 +231,49 @@ def line_unit(amount, unit, name=""):
     return known_unit(unit) or COUNT, name
 
 
+MEASURES = ("g", "kg", "oz", "lb", "ml", "l", "floz", "cup", "tbsp", "tsp")  # the only units an import picks (issue #55)
+
+
+def was_line(text):
+    """(amount, unit) of a line that counts things or names a package or fuzzy unit ("3 cloves garlic" is (3, clove), "2 eggs" is
+    (2, count), "1 can beans" is (1, can)), else None (no amount, or the line already gives a weight or volume). Used to keep the
+    original wording of a line Claude turned into a weight or volume (issue #55)."""
+    lead = lead_amount(re.sub(r"^\s*an?\s+(?=[A-Za-z])", "1 ", str(text or ""), flags=re.I))  # "a pinch of salt" is one pinch
+    if not lead:
+        return None
+    a, rest = lead
+    if re.match(r"^\(", rest or ""):  # "1 (15 oz) can": a printed size, read by printed_size
+        return None
+    u = lead_unit(rest)
+    if u in MASS or u in VOLUME or u in PSEUDO:
+        return None
+    return a, (u if u in COUNTISH or u == COUNT else COUNT)
+
+
+def wording(amount, unit, name=""):
+    """The original wording of a converted line for its note: "3 cloves", "1 can", "2 eggs" (a count names the thing)."""
+    a = f"{float(amount):g}"
+    if unit in (None, BLANK, COUNT):
+        return f"{a} {str(name or '').strip()}".strip()
+    return f"{a} {unit_word(unit, amount)}"
+
+
+TRUSTED_SOURCES = ("user", "fdc", "off")  # a real portion or the user's own weight replaces an import estimate (issue #55)
+
+
+def trusted_was(food, amount, unit, hint=None):
+    """match_amount for a converted line's original wording (3 clove) when the food knows that unit from a real source: the user's
+    own weight, a USDA or Open Food Facts portion, or the label's own count word. None when only a table or Claude estimate would
+    reach it, so the import's estimate stays."""
+    try:
+        m = match_amount(food, amount, unit, custom=False, hint=hint)
+    except ValueError:
+        return None
+    if not m or m["check"] or m.get("estimated"):
+        return None
+    return m if m.get("source") in (None, *TRUSTED_SOURCES) else None
+
+
 def same_word(unit, label_unit):
     """A typed count word against the label's own (lowercase singular): "Slices" is the label's slice."""
     return bool(unit) and parse_unit(unit) == label_unit

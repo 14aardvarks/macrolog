@@ -133,8 +133,11 @@ def test_clean_recipe_reads_printed_sizes():
         {"text": "1 stick (113 g) butter", "amount": 1, "unit": "stick", "name": "butter", "note": "113 g"},
         {"text": "1 (14 to 15 oz) can tomatoes", "amount": 1, "unit": "can", "name": "tomatoes", "note": None}]})
     got = [(i["amount"], i["unit"], i["name"], i["note"], i["pkg_amount"], i["pkg_unit"]) for i in draft["ingredients"]]
-    assert got == [(1, "can", "black beans", "15 oz, rinsed", 15, "oz"), (1, "stick", "butter", "113 g", 113, "g"),
+    # issue #55: a printed size wins and the row becomes that weight (exact, the wording in the note); a can with a range keeps its
+    # unit for the review to flag (no table knows plain tomatoes by the can)
+    assert got == [(15, "oz", "black beans", "1 can, rinsed", None, None), (113, "g", "butter", "1 stick, 113 g", None, None),
                    (1, "can", "tomatoes", None, None, None)]
+    assert [i["estimated"] for i in draft["ingredients"]] == [False, False, False]
 
 
 def test_import_keeps_the_printed_size_and_search_logs_exact_grams(env):
