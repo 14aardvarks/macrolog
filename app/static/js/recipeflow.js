@@ -2,14 +2,14 @@
 // ingredient as an unmatched line (zero nutrition until matched) and opens the recipe screen, where the ingredients are matched
 // in place (js/ingrows.js, v77 issue #49). Matching is optional and never blocks saving.
 import { api } from './api.js';
-import { h, clear, field, message, show, extLink } from './dom.js';
+import { h, clear, field, message, show, extLink, unitControl } from './dom.js';
 import { toJpeg } from './ai.js';
 import { importPhotoChoice, loadPhotoConfig } from './photo.js';
 import { confirmClaude } from './notice.js';
 import { stepsEditor } from './steps.js';
 import { centsText, sentence, aiFeature, aiFeatureOff, CLAUDE_CAP_NOTE, recipeTextCostLine, unitPreviewText } from './util.js';
 import {
-  parseIngredientText, reviewDraft, reviewBody, blankRow, rowText, lineRow, importWhat, photoPick, PHOTOS_TEXT, reviewFlag, pkgNote,
+  parseIngredientText, reviewDraft, reviewBody, blankRow, importUnitOptions, importWhat, photoPick, PHOTOS_TEXT, reviewFlag, pkgNote,
   urlCheck, urlImportOn, importKinds, startKind, recipeUrlCostLine, sourceLink, URL_TEXT, URL_MAX,
   NOTE_MAX, noteCheck, NOTE_LABEL, NOTE_HINT, NOTE_EXAMPLES, RERUN_LABEL, RERUN_TEXT, canRerun, rerunInput, claudeRead,
 } from './recipeimport.js';
@@ -187,27 +187,36 @@ export function renderReview(root, ctx) {
   const list = h('ol', { class: 'review-lines' });
   const warns = (draft.warnings || []).map((w) => h('li', null, sentence(w)));
 
-  // One text box per ingredient ("1 1/2 cup flour, sifted"). Untouched lines keep every part Claude built; an edited line is split
-  // again when it changes (recipeimport.js lineRow). A package or fuzzy unit with no printed size shows its typical weight under it.
+  // One compact row per ingredient: amount, unit (count, the measures, Custom for your own word, blank for "to taste"), name and note,
+  // then x. The fields write straight into the row, so untouched ones keep exactly what Claude filled (amountBoxValue keeps the exact
+  // number until the amount text is edited). A package or fuzzy unit with no printed size shows its typical weight under it.
   function rowNode(r, i) {
-    const box = h('input', { type: 'text', class: 'review-line-input', value: rowText(r), autocomplete: 'off', maxlength: '300',
-      'aria-label': 'Ingredient ' + (i + 1), 'aria-describedby': 'flag-' + i });
+    const n = i + 1;
+    const input = (cls, label, attrs) => h('input', { type: 'text', class: 'review-in ' + cls, autocomplete: 'off', 'aria-label': label + ' of ingredient ' + n, ...attrs });
+    const amount = input('review-amount', 'Amount', { value: r.amount == null ? '' : r.amount, inputmode: 'decimal', maxlength: '20' });
+    const unit = unitControl(importUnitOptions(), String(r.unit == null ? '' : r.unit).trim(), { 'aria-label': 'Unit of ingredient ' + n });
+    unit.classList.add('review-unit');
+    const nm = input('review-name', 'Name', { value: r.name || '', placeholder: 'Ingredient', maxlength: '200' });
+    const note = input('review-note', 'Note', { value: r.note || '', placeholder: 'Note', maxlength: '200' });
     const flag = h('p', { class: 'sub review-flag', id: 'flag-' + i });
     const paintFlag = () => {
-      const row = draft.rows[i];
-      const t = reviewFlag(row);
-      const p = t ? previews[previewKey(row)] : null;
+      const t = reviewFlag(r);
+      const p = t ? previews[previewKey(r)] : null;
       const weight = !t ? '' : p === undefined ? 'Looking up a typical weight' : p && p.grams && !p.reason ? unitPreviewText(p) : t;
-      flag.textContent = [weight, pkgNote(row)].filter(Boolean).join('. ');
+      flag.textContent = [weight, pkgNote(r)].filter(Boolean).join('. ');
       flag.hidden = !flag.textContent;
     };
     flags[i] = paintFlag;
-    box.addEventListener('change', () => { draft.rows[i] = lineRow(draft.rows[i], box.value); paintFlag(); lookupSoon(); });
+    const changed = () => { paintFlag(); lookupSoon(); };
+    amount.addEventListener('input', () => { r.amount = amount.value; changed(); });
+    unit.addEventListener('change', () => { r.unit = unit.value; changed(); });
+    nm.addEventListener('input', () => { r.name = nm.value; changed(); });
+    note.addEventListener('input', () => { r.note = note.value; });
     paintFlag();
     return h('li', { class: 'review-row' },
-      h('div', { class: 'review-row-main' }, box,
-        h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Remove ingredient ' + (i + 1) + (r.name ? ', ' + r.name : ''),
-          onclick: () => { draft.rows.splice(i, 1); paintRows(); const b = list.querySelector('li:nth-child(' + Math.min(i + 1, draft.rows.length) + ') input'); if (b) b.focus(); } }, '×')),
+      h('div', { class: 'review-fields' }, amount, unit, nm, note,
+        h('button', { class: 'icon-btn review-remove', type: 'button', 'aria-label': 'Remove ingredient ' + n + (r.name ? ', ' + r.name : ''),
+          onclick: () => { draft.rows.splice(i, 1); paintRows(); const b = list.querySelector('li:nth-child(' + Math.min(i + 1, draft.rows.length) + ') .review-amount'); if (b) b.focus(); } }, '×')),
       flag);
   }
   // Typical weights before saving, looked up once per unit and name and kept on the draft for the visit.
@@ -230,13 +239,10 @@ export function renderReview(root, ctx) {
     clear(list);
     draft.rows.forEach((r, i) => list.appendChild(rowNode(r, i)));
     if (!draft.rows.length) list.appendChild(h('li', { class: 'sub' }, 'No ingredients yet.'));
-    if (focusLast) { const last = list.querySelector('li:last-child input'); if (last) last.focus(); }
+    if (focusLast) { const last = list.querySelector('li:last-child .review-name'); if (last) last.focus(); }
     lookup();
   }
-  // Lines typed but not yet left (no change event) count too.
-  const syncLines = () => list.querySelectorAll('.review-line-input').forEach((b, i) => { if (draft.rows[i]) draft.rows[i] = lineRow(draft.rows[i], b.value); });
   const save = h('button', { class: 'btn primary review-save', type: 'button', onclick: async () => {
-    syncLines();
     const r = reviewBody(draft);
     if (r.error) { show(status, message(r.error, 'error')); return; }
     save.disabled = true;
@@ -260,12 +266,12 @@ export function renderReview(root, ctx) {
     warns.length ? h('ul', { class: 'warnings', role: 'alert' }, warns) : null,
     h('div', { class: 'grid2 review-head' }, name, servings),
     h('h2', null, 'Ingredients'), list,
-    h('button', { class: 'btn', type: 'button', onclick: () => { syncLines(); draft.rows.push(blankRow()); paintRows(true); } }, 'Add Ingredient'),
+    h('button', { class: 'btn', type: 'button', onclick: () => { draft.rows.push(blankRow()); paintRows(true); } }, 'Add Ingredient'),
     steps,
     importPhotoChoice(draft),
     status,
     h('div', { class: 'row wrap review-foot' }, save,
-      canRerun(draft) ? h('button', { class: 'btn', type: 'button', onclick: () => { syncLines(); ctx.go('import', { rerun: true }); } }, RERUN_LABEL) : null,
+      canRerun(draft) ? h('button', { class: 'btn', type: 'button', onclick: () => { ctx.go('import', { rerun: true }); } }, RERUN_LABEL) : null,
       h('button', { class: 'btn ghost', type: 'button', onclick: ctx.flow.cancel }, 'Cancel'))));
   paintRows();
 }

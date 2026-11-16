@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   parseIngredientLine, parseIngredientText, servingsFrom, isHeading, reviewDraft, reviewBody, rowText, blankRow,
-  matchState, matchCountText, recipeSubText, matchBatch, lineRow, proposalText, matchWhat, importWhat,
+  matchState, matchCountText, recipeSubText, matchBatch, proposalText, matchWhat, importWhat,
   NOTE_MAX, NOTE_LABEL, NOTE_HINT, NOTE_EXAMPLES, RERUN_LABEL, noteCheck, canRerun, rerunInput, claudeRead,
 } from '../../app/static/js/recipeimport.js';
 
@@ -308,16 +308,30 @@ test('a failed rerun returns no draft, so the previous review is kept exactly as
   assert.equal(flow.draft.name, 'Pancakes');
 });
 
-test('review lines: an untouched line keeps every part, an edited one is split again', () => {
-  const d = reviewDraft({ name: 'Beans', ingredients: [{ text: '1 (15 oz) can black beans', amount: 1, unit: 'can', name: 'black beans', note: '15 oz', pkg_amount: 15, pkg_unit: 'oz' }] });
-  const row = d.rows[0];
-  assert.equal(lineRow(row, rowText(row)), row);
-  const edited = lineRow(row, '2 cups black beans, rinsed');
-  assert.deepEqual([edited.exact, edited.unit, edited.name, edited.note, edited.pkgAmount], [2, 'cup', 'black beans', 'rinsed', null]);
-  const body = reviewBody({ ...d, rows: [edited] }).body;
-  assert.deepEqual([body.ingredients[0].amount, body.ingredients[0].unit, body.ingredients[0].name], [2, 'cup', 'black beans']);
-  const printed = lineRow(row, '1 (15 oz) can chickpeas');
-  assert.deepEqual([printed.pkgAmount, printed.pkgUnit, printed.name], [15, 'oz', 'chickpeas']);
-  const blank = lineRow(row, '   ');
-  assert.equal(reviewBody({ ...d, rows: [blank, edited] }).body.ingredients.length, 1);
+test('review fields: untouched amounts keep the exact stored value, edited ones use the typed text', () => {
+  const d = reviewDraft({ name: 'Soup', ingredients: [
+    { text: '0.4 cup milk', amount: 0.4, unit: 'cup', name: 'milk', note: null },
+    { text: 'salt, to taste', amount: null, unit: null, name: 'salt', note: 'to taste' },
+    { text: '1 (15 oz) can beans', amount: 1, unit: 'can', name: 'beans', note: null, pkg_amount: 15, pkg_unit: 'oz' },
+  ] });
+  assert.equal(d.rows[0].amount, '3/8');  // the box text is rounded for display
+  let body = reviewBody(d).body;
+  assert.equal(body.ingredients[0].amount, 0.4);  // the stored value survives an untouched box
+  assert.deepEqual([body.ingredients[1].amount, body.ingredients[1].unit, body.ingredients[1].note, body.ingredients[1].text], [null, null, 'to taste', 'salt, to taste']);
+  assert.deepEqual([body.ingredients[2].pkg_amount, body.ingredients[2].pkg_unit], [15, 'oz']);
+  // what the review fields do: write the typed text, a chosen unit, a custom unit, a name or a note into the row
+  d.rows[0].amount = '1/2';
+  d.rows[0].unit = 'tbsp';
+  d.rows[1].amount = '2';
+  d.rows[1].unit = 'Shell';
+  d.rows[1].note = 'optional';
+  body = reviewBody(d).body;
+  assert.deepEqual([body.ingredients[0].amount, body.ingredients[0].unit], [0.5, 'tbsp']);
+  assert.deepEqual([body.ingredients[1].amount, body.ingredients[1].unit, body.ingredients[1].note, body.ingredients[1].text], [2, 'Shell', 'optional', '2 Shell salt, optional']);
+  assert.equal(body.ingredients[2].pkg_amount, 15);
+  // Add Ingredient: an empty row is skipped until it has something, a name alone is a plain line
+  const blank = blankRow();
+  assert.equal(reviewBody({ ...d, rows: [...d.rows, blank] }).body.ingredients.length, 3);
+  assert.deepEqual(reviewBody({ ...d, rows: [{ ...blank, name: 'pepper', note: 'to taste' }] }).body.ingredients[0],
+    { text: 'pepper, to taste', amount: null, unit: null, name: 'pepper', note: 'to taste', pkg_amount: null, pkg_unit: null });
 });

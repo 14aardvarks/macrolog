@@ -280,18 +280,6 @@ export function rowText(row) {
   return head + (String(row.note || '').trim() ? ', ' + row.note.trim() : '');
 }
 
-// Review One Line (v77): each ingredient is one text box holding rowText. An untouched box keeps every part Claude or the splitter
-// built (amount, unit, name, note, printed size); a box that was edited is split again like a pasted line. Returns the new row.
-export function lineRow(row, text) {
-  const t = String(text == null ? '' : text);
-  if (t === rowText(row)) return row;
-  const p = parseIngredientLine(t);
-  if (!p) return { ...blankRow(), line: t };
-  const amount = p.amount == null ? '' : qtyText(p.amount, p.unit);
-  return { amount, shown: amount, exact: p.amount, unit: p.unit || '', name: p.name || '', note: p.note || '', text: p.text,
-    pkgAmount: p.pkg_amount == null ? null : p.pkg_amount, pkgUnit: p.pkg_unit || null };
-}
-
 // Validate the review draft and build the POST /api/meals/import body. Returns { error } or { body }.
 export function reviewBody(draft) {
   const name = String(draft.name || '').trim();

@@ -76,3 +76,14 @@ def test_match_prompt_dismissal_is_per_recipe_and_saved_on_the_server(env):
     assert env["c"].patch(f"/api/meals/{m['id']}", json={"match_prompt_dismissed": False}).json()["match_prompt_dismissed"] is False
     assert env["c"].patch(f"/api/meals/{m['id']}", json={"match_prompt_dismissed": "yes"}).status_code == 400
     assert env["requests"] == []  # nothing here asks Claude
+
+
+def test_review_rows_have_amount_unit_name_note_and_no_matching_ui():
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "app" / "static" / "js" / "recipeflow.js").read_text()
+    start = src.index("export function renderReview")
+    review = src[start:]
+    for part in ("review-amount", "unitControl(importUnitOptions()", "review-name", "review-note", "Remove ingredient", "unitsPreview"):
+        assert part in review
+    for gone in ("review-line-input", "lineRow", "Use Grams", "Meal Tags", "chips("):
+        assert gone not in review

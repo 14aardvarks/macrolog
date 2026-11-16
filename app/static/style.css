@@ -718,10 +718,24 @@ body.has-undo main { padding-bottom: 96px; }  /* room to scroll the last rows ab
 /* The short review before saving: one text box per ingredient, a muted note under a line that needs a weight. */
 .review-head { gap: 0 10px; }
 .review-lines { list-style: none; padding: 0; margin: 0 0 8px; }
-.review-row { padding: 2px 0; }
-.review-row-main { display: flex; align-items: center; gap: 2px; }
-.review-row-main input { flex: 1; min-width: 0; }
-.review-flag { margin: 0 0 4px 4px; font-size: .8125rem; }
+.review-row { padding: 6px 0; border-bottom: 1px solid var(--line); }
+.review-row:last-child { border-bottom: 0; }
+/* Phone: amount, unit and x share the first line, the name and note share the second. Wide: one line. */
+.review-fields { display: grid; gap: 4px 6px; grid-template-columns: 4.5em minmax(0, 1fr) minmax(0, 1fr) 40px; align-items: center; }
+.review-fields input, .review-fields select { min-height: 38px; padding: 4px 8px; width: 100%; }
+.review-amount { grid-column: 1; }
+.review-unit { grid-column: 2 / 4; flex-direction: row; gap: 4px; }
+.review-unit > select { flex: 1 1 0; }
+.review-unit > input { flex: 1 1 0; }
+.review-fields .review-remove { grid-column: 4; grid-row: 1; min-width: 40px; min-height: 38px; padding: 0; font-size: 1.25rem; }
+.review-name { grid-column: 1 / 3; }
+.review-note { grid-column: 3 / -1; font-size: .875rem; }
+.review-flag { margin: 2px 0 0 2px; font-size: .8125rem; }
+@media (min-width: 640px) {
+  .review-fields { grid-template-columns: 5em 14em minmax(0, 2fr) minmax(0, 1.2fr) 40px; }
+  .review-unit, .review-name, .review-note { grid-column: auto; }
+  .review-fields .review-remove { grid-column: 5; grid-row: auto; }
+}
 .review-steps { margin-top: 12px; }
 .review-steps > .steps-editor, .review-steps > div { padding: 0 12px; }
 .review-foot { margin-top: 12px; }
